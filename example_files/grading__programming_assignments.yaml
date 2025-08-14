@@ -39,3 +39,19 @@ courses:
         kwargs:
           num_repeats: 10
           assignment_path: PA5
+      - name: PA6-script
+        id: 487786
+        kind: ProgrammingAssignment
+        grader: docker-configurable
+        kwargs:
+          grading_script: "./grade.py"
+          working_dir: "/tmp/grading"
+      - name: PA7-commands
+        id: 487787
+        kind: ProgrammingAssignment
+        grader: docker-configurable
+        kwargs:
+          grading_commands:
+            - "gcc -o program *.c"
+            - "python test_runner.py --yaml-output"
+          working_dir: "/tmp/grading"
