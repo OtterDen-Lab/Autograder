@@ -55,3 +55,33 @@ courses:
             - "gcc -o program *.c"
             - "python test_runner.py --yaml-output"
           working_dir: "/tmp/grading"
+      - name: PA8-advanced
+        id: 487788
+        kind: ProgrammingAssignment
+        grader: docker-configurable
+        kwargs:
+          image: "python:3.9"
+          additional_installs:
+            - "apt-get update && apt-get install -y gcc"
+            - "pip install pytest pyyaml"
+          additional_files:
+            - src: "./test_framework/*"
+              dst: "/tmp/grading/tests/"
+            - "./grade_template.py"
+          grading_script: "python grade_template.py"
+          working_dir: "/tmp/grading"
+      - name: PA9-dockerfile
+        id: 487789
+        kind: ProgrammingAssignment
+        grader: docker-configurable
+        kwargs:
+          dockerfile_text: |
+            FROM ubuntu:20.04
+            RUN apt-get update && apt-get install -y python3 python3-pip gcc
+            RUN pip3 install pytest pyyaml
+            COPY ./grading_tools/ /opt/grading/
+            ENV PATH="/opt/grading:${PATH}"
+            WORKDIR /tmp/grading
+            CMD ["/bin/bash"]
+          grading_commands:
+            - "python3 /opt/grading/auto_grade.py"

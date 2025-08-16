@@ -641,17 +641,68 @@ class Grader__CST334online(Grader__CST334):
 @GraderRegistry.register("docker-configurable")
 class Grader__docker_configurable(Grader__docker):
   
-  def __init__(self, grading_script=None, grading_commands=None, working_dir="/tmp/grading", *args, **kwargs):
+  def __init__(self, grading_script=None, grading_commands=None, working_dir="/tmp/grading", 
+               additional_installs=None, dockerfile_text=None, dockercompose_text=None,
+               additional_files=None, *args, **kwargs):
     super().__init__(*args, **kwargs)
     self.grading_script = grading_script
     self.grading_commands = grading_commands if grading_commands else []
     self.working_dir = working_dir
+    self.additional_installs = additional_installs if additional_installs else []
+    self.dockerfile_text = dockerfile_text
+    self.dockercompose_text = dockercompose_text
+    self.additional_files = additional_files if additional_files else []
     
     if not self.grading_script and not self.grading_commands:
       raise ValueError("Must specify either grading_script or grading_commands")
     
     if self.grading_script and self.grading_commands:
       raise ValueError("Cannot specify both grading_script and grading_commands")
+    
+    # Build custom image if needed
+    if self.dockerfile_text or self.additional_installs or self.additional_files:
+      self.image = self._build_custom_image()
+  
+  def _build_custom_image(self):
+    """Build a custom Docker image with additional installs and files"""
+    
+    if self.dockerfile_text:
+      # Use provided dockerfile
+      dockerfile_content = self.dockerfile_text
+    else:
+      # Build dockerfile from base image + additions
+      base_image = self.image if hasattr(self, 'image') and self.image != "ubuntu" else "ubuntu"
+      
+      dockerfile_lines = [f"FROM {base_image}"]
+      
+      # Add additional package installs
+      if self.additional_installs:
+        dockerfile_lines.append("# Install additional packages")
+        for install_cmd in self.additional_installs:
+          dockerfile_lines.append(f"RUN {install_cmd}")
+      
+      # Add additional files via COPY commands
+      if self.additional_files:
+        dockerfile_lines.append("# Copy additional files")
+        for file_spec in self.additional_files:
+          if isinstance(file_spec, dict):
+            src = file_spec.get('src')
+            dst = file_spec.get('dst', self.working_dir)
+            if src:
+              dockerfile_lines.append(f"COPY {src} {dst}")
+          elif isinstance(file_spec, str):
+            dockerfile_lines.append(f"COPY {file_spec} {self.working_dir}")
+      
+      # Set working directory
+      dockerfile_lines.append(f"WORKDIR {self.working_dir}")
+      dockerfile_lines.append("CMD [\"/bin/bash\"]")
+      
+      dockerfile_content = '\n'.join(dockerfile_lines)
+    
+    log.info("Building custom Docker image with additional configuration...")
+    log.debug(f"Dockerfile content:\n{dockerfile_content}")
+    
+    return self.build_docker_image(dockerfile_content)
   
   def execute_grading(self, *args, **kwargs) -> Tuple[int, str, str]:
     # Create working directory

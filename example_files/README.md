@@ -8,13 +8,15 @@ The `docker-configurable` grader allows you to specify either a grading script o
 
 ### Configuration Options
 
-#### grading_script
+#### Required (choose one)
+
+##### grading_script
 - **Type**: String
 - **Description**: Path to a grading script to execute in the container
 - **Example**: `"./grade.py"`
 - **Note**: Cannot be used together with `grading_commands`
 
-#### grading_commands
+##### grading_commands
 - **Type**: List of strings
 - **Description**: A list of bash commands to execute sequentially in the container
 - **Example**: 
@@ -25,17 +27,56 @@ The `docker-configurable` grader allows you to specify either a grading script o
   ```
 - **Note**: Cannot be used together with `grading_script`
 
-#### working_dir
+#### Optional Configuration
+
+##### working_dir
 - **Type**: String
 - **Description**: The working directory inside the container where files will be copied and commands will be executed
 - **Default**: `/tmp/grading`
 - **Example**: `"/tmp/grading"`
 
-#### image
+##### image
 - **Type**: String  
-- **Description**: Docker image to use as the base container
+- **Description**: Docker image to use as the base container (ignored if dockerfile_text is provided)
 - **Default**: `"ubuntu"`
-- **Example**: `"ubuntu:20.04"`
+- **Example**: `"python:3.9"`
+
+##### additional_installs
+- **Type**: List of strings
+- **Description**: Additional package installation commands to run during image build
+- **Example**: 
+  ```yaml
+  additional_installs:
+    - "apt-get update && apt-get install -y gcc"
+    - "pip install pytest pyyaml"
+  ```
+
+##### dockerfile_text
+- **Type**: String (multiline)
+- **Description**: Complete Dockerfile content to build a custom image. Takes precedence over image + additional_installs
+- **Example**: 
+  ```yaml
+  dockerfile_text: |
+    FROM ubuntu:20.04
+    RUN apt-get update && apt-get install -y python3
+    WORKDIR /tmp/grading
+  ```
+
+##### additional_files
+- **Type**: List of strings or objects
+- **Description**: Additional files/directories to copy into the image during build
+- **Example**: 
+  ```yaml
+  additional_files:
+    - src: "./test_framework/*"
+      dst: "/tmp/grading/tests/"
+    - "./grade_template.py"  # copies to working_dir
+  ```
+
+##### dockercompose_text
+- **Type**: String (multiline)
+- **Description**: Docker Compose configuration (reserved for future use)
+- **Status**: Not yet implemented
 
 ### Output Format
 
@@ -48,7 +89,7 @@ feedback: "Great work! All tests passed except one edge case."
 
 ### Usage Examples
 
-#### Using a grading script:
+#### Basic grading script:
 ```yaml
 - name: PA6-script
   id: 487786
@@ -59,7 +100,7 @@ feedback: "Great work! All tests passed except one edge case."
     working_dir: "/tmp/grading"
 ```
 
-#### Using command sequence:
+#### Command sequence:
 ```yaml
 - name: PA7-commands  
   id: 487787
@@ -72,10 +113,49 @@ feedback: "Great work! All tests passed except one edge case."
     working_dir: "/tmp/grading"
 ```
 
+#### Advanced with custom image and additional tools:
+```yaml
+- name: PA8-advanced
+  id: 487788
+  kind: ProgrammingAssignment
+  grader: docker-configurable
+  kwargs:
+    image: "python:3.9"
+    additional_installs:
+      - "apt-get update && apt-get install -y gcc"
+      - "pip install pytest pyyaml"
+    additional_files:
+      - src: "./test_framework/*"
+        dst: "/tmp/grading/tests/"
+      - "./grade_template.py"
+    grading_script: "python grade_template.py"
+    working_dir: "/tmp/grading"
+```
+
+#### Complete Dockerfile customization:
+```yaml
+- name: PA9-dockerfile
+  id: 487789
+  kind: ProgrammingAssignment
+  grader: docker-configurable
+  kwargs:
+    dockerfile_text: |
+      FROM ubuntu:20.04
+      RUN apt-get update && apt-get install -y python3 python3-pip gcc
+      RUN pip3 install pytest pyyaml
+      COPY ./grading_tools/ /opt/grading/
+      ENV PATH="/opt/grading:${PATH}"
+      WORKDIR /tmp/grading
+      CMD ["/bin/bash"]
+    grading_commands:
+      - "python3 /opt/grading/auto_grade.py"
+```
+
 ### How It Works
 
-1. A base Ubuntu container is started
-2. Student submission files are copied to the specified `working_dir`
-3. Either the `grading_script` is executed OR the `grading_commands` are run sequentially
-4. The stdout is parsed for YAML containing `score` and `feedback` keys
-5. Raw stdout and stderr are included as additional feedback for debugging
+1. **Image Preparation**: If dockerfile_text, additional_installs, or additional_files are specified, a custom Docker image is built with these additions
+2. **Container Start**: A container is started from the prepared image
+3. **File Copy**: Student submission files are copied to the specified `working_dir`
+4. **Grading Execution**: Either the `grading_script` is executed OR the `grading_commands` are run sequentially
+5. **Result Parsing**: The stdout is parsed for YAML containing `score` and `feedback` keys
+6. **Feedback Assembly**: Raw stdout and stderr are included as additional feedback for debugging
