@@ -14,10 +14,10 @@ import tarfile
 import os
 import textwrap
 import json
-import shutil
 import yaml
 from collections import defaultdict
 import pandas as pd
+import threading
 
 from typing import List, Tuple, Optional
 
@@ -278,8 +278,6 @@ class Grader__Manual(Grader):
 
 
 class Grader__docker(Grader, abc.ABC):
-  client = None
-  
   def __init__(self, image=None, *args, **kwargs):
     super().__init__(*args, **kwargs)
     
@@ -287,25 +285,28 @@ class Grader__docker(Grader, abc.ABC):
     # Import docker if needed
     _import_docker()
     
-    # Set up docker client class-wide if it hasn't been set up yet
-    if self.__class__.client is None:
-      try:
-        self.__class__.client = docker.from_env()
-        # Try to perform an operation that requires Docker to be running
-        self.__class__.client.ping()  # or client.containers.list()
-        print("Docker is running!")
-      except docker.errors.DockerException as e:
-        print(f"Docker isn't running: {e}")
-        # Handle the situation when Docker daemon isn't available
-        exit(8)
-      except docker.errors.APIError as e:
-        print(f"Docker API error: {e}")
-        # Handle other API-related errors
-        exit(8)
+    # Set up docker client per instance for thread safety
+    try:
+      self.client = docker.from_env()
+      # Try to perform an operation that requires Docker to be running
+      self.client.ping()  # or client.containers.list()
+      log.debug("Docker client connected successfully")
+    except docker.errors.DockerException as e:
+      log.error(f"Docker isn't running: {e}")
+      # Handle the situation when Docker daemon isn't available
+      exit(8)
+    except docker.errors.APIError as e:
+      log.error(f"Docker API error: {e}")
+      # Handle other API-related errors
+      exit(8)
     
     # Default to using ubuntu image
     self.image = image if image is not None else "ubuntu"
     self.container: Optional[docker.models.containers.Container] = None
+    
+    # Generate unique container name for thread safety
+    import uuid
+    self.container_name_prefix = f"grader_{uuid.uuid4().hex[:8]}"
   
   def cleanup(self):
     # Try to remove image, and if it hasn't been set up properly delete
@@ -316,8 +317,7 @@ class Grader__docker(Grader, abc.ABC):
       
       
   # Helper functions below here
-  @classmethod
-  def build_docker_image(cls, dockerfile_str):
+  def build_docker_image(self, dockerfile_str):
     """
     Given a dockerfile as a string, creates and returns this image
     :param dockerfile_str: dockerfile as a single string
@@ -325,11 +325,11 @@ class Grader__docker(Grader, abc.ABC):
     """
     log.info("Building docker image for grading...")
     
-    image, logs = cls.client.images.build(
+    image, logs = self.client.images.build(
       fileobj=io.BytesIO(dockerfile_str.encode()),
       pull=True,
       nocache=True,
-      tag=f"grading:{cls.__name__.lower()}",
+      tag=f"grading:{self.__class__.__name__.lower()}_{self.container_name_prefix}",
       rm=True,
       forcerm=True
     )
@@ -338,11 +338,15 @@ class Grader__docker(Grader, abc.ABC):
     return image
   
   def start_container(self, image : docker.models.images):
+    import time
+    # Create unique container name with timestamp to avoid conflicts when multiple containers per thread
+    container_name = f"{self.container_name_prefix}_{threading.current_thread().ident}_{int(time.time() * 1000000)}"
     self.container = self.client.containers.run(
       image=image,
       detach=True,
       tty=True,
-      remove=True
+      remove=True,
+      name=container_name
     )
     
   def stop_container(self):
@@ -424,11 +428,11 @@ class Grader__docker(Grader, abc.ABC):
       return f.read().decode()
   
   def __enter__(self):
-    log.info(f"Starting docker image {self.image} context")
+    log.debug(f"Starting docker image {self.image} context")
     self.start_container(self.image)
   
   def __exit__(self, exc_type, exc_val, exc_tb):
-    log.info(f"Exiting docker image context")
+    log.debug(f"Exiting docker image context")
     self.stop_container()
     if exc_type is not None:
       log.error(f"An exception occured: {exc_val}")

@@ -56,13 +56,22 @@ class Assignment(abc.ABC):
   def __enter__(self) -> Assignment:
     """Enables use as a context manager (e.g. `with [Assignment]`) by managing working directory"""
     # todo: Enable use of anonymous temp directories
-    self.original_dir = os.getcwd()
-    os.chdir(self.grading_root_dir)
+    import threading
+    
+    # Only change working directory if we're in the main thread to avoid race conditions
+    if threading.current_thread() == threading.main_thread():
+      self.original_dir = os.getcwd()
+      os.chdir(self.grading_root_dir)
+    else:
+      # In worker threads, don't change the working directory
+      self.original_dir = None
     return self
     
   def __exit__(self, exc_type, exc_value, traceback):
     """Enables use as a context manager (e.g. `with [Assignment]`) by managing working directory"""
-    os.chdir(self.original_dir)
+    # Only restore working directory if we changed it
+    if self.original_dir is not None:
+      os.chdir(self.original_dir)
   
   @abc.abstractmethod
   def prepare(self, *args, **kwargs):
