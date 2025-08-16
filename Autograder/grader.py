@@ -446,198 +446,6 @@ class Grader__docker(Grader, abc.ABC):
       return super().grade_submission(submission, *args, **kwargs)
       
 
-@GraderRegistry.register("CST334")
-class Grader__CST334(Grader__docker):
-  
-  dockerfile_str = """
-  FROM samogden/cst334
-  RUN git clone https://www.github.com/samogden/CST334-assignments.git /tmp/grading/
-  WORKDIR /tmp/grading
-  CMD ["/bin/bash"]
-  """
-  
-  def __init__(self, assignment_path):
-    super().__init__()
-    self.assignment_path = assignment_path
-    self.image = self.build_docker_image(self.dockerfile_str)
-  
-  def check_for_trickery(self, submission) -> bool:
-    def contains_string(str, f) -> bool:
-      try:
-        if str.encode() in f.read():
-          return True
-        else:
-          return False
-      finally:
-        f.seek(0)
-      
-    for f in submission.files:
-      if contains_string("exit(0)", f):
-        return True
-    return False
-  
-  @staticmethod
-  def build_feedback(results_dict, score=None) -> str:
-    feedback_strs = [
-      "##############",
-      "## FEEDBACK ##",
-      "##############",
-      "",
-    ]
-    
-    if score is not None:
-      feedback_strs.extend([
-        f"Score reported: {score} points",
-        ""
-      ])
-    
-    if "overall_feedback" in results_dict:
-      feedback_strs.extend([
-        "## Overall Feedback ##",
-        results_dict["overall_feedback"],
-        "\n\n"
-      ])
-    
-    feedback_strs.extend([
-      "## Unit Tests ##",
-    ])
-    if "suites" in results_dict:
-      for suite_name in results_dict["suites"].keys():
-        
-        if len(results_dict["suites"][suite_name]["PASSED"]) > 0:
-          feedback_strs.extend([
-            f"SUITE: {suite_name}",
-            "  * passed:",
-          ])
-          feedback_strs.extend([
-            textwrap.indent('\n'.join(results_dict["suites"][suite_name]["PASSED"]), '    '),
-            ""
-          ])
-        
-        if len(results_dict["suites"][suite_name]["FAILED"]) > 0:
-          feedback_strs.extend([
-            f"SUITE: {suite_name}",
-            "  * failed:",
-          ])
-          feedback_strs.extend([
-            textwrap.indent('\n'.join(results_dict["suites"][suite_name]["FAILED"]), '    '),
-            ""
-          ])
-      feedback_strs.extend([
-        "################",
-        "",
-      ])
-    
-    if "build_logs" in results_dict:
-      feedback_strs.extend([
-        "## Build Logs ##",
-      ])
-      feedback_strs.extend([
-        "Build Logs:",
-        ''.join(results_dict["build_logs"])[1:-1].encode('utf-8').decode('unicode_escape')
-      ])
-      feedback_strs.extend([
-        "################",
-      ])
-    
-    
-    if "lint_logs" in results_dict:
-      feedback_strs.extend([
-        "## Lint Logs ##",
-        f"Lint success: {results_dict['lint_success']}\n"
-      ])
-      feedback_strs.extend([
-        "Lint Logs:",
-        ''.join(results_dict["lint_logs"])[1:-1].encode('utf-8').decode('unicode_escape')
-      ])
-      feedback_strs.extend([
-        "################",
-      ])
-    
-    return '\n'.join(feedback_strs)
-  
-  def execute_grading(self, path_to_programming_assignment, *args, **kwargs) -> Tuple[int, str, str]:
-    rc, stdout, stderr = self.execute_command_in_container(
-      command="timeout 120 python ../../helpers/grader.py --output /tmp/results.json",
-      # command="make",
-      workdir=f"/tmp/grading/{path_to_programming_assignment}/"
-    )
-    return rc, stdout, stderr
-  
-  def score_grading(self, *args, **kwargs) -> Feedback:
-    results = self.read_file_from_container("/tmp/results.json")
-    if results is None:
-      # Then something went awry in reading back feedback file
-      return Feedback(
-        score=0,
-        comments="Something went wrong during grading, likely a timeout.  Please check your assignment for infinite loops and/or contact your professor."
-      )
-    results_dict = json.loads(results)
-    if "lint_success" in results_dict and results_dict["lint_success"] and "lint_bonus" in kwargs:
-      results_dict["score"] += kwargs["lint_bonus"]
-    
-    return Feedback(
-      score=results_dict["score"],
-      comments=self.build_feedback(results_dict, results_dict["score"])
-    )
-  
-  def grade_submission(self, submission, *args, **kwargs) -> Feedback:
-    
-    path_to_programming_assignment = os.path.join("programming-assignments", self.assignment_path)
-    
-    # Gather submission files in a format to copy over
-    submission_files = []
-    for f in submission.files:
-      log.debug(f"f: {f.__class__} {f.name}")
-      submission_files.append(
-        (f, f"/tmp/grading/{path_to_programming_assignment}/{'src' if f.name.endswith('.c') else 'include'}")
-      )
-    
-    # Check for trickery, per Elijah's trials (so far)
-    if self.check_for_trickery(submission):
-      return Feedback(
-        score=0.0,
-        comments="It was detected that you might have been trying to game the scoring via exiting early from a unit test.  Please contact your professor if you think this was in error."
-      )
-    
-    # Grade as many times as we're requested to, gathering results for later
-    all_feedback : List[Feedback] = []
-    
-    for i in range(kwargs.get("num_repeats", 3)):
-      # Grade results in docker
-      all_feedback.append(
-        super().grade_submission(
-          submission, # Is technically superfluous
-          files_to_copy=submission_files,
-          path_to_programming_assignment=path_to_programming_assignment,
-          lint_bonus=1,
-          *args, **kwargs
-        )
-      )
-      
-    # Select feedback and return
-    feedback = min(all_feedback)
-    
-    full_feedback =  "##################\n"
-    full_feedback += "## All results: ##\n"
-    for i, result in enumerate(all_feedback):
-      full_feedback += f"test {i}: {result.comments} points\n"
-    full_feedback += "##################\n"
-
-    feedback.comments += f"\n\n\n{full_feedback}"
-    return feedback
-
-
-@GraderRegistry.register("CST334online")
-class Grader__CST334online(Grader__CST334):
-  dockerfile_str = """
-  FROM samogden/cst334
-  RUN git clone https://www.github.com/samogden/CST334-assignments-online.git /tmp/grading/
-  WORKDIR /tmp/grading
-  CMD ["/bin/bash"]
-  """
-
-
 @GraderRegistry.register("docker-configurable")
 class Grader__docker_configurable(Grader__docker):
   
@@ -787,6 +595,195 @@ class Grader__docker_configurable(Grader__docker):
       submission,
       files_to_copy=submission_files,
       *args, **kwargs
+    )
+
+
+@GraderRegistry.register("CST334")
+class Grader__CST334(Grader__docker_configurable):
+  
+  def __init__(self, assignment_path, git_repo="https://www.github.com/samogden/CST334-assignments.git"):
+    # Use docker-configurable's infrastructure for building the image
+    dockerfile_text = f"""FROM samogden/cst334
+RUN git clone {git_repo} /tmp/grading/
+WORKDIR /tmp/grading
+CMD ["/bin/bash"]"""
+    
+    super().__init__(
+      dockerfile_text=dockerfile_text,
+      grading_commands=["timeout 120 python ../../helpers/grader.py --output /tmp/results.json"],
+      working_dir="/tmp/grading"
+    )
+    self.assignment_path = assignment_path
+  
+  def check_for_trickery(self, submission) -> bool:
+    def contains_string(search_str, f) -> bool:
+      try:
+        if search_str.encode() in f.read():
+          return True
+        else:
+          return False
+      finally:
+        f.seek(0)
+      
+    for f in submission.files:
+      if contains_string("exit(0)", f):
+        return True
+    return False
+  
+  @staticmethod
+  def build_feedback(results_dict, score=None) -> str:
+    feedback_strs = [
+      "##############",
+      "## FEEDBACK ##",
+      "##############",
+      "",
+    ]
+    
+    if score is not None:
+      feedback_strs.extend([
+        f"Score reported: {score} points",
+        ""
+      ])
+    
+    if "overall_feedback" in results_dict:
+      feedback_strs.extend([
+        "## Overall Feedback ##",
+        results_dict["overall_feedback"],
+        "\n\n"
+      ])
+    
+    feedback_strs.extend([
+      "## Unit Tests ##",
+    ])
+    if "suites" in results_dict:
+      for suite_name in results_dict["suites"].keys():
+        
+        if len(results_dict["suites"][suite_name]["PASSED"]) > 0:
+          feedback_strs.extend([
+            f"SUITE: {suite_name}",
+            "  * passed:",
+          ])
+          feedback_strs.extend([
+            textwrap.indent('\n'.join(results_dict["suites"][suite_name]["PASSED"]), '    '),
+            ""
+          ])
+        
+        if len(results_dict["suites"][suite_name]["FAILED"]) > 0:
+          feedback_strs.extend([
+            f"SUITE: {suite_name}",
+            "  * failed:",
+          ])
+          feedback_strs.extend([
+            textwrap.indent('\n'.join(results_dict["suites"][suite_name]["FAILED"]), '    '),
+            ""
+          ])
+      feedback_strs.extend([
+        "################",
+        "",
+      ])
+    
+    if "build_logs" in results_dict:
+      feedback_strs.extend([
+        "## Build Logs ##",
+      ])
+      feedback_strs.extend([
+        "Build Logs:",
+        ''.join(results_dict["build_logs"])[1:-1].encode('utf-8').decode('unicode_escape')
+      ])
+      feedback_strs.extend([
+        "################",
+      ])
+    
+    if "lint_logs" in results_dict:
+      feedback_strs.extend([
+        "## Lint Logs ##",
+        f"Lint success: {results_dict['lint_success']}\n"
+      ])
+      feedback_strs.extend([
+        "Lint Logs:",
+        ''.join(results_dict["lint_logs"])[1:-1].encode('utf-8').decode('unicode_escape')
+      ])
+      feedback_strs.extend([
+        "################",
+      ])
+    
+    return '\n'.join(feedback_strs)
+  
+  def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
+    """Override docker-configurable to use JSON instead of YAML parsing"""
+    rc, stdout, stderr = execution_results
+    
+    # For CST334, we expect results in a JSON file (original behavior)
+    results = self.read_file_from_container("/tmp/results.json")
+    if results is None:
+      return Feedback(
+        score=0,
+        comments="Something went wrong during grading, likely a timeout. Please check your assignment for infinite loops and/or contact your professor."
+      )
+    
+    results_dict = json.loads(results)
+    if "lint_success" in results_dict and results_dict["lint_success"] and "lint_bonus" in kwargs:
+      results_dict["score"] += kwargs["lint_bonus"]
+    
+    return Feedback(
+      score=results_dict["score"],
+      comments=self.build_feedback(results_dict, results_dict["score"])
+    )
+  
+  def grade_submission(self, submission, *args, **kwargs) -> Feedback:
+    path_to_programming_assignment = os.path.join("programming-assignments", self.assignment_path)
+    
+    # Use CST334's original file copying logic (your code)
+    # This is more sophisticated than docker-configurable's simple copying
+    submission_files = []
+    for f in submission.files:
+      log.debug(f"f: {f.__class__} {f.name}")
+      # Your original logic: .c files go to src/, others go to include/
+      target_dir = f"/tmp/grading/{path_to_programming_assignment}/{'src' if f.name.endswith('.c') else 'include'}"
+      submission_files.append((f, target_dir))
+    
+    # Check for trickery using your original detection logic
+    if self.check_for_trickery(submission):
+      return Feedback(
+        score=0.0,
+        comments="It was detected that you might have been trying to game the scoring via exiting early from a unit test. Please contact your professor if you think this was in error."
+      )
+    
+    # Multiple grading runs with aggregation (preserves original CST334 behavior)
+    all_feedback = []
+    
+    for i in range(kwargs.get("num_repeats", 3)):
+      # Use parent docker infrastructure but with our custom file copying
+      all_feedback.append(
+        super(Grader__docker_configurable, self).grade_submission(
+          submission,
+          files_to_copy=submission_files,
+          path_to_programming_assignment=path_to_programming_assignment,
+          lint_bonus=1,
+          *args, **kwargs
+        )
+      )
+      
+    # Select best feedback and add aggregated results (original CST334 logic)
+    feedback = min(all_feedback)
+    
+    full_feedback = "##################\n"
+    full_feedback += "## All results: ##\n"
+    for i, result in enumerate(all_feedback):
+      full_feedback += f"test {i}: {result.score} points\n"
+    full_feedback += "##################\n"
+
+    feedback.comments += f"\n\n\n{full_feedback}"
+    return feedback
+
+
+@GraderRegistry.register("CST334online")
+class Grader__CST334online(Grader__CST334):
+  def __init__(self, assignment_path):
+    # Just use different git repo - leverage the parent's git_repo parameter
+    super().__init__(
+      assignment_path=assignment_path,
+      git_repo="https://www.github.com/samogden/CST334-assignments-online.git"
     )
 
 
