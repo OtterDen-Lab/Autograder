@@ -61,7 +61,6 @@ def working_directory(directory=None):
         temp_base = tempfile.gettempdir()
         temp_name = f"grader_thread_{thread_id}_{uuid.uuid4().hex[:8]}"
         directory = os.path.join(temp_base, temp_name)
-        log.debug(f"[Thread {thread_id}] Creating temp directory: {directory}")
         os.makedirs(directory, exist_ok=True)
         temp_dir = directory  # Store path for cleanup, not TemporaryDirectory object
       else:
@@ -69,20 +68,15 @@ def working_directory(directory=None):
         temp_dir_obj = tempfile.TemporaryDirectory()
         temp_dir = temp_dir_obj  # Store the object for cleanup
         directory = temp_dir_obj.name
-        log.debug(f"[Thread {thread_id}] Using main thread temp directory: {directory}")
     else:
-      log.debug(f"[Thread {thread_id}] Using provided directory: {directory}")
       directory = os.path.expanduser(directory)
       if not os.path.exists(directory):
-        log.debug(f"[Thread {thread_id}] Creating directory: {directory}")
         os.makedirs(directory, exist_ok=True)
     
     # Only change working directory if we're in the main thread to avoid conflicts
     if threading.current_thread() == threading.main_thread():
       original_dir = os.getcwd()
       os.chdir(directory)
-    
-    log.debug(f"directory: {directory}")
     
     # Yield the path of the working directory
     yield directory
@@ -119,6 +113,7 @@ def grade_single_assignment(assignment_data):
     Dict with grading results and any errors
   """
   thread_id = threading.current_thread().ident
+  assignment_id = None  # Initialize for error handling
   try:
     course = assignment_data['course']
     yaml_assignment = assignment_data['yaml_assignment']
@@ -128,7 +123,6 @@ def grade_single_assignment(assignment_data):
     root_dir = assignment_data['root_dir']
     
     assignment_id = yaml_assignment['id']
-    log.debug(f"[Thread {thread_id}] Starting assignment {assignment_id} with root_dir: {root_dir}")
     
     # Create assignment object if we have enough information
     lms_assignment = course.get_assignment(assignment_id)
@@ -141,15 +135,12 @@ def grade_single_assignment(assignment_data):
     grader_name = merged_assignment.get("grader")
     repo_path = merged_assignment.get('repo_path')
     
-    log.debug(f"[Thread {thread_id}] Creating grader {grader_name} for path {repo_path}")
     grader = GraderRegistry.create(
       grader_name,
       assignment_path=repo_path
     )
     
-    log.debug(f"[Thread {thread_id}] About to enter working_directory with root_dir: {root_dir}")
     with working_directory(root_dir) as working_dir:
-      log.debug(f"[Thread {thread_id}] Inside working_directory, got working_dir: {working_dir}")
       # Focus on the given assignment
       with AssignmentRegistry.create(
           merged_assignment['kind'],
@@ -164,7 +155,6 @@ def grade_single_assignment(assignment_data):
           if grader_name.lower() in ["manual"]:
             log.warning(f"[Thread {thread_id}] Manual grading detected for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode")
           
-          log.debug(f"[Thread {thread_id}] Preparing assignment in directory: {working_dir}")
           grading_assignment.prepare(
             limit=args.limit,
             do_regrade=do_regrade,
@@ -172,22 +162,18 @@ def grade_single_assignment(assignment_data):
             **merged_assignment.get("kwargs", {})
           )
           
-        log.debug(f"[Thread {thread_id}] Starting grader.grade_assignment")
         grader.grade_assignment(grading_assignment, **assignment_grading_kwargs, merge_only=args.merge_only)
         
         for submission in grading_assignment.submissions:
-          log.debug(f"[Thread {thread_id}] {submission}")
+          log.debug(submission)
         
         if grader.ready_to_finalize:
           if grader_name.lower() in ["manual"]:
             log.warning(f"[Thread {thread_id}] Manual grading finalization for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode")
-          log.debug(f"[Thread {thread_id}] Finalizing assignment")
           grading_assignment.finalize(push=push_grades, merge_only=args.merge_only)
     
-    log.debug(f"[Thread {thread_id}] Cleaning up grader")
     grader.cleanup()
     
-    log.debug(f"[Thread {thread_id}] Assignment {assignment_id} completed successfully")
     return {
       'success': True,
       'assignment_name': lms_assignment.name,
@@ -196,7 +182,7 @@ def grade_single_assignment(assignment_data):
     }
     
   except Exception as e:
-    log.error(f"[Thread {thread_id}] Error grading assignment {assignment_id}: {e}")
+    log.error(f"[Thread {thread_id}] Error grading assignment {assignment_id or 'unknown'}: {e}")
     import traceback
     log.error(f"[Thread {thread_id}] Traceback: {traceback.format_exc()}")
     return {
