@@ -395,7 +395,10 @@ class Grader__docker(Grader, abc.ABC):
       tty=True,
       **extra_args
     )
-    
+    log.debug(f"Command: \"{command}")
+    log.debug(f"rc: {rc}")
+    log.debug(f"stdout: {stdout}")
+    log.debug(f"stderr: {stderr}")
     return rc, stdout, stderr
   
   def read_file_from_container(self, path_to_file) -> Optional[str]:
@@ -519,6 +522,7 @@ class Grader__docker_configurable(Grader__docker):
       log.error(f"Failed to create working directory: {stderr}")
       return rc, stdout, stderr
     
+    rc, stdout, stderr = self.execute_command_in_container(f"ls -l {self.working_dir}")
     if self.grading_script:
       # Execute the grading script
       rc, stdout, stderr = self.execute_command_in_container(
@@ -602,16 +606,19 @@ class Grader__docker_configurable(Grader__docker):
 class Grader__CST334(Grader__docker_configurable):
   
   def __init__(self, assignment_path, git_repo="https://www.github.com/samogden/CST334-assignments.git"):
-    # Use docker-configurable's infrastructure for building the image
+    # Always need to clone the assignments repo to get the grading scripts
     dockerfile_text = f"""FROM samogden/cst334
 RUN git clone {git_repo} /tmp/grading/
 WORKDIR /tmp/grading
 CMD ["/bin/bash"]"""
     
+    # Set working directory to the specific assignment folder
+    assignment_working_dir = f"/tmp/grading/programming-assignments/{assignment_path}"
+    
     super().__init__(
       dockerfile_text=dockerfile_text,
-      grading_commands=["timeout 120 python ../../helpers/grader.py --output /tmp/results.json"],
-      working_dir="/tmp/grading"
+      grading_commands=[f"timeout 120 python ../../helpers/grader.py --output /tmp/results.json"],
+      working_dir=assignment_working_dir
     )
     self.assignment_path = assignment_path
   
