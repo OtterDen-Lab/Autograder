@@ -163,9 +163,16 @@ class Assignment__ProgrammingAssignment(Assignment):
     #  1. Get the submissions
     #  2. Filter out submissions we don't want
     #  3. possibly download proactively
+    log.info(f"Preparing assignment with do_regrade={do_regrade}, limit={limit}")
     self.submissions = self.lms_assignment.get_submissions(limit=(None if not do_regrade else limit))
+    log.info(f"Retrieved {len(self.submissions)} total submissions from LMS")
+    
     if not do_regrade:
+      ungraded_before = len(self.submissions)
       self.submissions = list(filter(lambda s: s.status == Submission.Status.UNGRADED, self.submissions))
+      log.info(f"Filtered to {len(self.submissions)} ungraded submissions (was {ungraded_before})")
+    else:
+      log.info("Regrade mode: processing all submissions regardless of status")
       
     # If a student changed the filename, try to fix it automatically.
     for submission in self.submissions:

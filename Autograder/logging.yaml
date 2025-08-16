@@ -40,11 +40,6 @@ loggers:
     handlers: [console, file]
     propagate: false
 
-  Autograder:
-    level: INFO
-    handlers: [console, file]
-    propagate: false
-
   lms_interface:
     level: INFO
     handlers: [console, file]
