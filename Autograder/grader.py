@@ -395,7 +395,10 @@ class Grader__docker(Grader, abc.ABC):
       tty=True,
       **extra_args
     )
-    
+    log.debug(f"Command: \"{command}")
+    log.debug(f"rc: {rc}")
+    log.debug(f"stdout: {stdout}")
+    log.debug(f"stderr: {stderr}")
     return rc, stdout, stderr
   
   def read_file_from_container(self, path_to_file) -> Optional[str]:
@@ -446,25 +449,183 @@ class Grader__docker(Grader, abc.ABC):
       return super().grade_submission(submission, *args, **kwargs)
       
 
+@GraderRegistry.register("docker-configurable")
+class Grader__docker_configurable(Grader__docker):
+  
+  def __init__(self, grading_script=None, grading_commands=None, working_dir="/tmp/grading", 
+               additional_installs=None, dockerfile_text=None, dockercompose_text=None,
+               additional_files=None, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.grading_script = grading_script
+    self.grading_commands = grading_commands if grading_commands else []
+    self.working_dir = working_dir
+    self.additional_installs = additional_installs if additional_installs else []
+    self.dockerfile_text = dockerfile_text
+    self.dockercompose_text = dockercompose_text
+    self.additional_files = additional_files if additional_files else []
+    
+    if not self.grading_script and not self.grading_commands:
+      raise ValueError("Must specify either grading_script or grading_commands")
+    
+    if self.grading_script and self.grading_commands:
+      raise ValueError("Cannot specify both grading_script and grading_commands")
+    
+    # Build custom image if needed
+    if self.dockerfile_text or self.additional_installs or self.additional_files:
+      self.image = self._build_custom_image()
+  
+  def _build_custom_image(self):
+    """Build a custom Docker image with additional installs and files"""
+    
+    if self.dockerfile_text:
+      # Use provided dockerfile
+      dockerfile_content = self.dockerfile_text
+    else:
+      # Build dockerfile from base image + additions
+      base_image = self.image if hasattr(self, 'image') and self.image != "ubuntu" else "ubuntu"
+      
+      dockerfile_lines = [f"FROM {base_image}"]
+      
+      # Add additional package installs
+      if self.additional_installs:
+        dockerfile_lines.append("# Install additional packages")
+        for install_cmd in self.additional_installs:
+          dockerfile_lines.append(f"RUN {install_cmd}")
+      
+      # Add additional files via COPY commands
+      if self.additional_files:
+        dockerfile_lines.append("# Copy additional files")
+        for file_spec in self.additional_files:
+          if isinstance(file_spec, dict):
+            src = file_spec.get('src')
+            dst = file_spec.get('dst', self.working_dir)
+            if src:
+              dockerfile_lines.append(f"COPY {src} {dst}")
+          elif isinstance(file_spec, str):
+            dockerfile_lines.append(f"COPY {file_spec} {self.working_dir}")
+      
+      # Set working directory
+      dockerfile_lines.append(f"WORKDIR {self.working_dir}")
+      dockerfile_lines.append("CMD [\"/bin/bash\"]")
+      
+      dockerfile_content = '\n'.join(dockerfile_lines)
+    
+    log.info("Building custom Docker image with additional configuration...")
+    log.debug(f"Dockerfile content:\n{dockerfile_content}")
+    
+    return self.build_docker_image(dockerfile_content)
+  
+  def execute_grading(self, *args, **kwargs) -> Tuple[int, str, str]:
+    # Create working directory
+    rc, stdout, stderr = self.execute_command_in_container(f"mkdir -p {self.working_dir}")
+    if rc != 0:
+      log.error(f"Failed to create working directory: {stderr}")
+      return rc, stdout, stderr
+    
+    rc, stdout, stderr = self.execute_command_in_container(f"ls -l {self.working_dir}")
+    if self.grading_script:
+      # Execute the grading script
+      rc, stdout, stderr = self.execute_command_in_container(
+        command=self.grading_script,
+        workdir=self.working_dir
+      )
+    else:
+      # Execute the series of commands
+      combined_stdout = []
+      combined_stderr = []
+      final_rc = 0
+      
+      for command in self.grading_commands:
+        rc, stdout, stderr = self.execute_command_in_container(
+          command=command,
+          workdir=self.working_dir
+        )
+        if stdout:
+          combined_stdout.append(stdout.decode() if isinstance(stdout, bytes) else stdout)
+        if stderr:
+          combined_stderr.append(stderr.decode() if isinstance(stderr, bytes) else stderr)
+        if rc != 0:
+          final_rc = rc
+      
+      rc = final_rc
+      stdout = '\n'.join(combined_stdout).encode() if combined_stdout else b''
+      stderr = '\n'.join(combined_stderr).encode() if combined_stderr else b''
+    
+    return rc, stdout, stderr
+  
+  def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
+    rc, stdout, stderr = execution_results
+    
+    # Decode stdout if it's bytes
+    stdout_str = stdout.decode() if isinstance(stdout, bytes) else stdout
+    stderr_str = stderr.decode() if isinstance(stderr, bytes) else stderr
+    
+    # Try to parse YAML output from stdout
+    score = 0.0
+    feedback_text = ""
+    
+    try:
+      # Look for YAML in stdout
+      yaml_output = yaml.safe_load(stdout_str)
+      if isinstance(yaml_output, dict):
+        score = float(yaml_output.get('score', 0.0))
+        feedback_text = yaml_output.get('feedback', '')
+    except (yaml.YAMLError, ValueError, TypeError) as e:
+      log.warning(f"Failed to parse YAML from grading output: {e}")
+      # If YAML parsing fails, use default score and include raw output
+      feedback_text = "Failed to parse grading results"
+    
+    # Include raw stdout as additional feedback
+    full_feedback = feedback_text
+    if stdout_str.strip():
+      full_feedback += f"\n\n--- Raw Output ---\n{stdout_str}"
+    if stderr_str.strip():
+      full_feedback += f"\n\n--- Error Output ---\n{stderr_str}"
+    
+    return Feedback(
+      score=score,
+      comments=full_feedback.strip()
+    )
+  
+  def grade_submission(self, submission, *args, **kwargs) -> Feedback:
+    # Prepare files to copy to docker container
+    submission_files = []
+    for f in submission.files:
+      # Copy all files to the working directory
+      submission_files.append((f, self.working_dir))
+    
+    # Grade using parent class method
+    return super().grade_submission(
+      submission,
+      files_to_copy=submission_files,
+      *args, **kwargs
+    )
+
+
 @GraderRegistry.register("CST334")
-class Grader__CST334(Grader__docker):
+class Grader__CST334(Grader__docker_configurable):
   
-  dockerfile_str = """
-  FROM samogden/cst334
-  RUN git clone https://www.github.com/samogden/CST334-assignments.git /tmp/grading/
-  WORKDIR /tmp/grading
-  CMD ["/bin/bash"]
-  """
-  
-  def __init__(self, assignment_path):
-    super().__init__()
+  def __init__(self, assignment_path, git_repo="https://www.github.com/samogden/CST334-assignments.git"):
+    # Always need to clone the assignments repo to get the grading scripts
+    dockerfile_text = f"""FROM samogden/cst334
+RUN git clone {git_repo} /tmp/grading/
+WORKDIR /tmp/grading
+CMD ["/bin/bash"]"""
+    
+    # Set working directory to the specific assignment folder
+    assignment_working_dir = f"/tmp/grading/programming-assignments/{assignment_path}"
+    
+    super().__init__(
+      dockerfile_text=dockerfile_text,
+      grading_commands=[f"timeout 120 python ../../helpers/grader.py --output /tmp/results.json"],
+      working_dir=assignment_working_dir
+    )
     self.assignment_path = assignment_path
-    self.image = self.build_docker_image(self.dockerfile_str)
   
   def check_for_trickery(self, submission) -> bool:
-    def contains_string(str, f) -> bool:
+    def contains_string(search_str, f) -> bool:
       try:
-        if str.encode() in f.read():
+        if search_str.encode() in f.read():
           return True
         else:
           return False
@@ -540,7 +701,6 @@ class Grader__CST334(Grader__docker):
         "################",
       ])
     
-    
     if "lint_logs" in results_dict:
       feedback_strs.extend([
         "## Lint Logs ##",
@@ -556,22 +716,18 @@ class Grader__CST334(Grader__docker):
     
     return '\n'.join(feedback_strs)
   
-  def execute_grading(self, path_to_programming_assignment, *args, **kwargs) -> Tuple[int, str, str]:
-    rc, stdout, stderr = self.execute_command_in_container(
-      command="timeout 120 python ../../helpers/grader.py --output /tmp/results.json",
-      # command="make",
-      workdir=f"/tmp/grading/{path_to_programming_assignment}/"
-    )
-    return rc, stdout, stderr
-  
-  def score_grading(self, *args, **kwargs) -> Feedback:
+  def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
+    """Override docker-configurable to use JSON instead of YAML parsing"""
+    rc, stdout, stderr = execution_results
+    
+    # For CST334, we expect results in a JSON file (original behavior)
     results = self.read_file_from_container("/tmp/results.json")
     if results is None:
-      # Then something went awry in reading back feedback file
       return Feedback(
         score=0,
-        comments="Something went wrong during grading, likely a timeout.  Please check your assignment for infinite loops and/or contact your professor."
+        comments="Something went wrong during grading, likely a timeout. Please check your assignment for infinite loops and/or contact your professor."
       )
+    
     results_dict = json.loads(results)
     if "lint_success" in results_dict and results_dict["lint_success"] and "lint_bonus" in kwargs:
       results_dict["score"] += kwargs["lint_bonus"]
@@ -582,32 +738,32 @@ class Grader__CST334(Grader__docker):
     )
   
   def grade_submission(self, submission, *args, **kwargs) -> Feedback:
-    
     path_to_programming_assignment = os.path.join("programming-assignments", self.assignment_path)
     
-    # Gather submission files in a format to copy over
+    # Use CST334's original file copying logic (your code)
+    # This is more sophisticated than docker-configurable's simple copying
     submission_files = []
     for f in submission.files:
       log.debug(f"f: {f.__class__} {f.name}")
-      submission_files.append(
-        (f, f"/tmp/grading/{path_to_programming_assignment}/{'src' if f.name.endswith('.c') else 'include'}")
-      )
+      # Your original logic: .c files go to src/, others go to include/
+      target_dir = f"/tmp/grading/{path_to_programming_assignment}/{'src' if f.name.endswith('.c') else 'include'}"
+      submission_files.append((f, target_dir))
     
-    # Check for trickery, per Elijah's trials (so far)
+    # Check for trickery using your original detection logic
     if self.check_for_trickery(submission):
       return Feedback(
         score=0.0,
-        comments="It was detected that you might have been trying to game the scoring via exiting early from a unit test.  Please contact your professor if you think this was in error."
+        comments="It was detected that you might have been trying to game the scoring via exiting early from a unit test. Please contact your professor if you think this was in error."
       )
     
-    # Grade as many times as we're requested to, gathering results for later
-    all_feedback : List[Feedback] = []
+    # Multiple grading runs with aggregation (preserves original CST334 behavior)
+    all_feedback = []
     
     for i in range(kwargs.get("num_repeats", 3)):
-      # Grade results in docker
+      # Use parent docker infrastructure but with our custom file copying
       all_feedback.append(
-        super().grade_submission(
-          submission, # Is technically superfluous
+        super(Grader__docker_configurable, self).grade_submission(
+          submission,
           files_to_copy=submission_files,
           path_to_programming_assignment=path_to_programming_assignment,
           lint_bonus=1,
@@ -615,13 +771,13 @@ class Grader__CST334(Grader__docker):
         )
       )
       
-    # Select feedback and return
+    # Select best feedback and add aggregated results (original CST334 logic)
     feedback = min(all_feedback)
     
-    full_feedback =  "##################\n"
+    full_feedback = "##################\n"
     full_feedback += "## All results: ##\n"
     for i, result in enumerate(all_feedback):
-      full_feedback += f"test {i}: {result.comments} points\n"
+      full_feedback += f"test {i}: {result.score} points\n"
     full_feedback += "##################\n"
 
     feedback.comments += f"\n\n\n{full_feedback}"
@@ -630,12 +786,12 @@ class Grader__CST334(Grader__docker):
 
 @GraderRegistry.register("CST334online")
 class Grader__CST334online(Grader__CST334):
-  dockerfile_str = """
-  FROM samogden/cst334
-  RUN git clone https://www.github.com/samogden/CST334-assignments-online.git /tmp/grading/
-  WORKDIR /tmp/grading
-  CMD ["/bin/bash"]
-  """
+  def __init__(self, assignment_path):
+    # Just use different git repo - leverage the parent's git_repo parameter
+    super().__init__(
+      assignment_path=assignment_path,
+      git_repo="https://www.github.com/samogden/CST334-assignments-online.git"
+    )
 
 
 @GraderRegistry.register("Step-by-step")
