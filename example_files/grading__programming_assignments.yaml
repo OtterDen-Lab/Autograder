@@ -1,63 +1,41 @@
 prod: True
-push: True
+push: False
 courses:
   - name: CST334-online
     id: 29233
+    # Course-level defaults
+    grader: CST334online
+    assignment_defaults:
+      kind: ProgrammingAssignment
+      kwargs:
+        num_repeats: 10
     assignments:
-      - name: PA1
+      - repo_path: PA1
         id: 487781
-        kind: ProgrammingAssignment
-        grader: CST334online
-        kwargs:
-          num_repeats: 10
-          assignment_path: PA1
-      - name: PA2
+      - repo_path: PA2
         id: 487782
-        kind: ProgrammingAssignment
-        grader: CST334online
-        kwargs:
-          num_repeats: 10
-          assignment_path: PA2
-      - name: PA3
+      - repo_path: PA3
         id: 487783
-        kind: ProgrammingAssignment
-        grader: CST334online
-        kwargs:
-          num_repeats: 10
-          assignment_path: PA3
-      - name: PA4
+      - repo_path: PA4
         id: 487784
-        kind: ProgrammingAssignment
-        grader: CST334online
-        kwargs:
-          num_repeats: 10
-          assignment_path: PA4
-      - name: PA5
+      - repo_path: PA5
         id: 487785
-        kind: ProgrammingAssignment
-        grader: CST334online
-        kwargs:
-          num_repeats: 10
-          assignment_path: PA5
-      - name: PA6-script
+      - repo_path: PA6-script
         id: 487786
-        kind: ProgrammingAssignment
         grader: docker-configurable
         kwargs:
           grading_script: "./grade.py"
           working_dir: "/tmp/grading"
-      - name: PA7-commands
+      - repo_path: PA7-commands
         id: 487787
-        kind: ProgrammingAssignment
         grader: docker-configurable
         kwargs:
           grading_commands:
             - "gcc -o program *.c"
             - "python test_runner.py --yaml-output"
           working_dir: "/tmp/grading"
-      - name: PA8-advanced
+      - repo_path: PA8-advanced
         id: 487788
-        kind: ProgrammingAssignment
         grader: docker-configurable
         kwargs:
           image: "python:3.9"
@@ -70,9 +48,8 @@ courses:
             - "./grade_template.py"
           grading_script: "python grade_template.py"
           working_dir: "/tmp/grading"
-      - name: PA9-dockerfile
+      - repo_path: PA9-dockerfile
         id: 487789
-        kind: ProgrammingAssignment
         grader: docker-configurable
         kwargs:
           dockerfile_text: |

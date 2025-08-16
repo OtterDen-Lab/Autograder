@@ -114,6 +114,10 @@ def main():
     
     log.info(f"Grading Course \"{course.name}\"")
     
+    # Get course-level defaults
+    course_defaults = yaml_course.get('assignment_defaults', {})
+    course_grader = yaml_course.get('grader')
+    
     # Walk through assignments in course to grade, error if we don't have required information
     for yaml_assignment in yaml_course.get('assignments', []):
       if yaml_assignment.get('disabled', False):
@@ -126,32 +130,46 @@ def main():
         log.error(e)
         return
       
+      # Merge course defaults with assignment-specific settings
+      merged_assignment = {}
+      merged_assignment.update(course_defaults)
+      merged_assignment.update(yaml_assignment)
+      
+      # Merge kwargs specifically (deep merge)
+      merged_kwargs = {}
+      merged_kwargs.update(course_defaults.get('kwargs', {}))
+      merged_kwargs.update(yaml_assignment.get('kwargs', {}))
+      merged_assignment['kwargs'] = merged_kwargs
+      
       # Create assignment object if we have enough information
       assignment = course.get_assignment(assignment_id)
-      assignment_grading_kwargs = yaml_assignment.get('kwargs', {})
+      assignment_grading_kwargs = merged_assignment.get('kwargs', {})
       do_regrade = args.do_regrade
       
       log.info(f"Grading assignment \"{assignment.name}\"")
       
-      # Get the grader from the registry
+      # Get the grader from the registry, using course default if not specified
+      grader_name = merged_assignment.get("grader", course_grader or "Dummy")
+      repo_path = merged_assignment.get('repo_path')
+      
       grader = GraderRegistry.create(
-        yaml_assignment.get("grader", "Dummy"),
-        assignment_path=yaml_assignment.get('name')
+        grader_name,
+        assignment_path=repo_path
       )
       
       with working_directory(root_dir) as working_dir:
         # Focus on the given assignment
         with AssignmentRegistry.create(
-            yaml_assignment['kind'],
+            merged_assignment['kind'],
             lms_assignment=assignment,
             grading_root_dir=working_dir,
-            **yaml_assignment.get('assignment_kwargs', {})
+            **merged_assignment.get('assignment_kwargs', {})
         ) as assignment:
           
           # If the grader doesn't need preparation (e.g. we have already graded and are just finalizing), then skip the prep step
           if grader.assignment_needs_preparation():
             # If manual, double check that we should clobber the files
-            if yaml_assignment.get("grader", "Dummy").lower() in ["manual"]:
+            if grader_name.lower() in ["manual"]:
               prepare_assignment = input("Would you like to prepare assignment? (y/N) ").strip().lower()
               if prepare_assignment not in ['y', 'yes']:
                 log.info("Aborting execution based on response")
@@ -160,7 +178,7 @@ def main():
               limit=args.limit,
               do_regrade=do_regrade,
               merge_only=args.merge_only,
-              **yaml_assignment.get("kwargs", {})
+              **merged_assignment.get("kwargs", {})
             )
             
           grader.grade_assignment(assignment, **assignment_grading_kwargs, merge_only=args.merge_only)
@@ -169,7 +187,7 @@ def main():
             log.debug(submission)
           
           if grader.ready_to_finalize:
-            if yaml_assignment.get("grader", "Dummy").lower() in ["manual"]:
+            if grader_name.lower() in ["manual"]:
               finalize_assignment = input("Would you like to finalize assignment? (y/N) ").strip().lower()
               if finalize_assignment not in ['y', 'yes']:
                 log.info("Aborting execution based on response")
