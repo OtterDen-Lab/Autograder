@@ -6,10 +6,7 @@ import ast
 import base64
 import collections
 import dataclasses
-import importlib
 import math
-import pathlib
-import pkgutil
 import random
 import shutil
 import sys
@@ -29,6 +26,7 @@ import os
 import pandas as pd
 
 import Autograder.ai_helper as ai_helper
+from Autograder.registry import AssignmentRegistry
 from lms_interface.canvas_interface import CanvasCourse, CanvasAssignment
 from lms_interface.classes import Student, Submission, Feedback
 
@@ -109,47 +107,6 @@ class Assignment(abc.ABC):
         )
 
 
-class AssignmentRegistry:
-  _registry = {}
-  _scanned = False
-  
-  @classmethod
-  def register(cls, assignment_type=None):
-    log.debug("Registering...")
-    
-    def decorator(subclass):
-      # Use the provided name or fall back to the class name
-      name = (assignment_type.lower() if assignment_type 
-              else subclass.__name__.lower())
-      cls._registry[name] = subclass
-      return subclass
-    
-    return decorator
-  
-  @classmethod
-  def create(cls, assignment_type, **kwargs):
-    """Instantiate a registered subclass."""
-    
-    # If we haven't already loaded our premades, do so now
-    if not cls._scanned:
-      cls.load_premade_questions()
-    # Check to see if it's in the registry
-    if assignment_type.lower() not in cls._registry:
-      raise ValueError(f"Unknown assignment type: {assignment_type}")
-    
-    return cls._registry[assignment_type.lower()](**kwargs)
-  
-  
-  @classmethod
-  def load_premade_questions(cls):
-    package_name = "Autograder"  # Fully qualified package name
-    package_path = pathlib.Path(__file__).parent / "grader"
-    log.debug(f"package_path: {package_path}")
-    
-    for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
-      # Import the module
-      module = importlib.import_module(f"{package_name}.{module_name}")
-      log.debug(f"Loaded module: {module}")
 
 
 @AssignmentRegistry.register("ProgrammingAssignment")

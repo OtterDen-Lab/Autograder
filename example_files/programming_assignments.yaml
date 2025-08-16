@@ -8,7 +8,7 @@ courses:
     assignment_defaults:
       kind: ProgrammingAssignment
       kwargs:
-        num_repeats: 10
+        num_repeats: 1
     assignments:
       - repo_path: PA1
         id: 487781
