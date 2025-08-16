@@ -1,0 +1,22 @@
+prod: True
+push: False
+courses:
+  - name: CST334-online
+    id: 29233
+    # Course-level defaults
+    grader: CST334online
+    assignment_defaults:
+      kind: ProgrammingAssignment
+      kwargs:
+        num_repeats: 10
+    assignments:
+      - repo_path: PA1
+        id: 487781
+      - repo_path: PA2
+        id: 487782
+      - repo_path: PA3
+        id: 487783
+      - repo_path: PA4
+        id: 487784
+      - repo_path: PA5
+        id: 487785

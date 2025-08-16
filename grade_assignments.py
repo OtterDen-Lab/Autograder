@@ -22,7 +22,7 @@ log.setLevel(logging.DEBUG)
 def parse_args():
   parser = argparse.ArgumentParser()
   
-  parser.add_argument("--yaml", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "example_files/grading__programming_assignments.yaml"))
+  parser.add_argument("--yaml", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "example_files/programming_assignments.yaml"))
   parser.add_argument("--limit", default=None, type=int)
   parser.add_argument("--regrade", "--do_regrade", dest="do_regrade", action="store_true")
   parser.add_argument("--merge_only", dest="merge_only", action="store_true")
