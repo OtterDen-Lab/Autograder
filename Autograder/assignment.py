@@ -13,6 +13,7 @@ import pkgutil
 import random
 import shutil
 import sys
+import threading
 import time
 import urllib
 from typing import List, Tuple, Dict, Optional
@@ -56,7 +57,6 @@ class Assignment(abc.ABC):
   def __enter__(self) -> Assignment:
     """Enables use as a context manager (e.g. `with [Assignment]`) by managing working directory"""
     # todo: Enable use of anonymous temp directories
-    import threading
     
     # Only change working directory if we're in the main thread to avoid race conditions
     if threading.current_thread() == threading.main_thread():

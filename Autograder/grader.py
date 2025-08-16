@@ -8,6 +8,7 @@ import pathlib
 import pkgutil
 import pprint
 import time
+import uuid
 
 import io
 import tarfile
@@ -305,7 +306,6 @@ class Grader__docker(Grader, abc.ABC):
     self.container: Optional[docker.models.containers.Container] = None
     
     # Generate unique container name for thread safety
-    import uuid
     self.container_name_prefix = f"grader_{uuid.uuid4().hex[:8]}"
   
   def cleanup(self):
@@ -338,7 +338,6 @@ class Grader__docker(Grader, abc.ABC):
     return image
   
   def start_container(self, image : docker.models.images):
-    import time
     # Create unique container name with timestamp to avoid conflicts when multiple containers per thread
     container_name = f"{self.container_name_prefix}_{threading.current_thread().ident}_{int(time.time() * 1000000)}"
     self.container = self.client.containers.run(

@@ -7,6 +7,7 @@ import pprint
 import shutil
 import tempfile
 import threading
+import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -57,7 +58,6 @@ def working_directory(directory=None):
       # Create a temporary directory if none is provided - make it thread-safe
       if threading.current_thread() != threading.main_thread():
         # For worker threads, create a unique temp directory
-        import uuid
         temp_base = tempfile.gettempdir()
         temp_name = f"grader_thread_{thread_id}_{uuid.uuid4().hex[:8]}"
         directory = os.path.join(temp_base, temp_name)
@@ -90,7 +90,6 @@ def working_directory(directory=None):
     if temp_dir is not None:
       if threading.current_thread() != threading.main_thread():
         # For worker threads, manually remove the directory
-        import shutil
         try:
           if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
@@ -183,7 +182,6 @@ def grade_single_assignment(assignment_data):
     
   except Exception as e:
     log.error(f"[Thread {thread_id}] Error grading assignment {assignment_id or 'unknown'}: {e}")
-    import traceback
     log.error(f"[Thread {thread_id}] Traceback: {traceback.format_exc()}")
     return {
       'success': False,
