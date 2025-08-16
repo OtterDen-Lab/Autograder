@@ -47,7 +47,8 @@ class GraderRegistry:
     
     def decorator(subclass):
       # Use the provided name or fall back to the class name
-      name = grader_type.lower() if grader_type else subclass.__name__.lower()
+      name = (grader_type.lower() if grader_type 
+              else subclass.__name__.lower())
       cls._registry[name] = subclass
       return subclass
     
@@ -107,7 +108,7 @@ class Grader(abc.ABC):
     :return: returns a Feedback object for the submission
     """
     execution_results = self.execute_grading(*args, **kwargs)
-    return self.score_grading(execution_results,*args,  **kwargs)
+    return self.score_grading(execution_results, *args, **kwargs)
   
   @abc.abstractmethod
   def execute_grading(self, *args, **kwargs):
@@ -455,9 +456,15 @@ class Grader__docker(Grader, abc.ABC):
 @GraderRegistry.register("docker-configurable")
 class Grader__docker_configurable(Grader__docker):
   
-  def __init__(self, grading_script=None, grading_commands=None, working_dir="/tmp/grading", 
-               additional_installs=None, dockerfile_text=None, dockercompose_text=None,
-               additional_files=None, *args, **kwargs):
+  def __init__(self, 
+               grading_script=None, 
+               grading_commands=None, 
+               working_dir="/tmp/grading", 
+               additional_installs=None, 
+               dockerfile_text=None, 
+               dockercompose_text=None,
+               additional_files=None, 
+               *args, **kwargs):
     super().__init__(*args, **kwargs)
     self.grading_script = grading_script
     self.grading_commands = grading_commands if grading_commands else []
@@ -468,13 +475,18 @@ class Grader__docker_configurable(Grader__docker):
     self.additional_files = additional_files if additional_files else []
     
     if not self.grading_script and not self.grading_commands:
-      raise ValueError("Must specify either grading_script or grading_commands")
+      raise ValueError(
+        "Must specify either grading_script or grading_commands"
+      )
     
     if self.grading_script and self.grading_commands:
-      raise ValueError("Cannot specify both grading_script and grading_commands")
+      raise ValueError(
+        "Cannot specify both grading_script and grading_commands"
+      )
     
     # Build custom image if needed
-    if self.dockerfile_text or self.additional_installs or self.additional_files:
+    if (self.dockerfile_text or self.additional_installs or 
+        self.additional_files):
       self.image = self._build_custom_image()
   
   def _build_custom_image(self):

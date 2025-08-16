@@ -119,7 +119,8 @@ class AssignmentRegistry:
     
     def decorator(subclass):
       # Use the provided name or fall back to the class name
-      name = assignment_type.lower() if assignment_type else subclass.__name__.lower()
+      name = (assignment_type.lower() if assignment_type 
+              else subclass.__name__.lower())
       cls._registry[name] = subclass
       return subclass
     
@@ -166,19 +167,29 @@ class Assignment__ProgrammingAssignment(Assignment):
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
   
-  def prepare(self, *args, limit=None, do_regrade=False, only_include_latest=True, **kwargs):
+  def prepare(self, 
+              *args, 
+              limit=None, 
+              do_regrade=False, 
+              only_include_latest=True, 
+              **kwargs):
     
     # Steps:
     #  1. Get the submissions
     #  2. Filter out submissions we don't want
     #  3. possibly download proactively
     log.info(f"Preparing assignment with do_regrade={do_regrade}, limit={limit}")
-    self.submissions = self.lms_assignment.get_submissions(limit=(None if not do_regrade else limit))
+    self.submissions = self.lms_assignment.get_submissions(
+      limit=(None if not do_regrade else limit)
+    )
     log.info(f"Retrieved {len(self.submissions)} total submissions from LMS")
     
     if not do_regrade:
       ungraded_before = len(self.submissions)
-      self.submissions = list(filter(lambda s: s.status == Submission.Status.UNGRADED, self.submissions))
+      self.submissions = list(filter(
+        lambda s: s.status == Submission.Status.UNGRADED, 
+        self.submissions
+      ))
       log.info(f"Filtered to {len(self.submissions)} ungraded submissions (was {ungraded_before})")
     else:
       log.info("Regrade mode: processing all submissions regardless of status")
@@ -188,7 +199,10 @@ class Assignment__ProgrammingAssignment(Assignment):
       for f in submission.files:
         if f.name not in self.__class__.allowed_filenames:
           # Then we'll need to try to match it.
-          new_name = max(self.allowed_filenames, key=(lambda s: fuzzywuzzy.fuzz.ratio(s, f.name)))
+          new_name = max(
+            self.allowed_filenames, 
+            key=(lambda s: fuzzywuzzy.fuzz.ratio(s, f.name))
+          )
           log.info(f"Renaming {f.name} to {new_name}")
           f.name = new_name
     
