@@ -10,7 +10,7 @@ import threading
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 import yaml
 
@@ -165,7 +165,7 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
         grader.grade_assignment(grading_assignment, **assignment_grading_kwargs, merge_only=args.merge_only)
         
         for submission in grading_assignment.submissions:
-          log.debug(submission)
+          log.debug(f"{submission} ({submission.feedback})")
         
         if grader.ready_to_finalize:
           if grader_name.lower() in ["manual"]:
@@ -192,50 +192,115 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     }
 
 
-def main() -> None:
+@contextlib.contextmanager
+def ensure_single_instance():
+  """
+  Context manager for file locking to prevent multiple instances.
   
-  # First, check to make sure we are the only version running, since this can cause problems with docker and canvas otherwise
+  Ensures only one grading process runs at a time to avoid conflicts
+  with Docker and Canvas operations.
+  """
   lockfile = "/tmp/TeachingTools.grade_assignments.lock"
   lock_fd = open(lockfile, "w")
   try:
     fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    yield
   except IOError:
     log.warning("Early exiting because another instance is already running")
-    return
+    raise SystemExit(0)
+  finally:
+    try:
+      lock_fd.close()
+    except Exception:
+      pass
 
-  # Otherwise, continue with normal flow
-  args = parse_args()
+
+def load_and_validate_config(yaml_path: str) -> Dict:
+  """
+  Load YAML configuration and extract global settings.
   
-  # Load overall YAML
-  with open(args.yaml) as fid:
+  Args:
+    yaml_path: Path to the YAML configuration file
+    
+  Returns:
+    Dictionary containing the loaded configuration
+  """
+  with open(yaml_path) as fid:
     grader_info = yaml.safe_load(fid)
   
   log.debug(grader_info)
+  return grader_info
+
+
+def create_assignment_data(course, yaml_assignment: Dict, merged_assignment: Dict, 
+                          args: argparse.Namespace, push_grades: bool, root_dir: Optional[str]) -> Dict:
+  """
+  Create assignment data structure for grading.
   
+  Args:
+    course: Canvas course object
+    yaml_assignment: Assignment configuration from YAML
+    merged_assignment: Merged assignment configuration
+    args: Command line arguments
+    push_grades: Whether to push grades to LMS
+    root_dir: Root directory for grading operations
+    
+  Returns:
+    Dictionary containing assignment data for grading
+  """
+  assignment_id = yaml_assignment['id']
+  
+  # Create a unique working directory for each assignment to avoid conflicts
+  if root_dir:
+    # If root_dir is specified, create a unique subdirectory for this assignment
+    assignment_root = os.path.join(root_dir, f"assignment_{assignment_id}_{uuid.uuid4().hex[:8]}")
+  else:
+    # If no root_dir, each thread will create its own temp directory
+    assignment_root = None
+    
+  return {
+    'course': course,
+    'yaml_assignment': yaml_assignment,
+    'merged_assignment': merged_assignment,
+    'args': args,
+    'push_grades': push_grades,
+    'root_dir': assignment_root
+  }
+
+
+def collect_assignments_to_grade(config: Dict, args: argparse.Namespace) -> List[Dict]:
+  """
+  Process courses and collect all assignments that need grading.
+  
+  Args:
+    config: Loaded YAML configuration
+    args: Command line arguments
+    
+  Returns:
+    List of assignment data dictionaries ready for grading
+  """
   # Pull flags from YAML file that will be applied to all submissions
-  use_prod = grader_info.get('prod', False)
-  push_grades = grader_info.get('push', False)
-  root_dir = grader_info.get('root_dir', None)
+  use_prod = config.get('prod', False)
+  push_grades = config.get('push', False)
+  root_dir = config.get('root_dir', None)
   
   # Create the LMS interface
   lms_interface = CanvasInterface(prod=use_prod)
   
-  # Collect all assignments to be graded
   assignments_to_grade = []
   
   # Walk through all defined courses, error if we don't have required information
-  for yaml_course in grader_info.get('courses', []):
+  for yaml_course in config.get('courses', []):
     try:
       course_id = int(yaml_course['id'])
     except KeyError as e:
-      log.error("No course ID specified.  Please update.")
+      log.error("No course ID specified. Please update.")
       log.error(f"{pprint.pformat(yaml_course)}")
       log.error(e)
-      return
+      raise SystemExit(1)
     
     # Create course object if found
     course = lms_interface.get_course(course_id)
-    
     log.info(f"Preparing to grade Course \"{course.name}\"")
     
     # Get course-level defaults
@@ -249,10 +314,10 @@ def main() -> None:
       try:
         assignment_id = yaml_assignment['id']
       except KeyError as e:
-        log.error("No assignment ID specified.  Please update.")
+        log.error("No assignment ID specified. Please update.")
         log.error(f"{pprint.pformat(yaml_course)}")
         log.error(e)
-        return
+        raise SystemExit(1)
       
       # Merge course defaults with assignment-specific settings
       merged_assignment = {}
@@ -270,24 +335,25 @@ def main() -> None:
         merged_assignment['grader'] = course_grader or "Dummy"
       
       # Add this assignment to our list to be graded
-      # Create a unique working directory for each assignment to avoid conflicts
-      if root_dir:
-        # If root_dir is specified, create a unique subdirectory for this assignment
-        assignment_root = os.path.join(root_dir, f"assignment_{assignment_id}_{uuid.uuid4().hex[:8]}")
-      else:
-        # If no root_dir, each thread will create its own temp directory
-        assignment_root = None
-        
-      assignment_data = {
-        'course': course,
-        'yaml_assignment': yaml_assignment,
-        'merged_assignment': merged_assignment,
-        'args': args,
-        'push_grades': push_grades,
-        'root_dir': assignment_root
-      }
+      assignment_data = create_assignment_data(
+        course, yaml_assignment, merged_assignment, args, push_grades, root_dir
+      )
       assignments_to_grade.append(assignment_data)
   
+  return assignments_to_grade
+
+
+def execute_grading(assignments_to_grade: List[Dict], args: argparse.Namespace) -> List[Dict]:
+  """
+  Execute grading either single-threaded or multi-threaded.
+  
+  Args:
+    assignments_to_grade: List of assignment data for grading
+    args: Command line arguments
+    
+  Returns:
+    List of grading results
+  """
   log.info(f"Found {len(assignments_to_grade)} assignments to grade")
   
   # Determine number of worker threads
@@ -335,7 +401,16 @@ def main() -> None:
             'error': str(exc)
           })
   
-  # Summary of results
+  return results
+
+
+def print_results_summary(results: List[Dict]) -> None:
+  """
+  Print summary of grading results.
+  
+  Args:
+    results: List of grading result dictionaries
+  """
   successful = sum(1 for r in results if r['success'])
   failed = len(results) - successful
   
@@ -346,9 +421,24 @@ def main() -> None:
     for result in results:
       if not result['success']:
         log.error(f"  Assignment {result['assignment_id']}: {result['error']}")
-  
 
+
+def main() -> None:
+  """
+  Main entry point for the grading script.
+  
+  Coordinates the entire grading process using a clean, modular approach.
+  """
+  with ensure_single_instance():
+    args = parse_args()
+    config = load_and_validate_config(args.yaml)
+    
+    assignments_to_grade = collect_assignments_to_grade(config, args)
+    results = execute_grading(assignments_to_grade, args)
+    
+    print_results_summary(results)
 
 
 if __name__ == "__main__":
   main()
+
