@@ -66,7 +66,7 @@ class Assignment(abc.ABC):
       os.chdir(self.original_dir)
   
   @abc.abstractmethod
-  def prepare(self, *args, **kwargs):
+  def prepare(self, *args, **kwargs) -> None:
     """
     This function is intended to set up any directories or files as appropriate for grading.
     It should take in some sort of input and prepare Submissions to be passed to a grader object.
@@ -74,7 +74,7 @@ class Assignment(abc.ABC):
     """
     pass
   
-  def finalize(self, *args, **kwargs):
+  def finalize(self, *args, **kwargs) -> None:
     """
     This function is intended to finalize any grading.  This could be reloading the grading CSV and matching names,
     or could just be a noop.

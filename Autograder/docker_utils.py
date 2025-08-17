@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 # Lazy import docker to avoid import errors when docker is not available
 docker = None
-def _import_docker():
+def _import_docker() -> None:
     global docker
     if docker is None:
         import docker as docker_module
@@ -37,7 +37,7 @@ class DockerClient:
         self.client = None
         self._setup_client()
     
-    def _setup_client(self):
+    def _setup_client(self) -> None:
         """Set up Docker client with error handling."""
         _import_docker()
         
@@ -88,7 +88,7 @@ class DockerClient:
             log.error(f"Docker API error during build: {e}")
             raise Autograder.exceptions.DockerError(f"Docker API error building {tag}: {e}") from e
     
-    def remove_image(self, image, force=True):
+    def remove_image(self, image, force: bool = True) -> None:
         """Remove a Docker image with error handling."""
         try:
             image.remove(force=force)
@@ -121,7 +121,7 @@ class DockerContainer:
         timestamp = int(time.time() * 1000000)
         self.container_name = f"{name_prefix}_{uuid.uuid4().hex[:8]}_{thread_id}_{timestamp}"
     
-    def start(self):
+    def start(self) -> None:
         """Start the container."""
         try:
             self.container = self.client.client.containers.run(
@@ -142,7 +142,7 @@ class DockerContainer:
             log.error(f"Docker API error starting container: {e}")
             raise Autograder.exceptions.DockerError(f"Docker API error: {e}") from e
     
-    def stop(self, timeout=1):
+    def stop(self, timeout: int = 1) -> None:
         """Stop and remove the container."""
         if self.container:
             try:
@@ -173,7 +173,7 @@ class DockerContainer:
         
         return self.container.commit(repository=repository, tag=tag)
     
-    def copy_files(self, files_to_copy: List[Tuple[io.IOBase, str]]):
+    def copy_files(self, files_to_copy: List[Tuple[io.IOBase, str]]) -> None:
         """
         Copy files to the container.
         
@@ -186,7 +186,7 @@ class DockerContainer:
         for src_file, target_dir in files_to_copy:
             self._copy_single_file(src_file, target_dir)
     
-    def _copy_single_file(self, src_file: io.IOBase, target_dir: str):
+    def _copy_single_file(self, src_file: io.IOBase, target_dir: str) -> None:
         """Copy a single file to the container."""
         # Create a TarInfo object
         tar_info = tarfile.TarInfo(
@@ -237,9 +237,9 @@ class DockerContainer:
             **extra_args
         )
         
-        log.debug(f"Command '{command}' returned {rc}")
-        log.debug(f"stdout: {stdout}")
-        log.debug(f"stderr: {stderr}")
+        # log.debug(f"Command '{command}' returned {rc}")
+        # log.debug(f"stdout: {stdout}")
+        # log.debug(f"stderr: {stderr}")
         
         return rc, stdout or b'', stderr or b''
     
@@ -335,7 +335,7 @@ class DockerContainerManager:
             raise DockerOperationError(f"Container '{name}' not found")
         return self.containers[name]
     
-    def stop_all(self):
+    def stop_all(self) -> None:
         """Stop and cleanup all containers."""
         for container in self.containers.values():
             container.stop()

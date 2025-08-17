@@ -20,7 +20,7 @@ DEFAULT_MAX_RETRIES = 3  # Default number of retries for failed requests
 class AI_Helper(abc.ABC):
   _client = None
   
-  def __init__(self):
+  def __init__(self) -> None:
     if self._client is None:
       log.debug("Loading dotenv")  # Load the .env file
       dotenv.load_dotenv(os.path.expanduser('~/.env'))
@@ -28,12 +28,12 @@ class AI_Helper(abc.ABC):
   @classmethod
   @abc.abstractmethod
   def query_ai(cls, message: str, attachments: List[Tuple[str, str]], 
-               *args, **kwargs):
+               *args, **kwargs) -> str:
     pass
 
 
 class AI_Helper__Anthropic(AI_Helper):
-  def __init__(self):
+  def __init__(self) -> None:
     super().__init__()
     self.__class__._client = Anthropic()
   
@@ -41,8 +41,8 @@ class AI_Helper__Anthropic(AI_Helper):
   def query_ai(cls, 
                message: str, 
                attachments: List[Tuple[str, str]], 
-               max_response_tokens=DEFAULT_MAX_TOKENS, 
-               max_retries=DEFAULT_MAX_RETRIES):
+               max_response_tokens: int = DEFAULT_MAX_TOKENS, 
+               max_retries: int = DEFAULT_MAX_RETRIES) -> str:
     messages = []
     
     attachment_messages = []
@@ -81,7 +81,7 @@ class AI_Helper__Anthropic(AI_Helper):
 
 
 class AI_Helper__OpenAI(AI_Helper):
-  def __init__(self):
+  def __init__(self) -> None:
     super().__init__()
     self.__class__._client = OpenAI()
   
@@ -89,8 +89,8 @@ class AI_Helper__OpenAI(AI_Helper):
   def query_ai(cls, 
                message: str, 
                attachments: List[Tuple[str, str]], 
-               max_response_tokens=DEFAULT_MAX_TOKENS, 
-               max_retries=DEFAULT_MAX_RETRIES):
+               max_response_tokens: int = DEFAULT_MAX_TOKENS, 
+               max_retries: int = DEFAULT_MAX_RETRIES) -> Dict:
     messages = []
     
     attachment_messages = []
