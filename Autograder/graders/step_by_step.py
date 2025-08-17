@@ -10,6 +10,7 @@ from typing import List
 
 from Autograder.grader import Grader__docker
 from Autograder.registry import GraderRegistry
+from Autograder.docker_utils import DockerContainerManager
 from lms_interface.classes import Feedback
 
 import logging
@@ -28,8 +29,7 @@ class Grader_stepbystep(Grader__docker):
   def __init__(self, rubric_file, *args, **kwargs):
     super().__init__(*args, **kwargs)
     self.rubric = self.parse_rubric(rubric_file)
-    self.golden_container = None
-    self.student_container = None
+    self.container_manager = DockerContainerManager(self.docker_client)
   
   def parse_rubric(self, rubric_file):
     with open(rubric_file) as fid:
@@ -43,40 +43,26 @@ class Grader_stepbystep(Grader__docker):
       return [l.strip() for l in fid.readlines()]
   
   def rollback(self):
-    # Stop and delete student container
-    self.student_container.stop(timeout=1)
-    self.student_container.remove(force=True)
-    self.student_container = None
+    """Rollback student container to match golden container state."""
+    # Stop student container
+    student = self.container_manager.get_container("student")
+    student.stop()
     
-    # Make a copy of the golden_container
-    rollback_image = self.golden_container.commit(repository="rollback", tag="latest")
+    # Create image from golden container
+    golden = self.container_manager.get_container("golden")
+    rollback_image = golden.commit(repository="rollback", tag="latest")
     
-    # Start student from the copy we just made
-    self.student_container = self.client.containers.run(
-      image=rollback_image.id,
-      detach=True,
-      tty=True
-    )
+    # Create new student container from rollback image
+    self.container_manager.create_container("student", rollback_image, start_immediately=True)
   
   def start(self, image):
-    self.golden_container = self.client.containers.run(
-      image=image,
-      detach=True,
-      tty=True
-    )
-    self.student_container = self.client.containers.run(
-      image=image,
-      detach=True,
-      tty=True
-    )
+    """Start both golden and student containers."""
+    self.container_manager.create_container("golden", image, start_immediately=True)
+    self.container_manager.create_container("student", image, start_immediately=True)
   
   def stop_container(self):
-    self.golden_container.stop(timeout=1)
-    self.golden_container.remove(force=True)
-    self.golden_container = None
-    self.student_container.stop(timeout=1)
-    self.student_container.remove(force=True)
-    self.student_container = None
+    """Stop all containers."""
+    self.container_manager.stop_all()
   
   
   def execute_grading(self, golden_lines=[], student_lines=[], rollback=True, *args, **kwargs):
@@ -89,10 +75,16 @@ class Grader_stepbystep(Grader__docker):
     
     for i, (golden, student) in enumerate(zip(golden_lines, student_lines)):
       log.debug(f"commands: '{golden}' <-> '{student}'")
-      rc_g, stdout_g, stderr_g = self.execute_command_in_container(container=self.golden_container, command=golden)
-      rc_s, stdout_s, stderr_s = self.execute_command_in_container(container=self.student_container, command=student)
+      
+      golden_container = self.container_manager.get_container("golden")
+      student_container = self.container_manager.get_container("student")
+      
+      rc_g, stdout_g, stderr_g = golden_container.execute_command(golden)
+      rc_s, stdout_s, stderr_s = student_container.execute_command(student)
+      
       add_results(golden_results, rc_g, stdout_g, stderr_g)
       add_results(student_results, rc_s, stdout_s, stderr_s)
+      
       if (not self.outputs_match(stdout_g, stdout_s, stderr_g, stderr_s, rc_g, rc_s) ) and rollback:
         # Bring the student container up to date with our container
         self.rollback()
@@ -134,7 +126,15 @@ class Grader_stepbystep(Grader__docker):
     golden_lines = self.rubric["steps"]
     student_lines = self.parse_student_file(input_files[0])
     
-    results = self.grade_in_docker(golden_lines=golden_lines, student_lines=student_lines, *args, **kwargs)
+    # Start containers
+    self.start(self.image)
     
-    log.debug(f"final results: {results}")
-    return results
+    try:
+      results = self.execute_grading(golden_lines=golden_lines, student_lines=student_lines, *args, **kwargs)
+      feedback = self.score_grading(results, *args, **kwargs)
+    finally:
+      # Clean up containers
+      self.stop_container()
+    
+    log.debug(f"final results: {feedback}")
+    return feedback
