@@ -42,7 +42,7 @@ class Grader(abc.ABC):
     :return:
     """
     for submission in assignment.submissions:
-      if submission.files is None or len(submission.files) == 0:
+      if not submission.files:
         submission.feedback = Feedback(0.0, "Assignment submission files missing")
         continue
       if submission.status != Submission.Status.GRADED:

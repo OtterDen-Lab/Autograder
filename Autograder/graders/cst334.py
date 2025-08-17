@@ -17,6 +17,10 @@ from lms_interface.classes import Feedback
 import logging
 log = logging.getLogger(__name__)
 
+# Constants
+GRADING_TIMEOUT_SECONDS = 120  # Timeout for grading commands
+DEFAULT_NUM_REPEATS = 3  # Number of times to repeat grading for best result
+
 
 @GraderRegistry.register("CST334")
 class Grader__CST334(Grader__docker_configurable):
@@ -39,7 +43,7 @@ CMD ["/bin/bash"]"""
     
     super().__init__(
       dockerfile_text=dockerfile_text,
-      grading_commands=[f"timeout 120 python ../../helpers/grader.py --output /tmp/results.json"],
+      grading_commands=[f"timeout {GRADING_TIMEOUT_SECONDS} python ../../helpers/grader.py --output /tmp/results.json"],
       working_dir=assignment_working_dir
     )
     self.assignment_path = assignment_path
@@ -181,7 +185,7 @@ CMD ["/bin/bash"]"""
     # Multiple grading runs with aggregation (preserves original CST334 behavior)
     all_feedback = []
     
-    for i in range(kwargs.get("num_repeats", 3)):
+    for i in range(kwargs.get("num_repeats", DEFAULT_NUM_REPEATS)):
       # Use parent docker infrastructure but with our custom file copying
       all_feedback.append(
         super(Grader__docker_configurable, self).grade_submission(

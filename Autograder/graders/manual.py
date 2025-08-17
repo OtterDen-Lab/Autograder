@@ -141,7 +141,7 @@ class Grader__Manual(Grader):
     if kwargs.get("merge_only"):
       pass
     else:
-      unmatched_count = grades_df[grades_df["user_id"].isna()].shape[0]
+      unmatched_count = len(grades_df[grades_df["user_id"].isna()])
       if unmatched_count > 0 or num_students_unmmatched > 0:
         raise Autograder.exceptions.UnmatchedStudentsError(
           f"Found {unmatched_count + num_students_unmmatched} unmatched students. "

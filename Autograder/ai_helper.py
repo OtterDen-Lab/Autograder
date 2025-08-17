@@ -12,6 +12,10 @@ from anthropic import Anthropic
 import logging
 log = logging.getLogger(__name__)
 
+# Constants
+DEFAULT_MAX_TOKENS = 1000  # Default token limit for AI responses
+DEFAULT_MAX_RETRIES = 3  # Default number of retries for failed requests
+
 
 class AI_Helper(abc.ABC):
   _client = None
@@ -37,8 +41,8 @@ class AI_Helper__Anthropic(AI_Helper):
   def query_ai(cls, 
                message: str, 
                attachments: List[Tuple[str, str]], 
-               max_response_tokens=1000, 
-               max_retries=3):
+               max_response_tokens=DEFAULT_MAX_TOKENS, 
+               max_retries=DEFAULT_MAX_RETRIES):
     messages = []
     
     attachment_messages = []
@@ -69,7 +73,7 @@ class AI_Helper__Anthropic(AI_Helper):
     
     message = cls._client.messages.create(
       model="claude-3-5-sonnet-20241022",
-      max_tokens=1000,
+      max_tokens=DEFAULT_MAX_TOKENS,
       messages=messages
     )
     log.debug(message.content)
@@ -85,8 +89,8 @@ class AI_Helper__OpenAI(AI_Helper):
   def query_ai(cls, 
                message: str, 
                attachments: List[Tuple[str, str]], 
-               max_response_tokens=1000, 
-               max_retries=3):
+               max_response_tokens=DEFAULT_MAX_TOKENS, 
+               max_retries=DEFAULT_MAX_RETRIES):
     messages = []
     
     attachment_messages = []

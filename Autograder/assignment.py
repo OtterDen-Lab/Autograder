@@ -29,7 +29,8 @@ import colorama
 
 log = logging.getLogger(__name__)
 
-NAME_SIMILARITY_THRESHOLD = 95
+# Constants
+NAME_SIMILARITY_THRESHOLD = 95  # Percentage threshold for fuzzy name matching
 
 
 class Assignment(abc.ABC):
@@ -175,11 +176,12 @@ class Assignment__ProgrammingAssignment(Assignment):
 
 @AssignmentRegistry.register("Exam")
 class Assignment__Exam(Assignment):
-  NAME_RECT =  {
-    "x" : 350,
-    "y" : 0,
-    "width" : 250,
-    "height" : 150
+  # Default name detection rectangle coordinates (pixels)
+  NAME_RECT = {
+    "x": 350,
+    "y": 0,
+    "width": 250,
+    "height": 150
   }
 
   def __init__(self, *args, **kwargs):
@@ -538,9 +540,10 @@ class Assignment__Exam(Assignment):
 
 @AssignmentRegistry.register("ExamCST231")
 class Assignment__JoshExam(Assignment__Exam):
+  # CST231-specific name detection rectangle coordinates (pixels)
   NAME_RECT = {
-    "x" : 210,
-    "y" : 150,
-    "width" : 350,
-    "height" : 100
+    "x": 210,
+    "y": 150,
+    "width": 350,
+    "height": 100
   }
