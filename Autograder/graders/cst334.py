@@ -31,7 +31,7 @@ class Grader__CST334(Grader__docker_configurable):
   grading scripts from the course repository.
   """
   
-  def __init__(self, assignment_path, git_repo="https://www.github.com/samogden/CST334-assignments.git"):
+  def __init__(self, assignment_path, git_repo="https://www.github.com/samogden/CST334-assignments.git", *args, **kwargs):
     # Always need to clone the assignments repo to get the grading scripts
     dockerfile_text = f"""FROM samogden/cst334
 RUN git clone {git_repo} /tmp/grading/
@@ -44,7 +44,9 @@ CMD ["/bin/bash"]"""
     super().__init__(
       dockerfile_text=dockerfile_text,
       grading_commands=[f"timeout {GRADING_TIMEOUT_SECONDS} python ../../helpers/grader.py --output /tmp/results.json"],
-      working_dir=assignment_working_dir
+      working_dir=assignment_working_dir,
+      *args,
+      **kwargs
     )
     self.assignment_path = assignment_path
   
@@ -218,9 +220,11 @@ class Grader__CST334online(Grader__CST334):
   Uses the same logic as the regular CST334 grader but pulls
   from a different repository.
   """
-  def __init__(self, assignment_path):
+  def __init__(self, assignment_path, *args, **kwargs):
     # Just use different git repo - leverage the parent's git_repo parameter
     super().__init__(
       assignment_path=assignment_path,
-      git_repo="https://www.github.com/samogden/CST334-assignments-online.git"
+      git_repo="https://www.github.com/samogden/CST334-assignments-online.git",
+      *args,
+      **kwargs
     )

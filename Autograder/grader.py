@@ -34,6 +34,11 @@ class Grader(abc.ABC):
   def __init__(self, *args, **kwargs):
     super().__init__()
     self.ready_to_finalize = True
+    # Store assignment identifier for logging (prefer repo_path, then assignment_name, then assignment_path)
+    self.assignment_identifier = (kwargs.get('assignment_path') or 
+                                 kwargs.get('repo_path') or 
+                                 kwargs.get('assignment_name') or 
+                                 'unknown')
 
   def grade_assignment(self, assignment: Assignment, *args, **kwargs) -> None:
     """
@@ -44,14 +49,25 @@ class Grader(abc.ABC):
                    - merge_only: If True, only merge results without grading
     :return:
     """
-    for submission in assignment.submissions:
+    total_submissions = len(assignment.submissions)
+    assignment_id = self.assignment_identifier
+    
+    log.info(f"[{assignment_id}] Starting to grade {total_submissions} submissions")
+    
+    for i, submission in enumerate(assignment.submissions, 1):
+      # Get student identifier for logging (prefer name, fallback to user_id)
+      
+      log.info(f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {submission.student.name})")
+      
       if not submission.files:
         submission.feedback = Feedback(0.0, "Assignment submission files missing")
         continue
       if submission.status == Submission.Status.GRADED and not kwargs.get('do_regrade', False):
-        log.info("Skipping submission due to already being graded")
         continue
+      
       submission.feedback = self.grade_submission(submission, **kwargs)
+      
+    log.info(f"[{assignment_id}] Finished grading all {total_submissions} submissions")
 
   def grade_submission(self, submission: Submission, *args, **kwargs) -> Feedback:
     """
