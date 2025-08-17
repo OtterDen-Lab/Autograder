@@ -362,7 +362,7 @@ def execute_grading(assignments_to_grade: List[Dict], args: argparse.Namespace) 
   # Determine number of worker threads
   max_workers = args.max_workers
   if max_workers is None:
-    max_workers = min(len(assignments_to_grade), 4)  # Default to 4 or number of assignments, whichever is smaller
+    max_workers = min(len(assignments_to_grade), 6)  # Default to 4 or number of assignments, whichever is smaller
   
   log.info(f"Using {max_workers} worker threads for grading")
   
