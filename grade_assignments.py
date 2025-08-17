@@ -162,10 +162,10 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
             **merged_assignment.get("kwargs", {})
           )
           
-        grader.grade_assignment(grading_assignment, **assignment_grading_kwargs, merge_only=args.merge_only)
+        grader.grade_assignment(grading_assignment, **assignment_grading_kwargs, merge_only=args.merge_only, do_regrade=do_regrade)
         
         for submission in grading_assignment.submissions:
-          log.debug(f"{submission} ({submission.feedback})")
+          log.info(f"{submission}")
         
         if grader.ready_to_finalize:
           if grader_name.lower() in ["manual"]:

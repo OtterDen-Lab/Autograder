@@ -39,13 +39,16 @@ class Grader(abc.ABC):
     """
     Takes an assignment and walks through its submissions and grades each.
     :param assignment: Takes in an assignment.Assignment object to grade
+    :param kwargs: Additional arguments including:
+                   - do_regrade: If True, regrade already-graded submissions
+                   - merge_only: If True, only merge results without grading
     :return:
     """
     for submission in assignment.submissions:
       if not submission.files:
         submission.feedback = Feedback(0.0, "Assignment submission files missing")
         continue
-      if submission.status == Submission.Status.GRADED:
+      if submission.status == Submission.Status.GRADED and not kwargs.get('do_regrade', False):
         log.info("Skipping submission due to already being graded")
         continue
       submission.feedback = self.grade_submission(submission, **kwargs)
