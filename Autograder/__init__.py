@@ -4,14 +4,14 @@ import yaml
 import os
 import re
 
-def setup_logging():
+def setup_logging() -> None:
   config_path = os.path.join(os.path.dirname(__file__), 'logging.yaml')
   if os.path.exists(config_path):
     with open(config_path, 'r') as f:
       config_text = f.read()
     
     # Process environment variables in the format ${VAR:-default}
-    def replace_env_vars(match):
+    def replace_env_vars(match) -> str:
       var_name = match.group(1)
       default_value = match.group(2)
       return os.environ.get(var_name, default_value)

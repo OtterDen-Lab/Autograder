@@ -2,7 +2,7 @@ import abc
 import importlib
 import pathlib
 import pkgutil
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Callable, Type
 
 import logging
 
@@ -19,7 +19,7 @@ class BaseRegistry(abc.ABC):
     _scanned: bool = None
     
     @classmethod
-    def register(cls, type_name=None):
+    def register(cls, type_name: Optional[str] = None) -> Callable:
         """
         Decorator for registering subclasses.
         
@@ -29,7 +29,7 @@ class BaseRegistry(abc.ABC):
         """
         log.debug("Registering...")
         
-        def decorator(subclass):
+        def decorator(subclass: Type) -> Type:
             # Use the provided name or fall back to the class name
             name = (type_name.lower() if type_name 
                     else subclass.__name__.lower())
@@ -39,7 +39,7 @@ class BaseRegistry(abc.ABC):
         return decorator
     
     @classmethod
-    def create(cls, type_name: str, **kwargs):
+    def create(cls, type_name: str, **kwargs) -> Any:
         """
         Factory method to instantiate a registered subclass.
         
@@ -64,7 +64,7 @@ class BaseRegistry(abc.ABC):
         return cls._registry[type_name.lower()](**kwargs)
     
     @classmethod
-    def load_premade_modules(cls):
+    def load_premade_modules(cls) -> None:
         """
         Load all modules from the appropriate subdirectory to trigger registration.
         Subclasses should override get_module_info() to specify the package and path.

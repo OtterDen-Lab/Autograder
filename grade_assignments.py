@@ -10,6 +10,7 @@ import threading
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional, Dict
 
 import yaml
 
@@ -24,7 +25,7 @@ log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser()
   
   parser.add_argument("--yaml", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "example_files/programming_assignments.yaml"))
@@ -38,7 +39,7 @@ def parse_args():
 
 
 @contextlib.contextmanager
-def working_directory(directory=None):
+def working_directory(directory: Optional[str] = None):
   """
   Context manager that either:
   1. Creates a temporary directory if no directory is provided
@@ -101,7 +102,7 @@ def working_directory(directory=None):
           temp_dir.cleanup()
 
 
-def grade_single_assignment(assignment_data):
+def grade_single_assignment(assignment_data: Dict) -> Dict:
   """
   Grade a single assignment in a separate thread.
   
@@ -191,7 +192,7 @@ def grade_single_assignment(assignment_data):
     }
 
 
-def main():
+def main() -> None:
   
   # First, check to make sure we are the only version running, since this can cause problems with docker and canvas otherwise
   lockfile = "/tmp/TeachingTools.grade_assignments.lock"

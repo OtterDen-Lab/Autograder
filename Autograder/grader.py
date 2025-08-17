@@ -45,8 +45,9 @@ class Grader(abc.ABC):
       if not submission.files:
         submission.feedback = Feedback(0.0, "Assignment submission files missing")
         continue
-      if submission.status != Submission.Status.GRADED:
+      if submission.status == Submission.Status.GRADED:
         log.info("Skipping submission due to already being graded")
+        continue
       submission.feedback = self.grade_submission(submission, **kwargs)
 
   def grade_submission(self, submission: Submission, *args, **kwargs) -> Feedback:
@@ -60,7 +61,7 @@ class Grader(abc.ABC):
     return self.score_grading(execution_results, *args, **kwargs)
   
   @abc.abstractmethod
-  def execute_grading(self, *args, **kwargs):
+  def execute_grading(self, *args, **kwargs) -> any:
     """
     Implements the steps to actually execute the grading, such as running a make command.
     :param args:
@@ -80,10 +81,10 @@ class Grader(abc.ABC):
     """
     pass
   
-  def assignment_needs_preparation(self):
+  def assignment_needs_preparation(self) -> bool:
     return True
 
-  def prepare(self, *args, **kwargs):
+  def prepare(self, *args, **kwargs) -> None:
     """
     Anything that is needed to take the assignment and prepare it for grading.
     For example, making a CSV file from the submissions for manual grading
@@ -92,7 +93,7 @@ class Grader(abc.ABC):
     :return:
     """
   
-  def finalize(self, *args, **kwargs):
+  def finalize(self, *args, **kwargs) -> None:
     """
     anything that is needed to connect the grades/feedback to the submissions after grading.
     For example, loading up the CSV and connecting grades to the submissions
@@ -101,7 +102,7 @@ class Grader(abc.ABC):
     :return:
     """
   
-  def cleanup(self):
+  def cleanup(self) -> None:
     pass
 
 
@@ -126,7 +127,7 @@ class Grader__docker(Grader, abc.ABC):
     self.image = image if image is not None else "ubuntu"
     self.container: Optional[DockerContainer] = None
   
-  def cleanup(self):
+  def cleanup(self) -> None:
     """Clean up Docker resources."""
     if hasattr(self, 'image') and hasattr(self.image, 'remove'):
       self.docker_client.remove_image(self.image)
@@ -148,7 +149,7 @@ class Grader__docker(Grader, abc.ABC):
     tag = f"grading:{self.__class__.__name__.lower()}"
     return self.docker_client.build_image(dockerfile_str, tag)
   
-  def start_container(self, image=None):
+  def start_container(self, image=None) -> None:
     """Start a Docker container."""
     image_to_use = image if image is not None else self.image
     self.container = DockerContainer(
@@ -158,13 +159,13 @@ class Grader__docker(Grader, abc.ABC):
     )
     self.container.start()
     
-  def stop_container(self):
+  def stop_container(self) -> None:
     """Stop the Docker container."""
     if self.container:
       self.container.stop()
       self.container = None
   
-  def add_files_to_docker(self, files_to_copy: List[Tuple] = None):
+  def add_files_to_docker(self, files_to_copy: List[Tuple] = None) -> None:
     """
     Copy files to the Docker container.
     
