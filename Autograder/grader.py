@@ -2,85 +2,35 @@
 from __future__ import annotations
 
 import abc
-import ast
-import importlib
-import pathlib
-import pkgutil
-import pprint
-import time
-import uuid
-
-import io
-import tarfile
-import os
-import textwrap
-import json
-import yaml
-from collections import defaultdict
-import pandas as pd
-import threading
 
 from typing import List, Tuple, Optional
 
 from Autograder.assignment import Assignment
+from Autograder.registry import GraderRegistry
+from Autograder.docker_utils import DockerClient, DockerContainer, DockerError
+import Autograder.exceptions
 from lms_interface.classes import Feedback, Submission
 
-docker = None
-def _import_docker():
-  global docker
-  if docker is None:
-    import docker as docker_module
-    docker = docker_module
+# Import all grader implementations to ensure they're registered
+try:
+  import Autograder.graders
+except ImportError:
+  # Graders package may not be available in all environments
+  pass
 
 
 import logging
 log = logging.getLogger(__name__)
 
 
-class GraderRegistry:
-  _registry = {}
-  _scanned = False
-  
-  @classmethod
-  def register(cls, grader_type=None):
-    log.debug("Registering...")
-    
-    def decorator(subclass):
-      # Use the provided name or fall back to the class name
-      name = grader_type.lower() if grader_type else subclass.__name__.lower()
-      cls._registry[name] = subclass
-      return subclass
-    
-    return decorator
-  
-  @classmethod
-  def create(cls, grader_type, **kwargs):
-    """Instantiate a registered subclass."""
-    
-    # If we haven't already loaded our premades, do so now
-    if not cls._scanned:
-      cls.load_premade_graders()
-    # Check to see if it's in the registry
-    if grader_type.lower() not in cls._registry:
-      raise ValueError(f"Unknown grader type: {grader_type}")
-    
-    return cls._registry[grader_type.lower()](**kwargs)
-  
-  
-  @classmethod
-  def load_premade_graders(cls):
-    package_name = "Autograder"  # Fully qualified package name
-    package_path = pathlib.Path(__file__).parent / "grader"
-    log.debug(f"package_path: {package_path}")
-    
-    for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
-      # Import the module
-      module = importlib.import_module(f"{package_name}.{module_name}")
-      log.debug(f"Loaded module: {module}")
-
-
 @GraderRegistry.register("Dummy")
 class Grader(abc.ABC):
+  """
+  Base abstract class for all graders.
+  
+  Provides the framework for grading assignments by processing submissions
+  and generating feedback.
+  """
   def __init__(self, *args, **kwargs):
     super().__init__()
     self.ready_to_finalize = True
@@ -92,7 +42,7 @@ class Grader(abc.ABC):
     :return:
     """
     for submission in assignment.submissions:
-      if submission.files is None or len(submission.files) == 0:
+      if not submission.files:
         submission.feedback = Feedback(0.0, "Assignment submission files missing")
         continue
       if submission.status != Submission.Status.GRADED:
@@ -107,7 +57,7 @@ class Grader(abc.ABC):
     :return: returns a Feedback object for the submission
     """
     execution_results = self.execute_grading(*args, **kwargs)
-    return self.score_grading(execution_results,*args,  **kwargs)
+    return self.score_grading(execution_results, *args, **kwargs)
   
   @abc.abstractmethod
   def execute_grading(self, *args, **kwargs):
@@ -154,288 +104,121 @@ class Grader(abc.ABC):
   def cleanup(self):
     pass
 
-@GraderRegistry.register("Manual")
-class Grader__Manual(Grader):
-  
-  CSV_NAME = "grades.intermediate.csv"
-  
-  def is_grading_complete(self):
-    """
-    Checks to see if grading is complete.  Currently just looks for whether there is a `total` score for each entry.
-    :return:
-    """
-    if not os.path.exists(self.CSV_NAME): return False
-    
-    grades_df = pd.read_csv(self.CSV_NAME)
-    
-    # Clean out the extra columns not associated with any submission
-    grades_df = grades_df[grades_df["document_id"].notna()]
-    
-    # If there are entries missing a `total` column then we should get a different count and are incomplete
-    return grades_df[grades_df["total"].notna()].shape == grades_df.shape
-  
-  def prepare(self, assignment: Assignment, *args, **kwargs):
-    self.ready_to_finalize = False
-    log.debug("Preparing manual grading")
-    # Make a dataframe
-    df = pd.DataFrame([
-      {
-        **submission.extra_info,
-        #"page_mappings" : page_mappings_by_user[submission.document_id],
-        "name" : submission.student.name if submission.student is not None else "",
-        "user_id" : submission.student.user_id if submission.student is not None else "",
-        "total" : None
-      }
-      for submission in assignment.submissions
-    ])
-    print(df.head())
-    df = df.sort_values(by="document_id")
-    
-    df.to_csv(self.CSV_NAME, index=False)
-  
-  def finalize(self, assignment, *args, **kwargs):
-    log.debug("Finalizing manual grading")
-    if not self.is_grading_complete():
-      log.error("It seems like some entries do not have scores.  Please correct and rerun.")
-      exit(4)
-    
-    # Steps:
-    # 1. Recreate submissions
-    # 2. Pass back to assignment to remerge
-    # 3. Generate grades and feedback
-    
-    # Load CSV
-    grades_df = pd.read_csv(self.CSV_NAME)
-    # Remove any extra information (because I like tracking my progress)
-    grades_df = grades_df[grades_df["document_id"].notna()]
-    
-    # Get list of students from canvas
-    # todo: this should probably be done in the `assignment`
-    canvas_students_by_id = { s.user_id : s for s in assignment.lms_assignment.get_students() }
-    
-    graded_submissions : List[Submission] = []
-    
-    # Make submission objects for students who have already been matched
-    num_students_unmmatched = 0
-    for _, row in grades_df[grades_df["user_id"].notna()].iterrows():
-      try:
-        log.debug(canvas_students_by_id[int(row["user_id"])])
-        submission = Submission(
-          student=canvas_students_by_id[int(row["user_id"])],
-          status=Submission.Status.GRADED,
-        )
-        del canvas_students_by_id[int(row["user_id"])]
-      except:
-        submission = Submission(
-          student=None,
-          status=Submission.Status.GRADED
-        )
-        num_students_unmmatched += 1
-        
-      # todo: get PDFs and comments.
-      submission.feedback = Feedback(
-        score=row["total"],
-        comments="(Please see attached PDF)",
-        attachments=[]
-      )
-      submission.set_extra({
-        "page_mappings": ast.literal_eval(row["page_mappings"]),
-        "document_id": row["document_id"]
-      })
-      graded_submissions.append(submission)
-    
-    log.info(f"There were {len(graded_submissions)} matched canvas users.")
-    log.info(f"There are {len(canvas_students_by_id)} unmatched canvas users")
-    log.debug("\n" + pprint.pformat({id: student.name for id, student in canvas_students_by_id.items()}))
-    
-    # If we have unmatched students, exit because they should be manually matched.
-    
-    if kwargs.get("merge_only"):
-      pass
-    else:
-      if grades_df[grades_df["user_id"].isna()].shape[0] > 0 or num_students_unmmatched > 0:
-        log.error("There were unmatched students.  Please correct and re-run.")
-        exit(2)
-    
-    # Now we have a list of graded submissions
-    log.info(f"We have graded {len(graded_submissions)} submissions!")
-    assignment.submissions = graded_submissions
-    self.ready_to_finalize = True
-  
-  def grade_assignment(self, assignment: Assignment, *args, **kwargs) -> None:
-    if self.is_grading_complete():
-      self.finalize(assignment, args, **kwargs)
-    else:
-      self.prepare(assignment, *args, **kwargs)
-  
-  def assignment_needs_preparation(self):
-    return not self.is_grading_complete()
-
-  def execute_grading(self, *args, **kwargs):
-    return NotImplemented
-  
-  def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
-    return NotImplemented
-
 
 class Grader__docker(Grader, abc.ABC):
+  """
+  Base class for Docker-based graders.
+  
+  Provides common Docker functionality like container management,
+  file copying, and command execution using docker_utils.
+  """
   def __init__(self, image=None, *args, **kwargs):
     super().__init__(*args, **kwargs)
     
-    
-    # Import docker if needed
-    _import_docker()
-    
-    # Set up docker client per instance for thread safety
+    # Set up docker client
     try:
-      self.client = docker.from_env()
-      # Try to perform an operation that requires Docker to be running
-      self.client.ping()  # or client.containers.list()
-      log.debug("Docker client connected successfully")
-    except docker.errors.DockerException as e:
-      log.error(f"Docker isn't running: {e}")
-      # Handle the situation when Docker daemon isn't available
-      exit(8)
-    except docker.errors.APIError as e:
-      log.error(f"Docker API error: {e}")
-      # Handle other API-related errors
-      exit(8)
+      self.docker_client = DockerClient()
+    except DockerError as e:
+      log.error(f"Failed to initialize Docker client: {e}")
+      raise Autograder.exceptions.ConfigurationError(f"Docker client initialization failed: {e}") from e
     
     # Default to using ubuntu image
     self.image = image if image is not None else "ubuntu"
-    self.container: Optional[docker.models.containers.Container] = None
-    
-    # Generate unique container name for thread safety
-    self.container_name_prefix = f"grader_{uuid.uuid4().hex[:8]}"
+    self.container: Optional[DockerContainer] = None
   
   def cleanup(self):
-    # Try to remove image, and if it hasn't been set up properly delete
-    try:
-      self.image.remove(force=True)
-    except AttributeError:
-      log.warning("Deleting image failed")
-      
+    """Clean up Docker resources."""
+    if hasattr(self, 'image') and hasattr(self.image, 'remove'):
+      self.docker_client.remove_image(self.image)
+    
+    if self.container:
+      self.container.stop()
       
   # Helper functions below here
-  def build_docker_image(self, dockerfile_str):
+  def build_docker_image(self, dockerfile_str: str):
     """
-    Given a dockerfile as a string, creates and returns this image
-    :param dockerfile_str: dockerfile as a single string
-    :return: a docker image
+    Build a Docker image from dockerfile content.
+    
+    Args:
+        dockerfile_str: Dockerfile as a single string
+        
+    Returns:
+        Built Docker image
     """
-    log.info("Building docker image for grading...")
-    
-    image, logs = self.client.images.build(
-      fileobj=io.BytesIO(dockerfile_str.encode()),
-      pull=True,
-      nocache=True,
-      tag=f"grading:{self.__class__.__name__.lower()}_{self.container_name_prefix}",
-      rm=True,
-      forcerm=True
-    )
-    
-    log.debug(f"Successfully build docker image {image.tags}")
-    return image
+    tag = f"grading:{self.__class__.__name__.lower()}"
+    return self.docker_client.build_image(dockerfile_str, tag)
   
-  def start_container(self, image : docker.models.images):
-    # Create unique container name with timestamp to avoid conflicts when multiple containers per thread
-    container_name = f"{self.container_name_prefix}_{threading.current_thread().ident}_{int(time.time() * 1000000)}"
-    self.container = self.client.containers.run(
-      image=image,
-      detach=True,
-      tty=True,
-      remove=True,
-      name=container_name
+  def start_container(self, image=None):
+    """Start a Docker container."""
+    image_to_use = image if image is not None else self.image
+    self.container = DockerContainer(
+      self.docker_client, 
+      image_to_use,
+      name_prefix="grader"
     )
+    self.container.start()
     
   def stop_container(self):
-    self.container.stop(timeout=1)
-    self.container = None
+    """Stop the Docker container."""
+    if self.container:
+      self.container.stop()
+      self.container = None
   
-  def add_files_to_docker(self, files_to_copy : List[Tuple[str,str]] = None):
+  def add_files_to_docker(self, files_to_copy: List[Tuple] = None):
     """
+    Copy files to the Docker container.
     
-    :param files_to_copy: Format is [(src, target), ...]):
-    :return:
+    Args:
+        files_to_copy: List of (file_object, target_directory) tuples
     """
+    if files_to_copy and self.container:
+      self.container.copy_files(files_to_copy)
   
-    def add_file_to_container(src_file, target_dir, container):
-      # Create a TarInfo object
-      tar_info = tarfile.TarInfo(name=src_file.name if hasattr(src_file, 'name') else 'file')
-      
-      # Get file size
-      src_file.seek(0, io.SEEK_END)
-      tar_info.size = src_file.tell()
-      src_file.seek(0)  # Reset to beginning
-      
-      # Set modification time
-      tar_info.mtime = int(time.time())
-      
-      # Prepare the tarball
-      tarstream = io.BytesIO()
-      with tarfile.open(fileobj=tarstream, mode="w") as tarhandle:
-        tarhandle.addfile(tar_info, src_file)
-      tarstream.seek(0)
-      
-      # Push to container
-      container.put_archive(f"{target_dir}", tarstream)
+  def execute_command_in_container(self, command="", container=None, workdir=None) -> Tuple[int, bytes, bytes]:
+    """
+    Execute a command in the Docker container.
     
-    for src_file, target_dir in files_to_copy:
-      add_file_to_container(src_file, target_dir, self.container)
+    Args:
+        command: Command to execute
+        container: Container to use (defaults to self.container)
+        workdir: Working directory for command
+        
+    Returns:
+        Tuple of (return_code, stdout, stderr)
+    """
+    target_container = container if container is not None else self.container
+    if not target_container:
+      raise RuntimeError("No container available for command execution")
+    
+    return target_container.execute_command(command, workdir)
   
-  def execute_command_in_container(self, command="", container=None, workdir=None) -> Tuple[int, str, str]:
-    log.debug(f"executing: {command}")
-    if container is None:
-      container = self.container
+  def read_file_from_container(self, path_to_file: str) -> Optional[str]:
+    """
+    Read a file from the Docker container.
     
-    extra_args = {}
-    if workdir is not None:
-      extra_args["workdir"] = workdir
-    
-    rc, (stdout, stderr) = container.exec_run(
-      cmd=f"bash -c \"{command}\"",
-      demux=True,
-      tty=True,
-      **extra_args
-    )
-    log.debug(f"Command: \"{command}")
-    log.debug(f"rc: {rc}")
-    log.debug(f"stdout: {stdout}")
-    log.debug(f"stderr: {stderr}")
-    return rc, stdout, stderr
-  
-  def read_file_from_container(self, path_to_file) -> Optional[str]:
-    
-    try:
-      # Try to find the file on the system
-      bits, stats = self.container.get_archive(path_to_file)
-    except docker.errors.APIError as e:
-      log.error(f"Get archive failed: {e}")
+    Args:
+        path_to_file: Path to file in container
+        
+    Returns:
+        File contents as string, or None if not found
+    """
+    if not self.container:
       return None
     
-    # Read file from docker
-    f = io.BytesIO()
-    for chunk in bits:
-      f.write(chunk)
-    f.seek(0)
-    
-    # Open the tarball we just pulled and read the contents to a string buffer
-    with tarfile.open(fileobj=f, mode="r") as tarhandle:
-      results_f = tarhandle.getmember("results.json")
-      f = tarhandle.extractfile(results_f)
-      f.seek(0)
-      return f.read().decode()
+    return self.container.read_file(path_to_file)
   
   def __enter__(self):
+    """Context manager entry - start container."""
     log.debug(f"Starting docker image {self.image} context")
-    self.start_container(self.image)
+    self.start_container()
+    return self
   
   def __exit__(self, exc_type, exc_val, exc_tb):
+    """Context manager exit - stop container."""
     log.debug(f"Exiting docker image context")
     self.stop_container()
     if exc_type is not None:
-      log.error(f"An exception occured: {exc_val}")
-      log.error(exc_tb)
+      log.error(f"An exception occurred: {exc_val}")
     return False
   
   def grade_submission(self, submission, files_to_copy=None, *args, **kwargs) -> Feedback:
@@ -450,467 +233,3 @@ class Grader__docker(Grader, abc.ABC):
       if files_to_copy is not None:
         self.add_files_to_docker(files_to_copy)
       return super().grade_submission(submission, *args, **kwargs)
-      
-
-@GraderRegistry.register("docker-configurable")
-class Grader__docker_configurable(Grader__docker):
-  
-  def __init__(self, grading_script=None, grading_commands=None, working_dir="/tmp/grading", 
-               additional_installs=None, dockerfile_text=None, dockercompose_text=None,
-               additional_files=None, *args, **kwargs):
-    super().__init__(*args, **kwargs)
-    self.grading_script = grading_script
-    self.grading_commands = grading_commands if grading_commands else []
-    self.working_dir = working_dir
-    self.additional_installs = additional_installs if additional_installs else []
-    self.dockerfile_text = dockerfile_text
-    self.dockercompose_text = dockercompose_text
-    self.additional_files = additional_files if additional_files else []
-    
-    if not self.grading_script and not self.grading_commands:
-      raise ValueError("Must specify either grading_script or grading_commands")
-    
-    if self.grading_script and self.grading_commands:
-      raise ValueError("Cannot specify both grading_script and grading_commands")
-    
-    # Build custom image if needed
-    if self.dockerfile_text or self.additional_installs or self.additional_files:
-      self.image = self._build_custom_image()
-  
-  def _build_custom_image(self):
-    """Build a custom Docker image with additional installs and files"""
-    
-    if self.dockerfile_text:
-      # Use provided dockerfile
-      dockerfile_content = self.dockerfile_text
-    else:
-      # Build dockerfile from base image + additions
-      base_image = self.image if hasattr(self, 'image') and self.image != "ubuntu" else "ubuntu"
-      
-      dockerfile_lines = [f"FROM {base_image}"]
-      
-      # Add additional package installs
-      if self.additional_installs:
-        dockerfile_lines.append("# Install additional packages")
-        for install_cmd in self.additional_installs:
-          dockerfile_lines.append(f"RUN {install_cmd}")
-      
-      # Add additional files via COPY commands
-      if self.additional_files:
-        dockerfile_lines.append("# Copy additional files")
-        for file_spec in self.additional_files:
-          if isinstance(file_spec, dict):
-            src = file_spec.get('src')
-            dst = file_spec.get('dst', self.working_dir)
-            if src:
-              dockerfile_lines.append(f"COPY {src} {dst}")
-          elif isinstance(file_spec, str):
-            dockerfile_lines.append(f"COPY {file_spec} {self.working_dir}")
-      
-      # Set working directory
-      dockerfile_lines.append(f"WORKDIR {self.working_dir}")
-      dockerfile_lines.append("CMD [\"/bin/bash\"]")
-      
-      dockerfile_content = '\n'.join(dockerfile_lines)
-    
-    log.info("Building custom Docker image with additional configuration...")
-    log.debug(f"Dockerfile content:\n{dockerfile_content}")
-    
-    return self.build_docker_image(dockerfile_content)
-  
-  def execute_grading(self, *args, **kwargs) -> Tuple[int, str, str]:
-    # Create working directory
-    rc, stdout, stderr = self.execute_command_in_container(f"mkdir -p {self.working_dir}")
-    if rc != 0:
-      log.error(f"Failed to create working directory: {stderr}")
-      return rc, stdout, stderr
-    
-    rc, stdout, stderr = self.execute_command_in_container(f"ls -l {self.working_dir}")
-    if self.grading_script:
-      # Execute the grading script
-      rc, stdout, stderr = self.execute_command_in_container(
-        command=self.grading_script,
-        workdir=self.working_dir
-      )
-    else:
-      # Execute the series of commands
-      combined_stdout = []
-      combined_stderr = []
-      final_rc = 0
-      
-      for command in self.grading_commands:
-        rc, stdout, stderr = self.execute_command_in_container(
-          command=command,
-          workdir=self.working_dir
-        )
-        if stdout:
-          combined_stdout.append(stdout.decode() if isinstance(stdout, bytes) else stdout)
-        if stderr:
-          combined_stderr.append(stderr.decode() if isinstance(stderr, bytes) else stderr)
-        if rc != 0:
-          final_rc = rc
-      
-      rc = final_rc
-      stdout = '\n'.join(combined_stdout).encode() if combined_stdout else b''
-      stderr = '\n'.join(combined_stderr).encode() if combined_stderr else b''
-    
-    return rc, stdout, stderr
-  
-  def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
-    rc, stdout, stderr = execution_results
-    
-    # Decode stdout if it's bytes
-    stdout_str = stdout.decode() if isinstance(stdout, bytes) else stdout
-    stderr_str = stderr.decode() if isinstance(stderr, bytes) else stderr
-    
-    # Try to parse YAML output from stdout
-    score = 0.0
-    feedback_text = ""
-    
-    try:
-      # Look for YAML in stdout
-      yaml_output = yaml.safe_load(stdout_str)
-      if isinstance(yaml_output, dict):
-        score = float(yaml_output.get('score', 0.0))
-        feedback_text = yaml_output.get('feedback', '')
-    except (yaml.YAMLError, ValueError, TypeError) as e:
-      log.warning(f"Failed to parse YAML from grading output: {e}")
-      # If YAML parsing fails, use default score and include raw output
-      feedback_text = "Failed to parse grading results"
-    
-    # Include raw stdout as additional feedback
-    full_feedback = feedback_text
-    if stdout_str.strip():
-      full_feedback += f"\n\n--- Raw Output ---\n{stdout_str}"
-    if stderr_str.strip():
-      full_feedback += f"\n\n--- Error Output ---\n{stderr_str}"
-    
-    return Feedback(
-      score=score,
-      comments=full_feedback.strip()
-    )
-  
-  def grade_submission(self, submission, *args, **kwargs) -> Feedback:
-    # Prepare files to copy to docker container
-    submission_files = []
-    for f in submission.files:
-      # Copy all files to the working directory
-      submission_files.append((f, self.working_dir))
-    
-    # Grade using parent class method
-    return super().grade_submission(
-      submission,
-      files_to_copy=submission_files,
-      *args, **kwargs
-    )
-
-
-@GraderRegistry.register("CST334")
-class Grader__CST334(Grader__docker_configurable):
-  
-  def __init__(self, assignment_path, git_repo="https://www.github.com/samogden/CST334-assignments.git"):
-    # Always need to clone the assignments repo to get the grading scripts
-    dockerfile_text = f"""FROM samogden/cst334
-RUN git clone {git_repo} /tmp/grading/
-WORKDIR /tmp/grading
-CMD ["/bin/bash"]"""
-    
-    # Set working directory to the specific assignment folder
-    assignment_working_dir = f"/tmp/grading/programming-assignments/{assignment_path}"
-    
-    super().__init__(
-      dockerfile_text=dockerfile_text,
-      grading_commands=[f"timeout 120 python ../../helpers/grader.py --output /tmp/results.json"],
-      working_dir=assignment_working_dir
-    )
-    self.assignment_path = assignment_path
-  
-  def check_for_trickery(self, submission) -> bool:
-    def contains_string(search_str, f) -> bool:
-      try:
-        if search_str.encode() in f.read():
-          return True
-        else:
-          return False
-      finally:
-        f.seek(0)
-      
-    for f in submission.files:
-      if contains_string("exit(0)", f):
-        return True
-    return False
-  
-  @staticmethod
-  def build_feedback(results_dict, score=None) -> str:
-    feedback_strs = [
-      "##############",
-      "## FEEDBACK ##",
-      "##############",
-      "",
-    ]
-    
-    if score is not None:
-      feedback_strs.extend([
-        f"Score reported: {score} points",
-        ""
-      ])
-    
-    if "overall_feedback" in results_dict:
-      feedback_strs.extend([
-        "## Overall Feedback ##",
-        results_dict["overall_feedback"],
-        "\n\n"
-      ])
-    
-    feedback_strs.extend([
-      "## Unit Tests ##",
-    ])
-    if "suites" in results_dict:
-      for suite_name in results_dict["suites"].keys():
-        
-        if len(results_dict["suites"][suite_name]["PASSED"]) > 0:
-          feedback_strs.extend([
-            f"SUITE: {suite_name}",
-            "  * passed:",
-          ])
-          feedback_strs.extend([
-            textwrap.indent('\n'.join(results_dict["suites"][suite_name]["PASSED"]), '    '),
-            ""
-          ])
-        
-        if len(results_dict["suites"][suite_name]["FAILED"]) > 0:
-          feedback_strs.extend([
-            f"SUITE: {suite_name}",
-            "  * failed:",
-          ])
-          feedback_strs.extend([
-            textwrap.indent('\n'.join(results_dict["suites"][suite_name]["FAILED"]), '    '),
-            ""
-          ])
-      feedback_strs.extend([
-        "################",
-        "",
-      ])
-    
-    if "build_logs" in results_dict:
-      feedback_strs.extend([
-        "## Build Logs ##",
-      ])
-      feedback_strs.extend([
-        "Build Logs:",
-        ''.join(results_dict["build_logs"])[1:-1].encode('utf-8').decode('unicode_escape')
-      ])
-      feedback_strs.extend([
-        "################",
-      ])
-    
-    if "lint_logs" in results_dict:
-      feedback_strs.extend([
-        "## Lint Logs ##",
-        f"Lint success: {results_dict['lint_success']}\n"
-      ])
-      feedback_strs.extend([
-        "Lint Logs:",
-        ''.join(results_dict["lint_logs"])[1:-1].encode('utf-8').decode('unicode_escape')
-      ])
-      feedback_strs.extend([
-        "################",
-      ])
-    
-    return '\n'.join(feedback_strs)
-  
-  def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
-    """Override docker-configurable to use JSON instead of YAML parsing"""
-    rc, stdout, stderr = execution_results
-    
-    # For CST334, we expect results in a JSON file (original behavior)
-    results = self.read_file_from_container("/tmp/results.json")
-    if results is None:
-      return Feedback(
-        score=0,
-        comments="Something went wrong during grading, likely a timeout. Please check your assignment for infinite loops and/or contact your professor."
-      )
-    
-    results_dict = json.loads(results)
-    if "lint_success" in results_dict and results_dict["lint_success"] and "lint_bonus" in kwargs:
-      results_dict["score"] += kwargs["lint_bonus"]
-    
-    return Feedback(
-      score=results_dict["score"],
-      comments=self.build_feedback(results_dict, results_dict["score"])
-    )
-  
-  def grade_submission(self, submission, *args, **kwargs) -> Feedback:
-    path_to_programming_assignment = os.path.join("programming-assignments", self.assignment_path)
-    
-    # Use CST334's original file copying logic (your code)
-    # This is more sophisticated than docker-configurable's simple copying
-    submission_files = []
-    for f in submission.files:
-      log.debug(f"f: {f.__class__} {f.name}")
-      # Your original logic: .c files go to src/, others go to include/
-      target_dir = f"/tmp/grading/{path_to_programming_assignment}/{'src' if f.name.endswith('.c') else 'include'}"
-      submission_files.append((f, target_dir))
-    
-    # Check for trickery using your original detection logic
-    if self.check_for_trickery(submission):
-      return Feedback(
-        score=0.0,
-        comments="It was detected that you might have been trying to game the scoring via exiting early from a unit test. Please contact your professor if you think this was in error."
-      )
-    
-    # Multiple grading runs with aggregation (preserves original CST334 behavior)
-    all_feedback = []
-    
-    for i in range(kwargs.get("num_repeats", 3)):
-      # Use parent docker infrastructure but with our custom file copying
-      all_feedback.append(
-        super(Grader__docker_configurable, self).grade_submission(
-          submission,
-          files_to_copy=submission_files,
-          path_to_programming_assignment=path_to_programming_assignment,
-          lint_bonus=1,
-          *args, **kwargs
-        )
-      )
-      
-    # Select best feedback and add aggregated results (original CST334 logic)
-    feedback = min(all_feedback)
-    
-    full_feedback = "##################\n"
-    full_feedback += "## All results: ##\n"
-    for i, result in enumerate(all_feedback):
-      full_feedback += f"test {i}: {result.score} points\n"
-    full_feedback += "##################\n"
-
-    feedback.comments += f"\n\n\n{full_feedback}"
-    return feedback
-
-
-@GraderRegistry.register("CST334online")
-class Grader__CST334online(Grader__CST334):
-  def __init__(self, assignment_path):
-    # Just use different git repo - leverage the parent's git_repo parameter
-    super().__init__(
-      assignment_path=assignment_path,
-      git_repo="https://www.github.com/samogden/CST334-assignments-online.git"
-    )
-
-
-@GraderRegistry.register("Step-by-step")
-class Grader_stepbystep(Grader__docker):
-  
-  def __init__(self, rubric_file, *args, **kwargs):
-    super().__init__(*args, **kwargs)
-    self.rubric = self.parse_rubric(rubric_file)
-    self.golden_container : docker.models.containers.Container = None
-    self.student_container : docker.models.containers.Container = None
-  
-  def parse_rubric(self, rubric_file):
-    with open(rubric_file) as fid:
-      rubric = yaml.safe_load(fid)
-    if not isinstance(rubric["steps"], list):
-      rubric["steps"] = rubric["steps"].split('\n')
-    return rubric
-  
-  def parse_student_file(self, student_file):
-    with open(student_file) as fid:
-      return [l.strip() for l in fid.readlines()]
-  
-  def rollback(self):
-    # Stop and delete student container
-    self.student_container.stop(timeout=1)
-    self.student_container.remove(force=True)
-    self.student_container = None
-    
-    # Make a copy of the golden_container
-    rollback_image = self.golden_container.commit(repository="rollback", tag="latest")
-    
-    # Start student from the copy we just made
-    self.student_container = self.client.containers.run(
-      image=rollback_image.id,
-      detach=True,
-      tty=True
-    )
-  
-  def start(self, image : docker.models.images,):
-    self.golden_container = self.client.containers.run(
-      image=image,
-      detach=True,
-      tty=True
-    )
-    self.student_container = self.client.containers.run(
-      image=image,
-      detach=True,
-      tty=True
-    )
-  
-  def stop_container(self):
-    self.golden_container.stop(timeout=1)
-    self.golden_container.remove(force=True)
-    self.golden_container = None
-    self.student_container.stop(timeout=1)
-    self.student_container.remove(force=True)
-    self.student_container = None
-  
-  
-  def execute_grading(self, golden_lines=[], student_lines=[], rollback=True, *args, **kwargs):
-    golden_results = defaultdict(list)
-    student_results = defaultdict(list)
-    def add_results(results_dict, rc, stdout, stderr):
-      results_dict["rc"].append(rc)
-      results_dict["stdout"].append(stdout)
-      results_dict["stderr"].append(stderr)
-    
-    for i, (golden, student) in enumerate(zip(golden_lines, student_lines)):
-      log.debug(f"commands: '{golden}' <-> '{student}'")
-      rc_g, stdout_g, stderr_g = self.execute_command_in_container(container=self.golden_container, command=golden)
-      rc_s, stdout_s, stderr_s = self.execute_command_in_container(container=self.student_container, command=student)
-      add_results(golden_results, rc_g, stdout_g, stderr_g)
-      add_results(student_results, rc_s, stdout_s, stderr_s)
-      if (not self.outputs_match(stdout_g, stdout_s, stderr_g, stderr_s, rc_g, rc_s) ) and rollback:
-        # Bring the student container up to date with our container
-        self.rollback()
-    
-    return golden_results, student_results
-  
-  @staticmethod
-  def outputs_match(stdout_g, stdout_s, stderr_g, stderr_s, rc_g, rc_s) -> bool:
-    if stdout_g != stdout_s:
-      return False
-    if stderr_g != stderr_s:
-      return False
-    if rc_g != rc_s:
-      return False
-    return True
-  
-  def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
-    log.debug(f"execution_results: {execution_results}")
-    golden_results, student_results = execution_results
-    num_lines = len(golden_results["stdout"])
-    num_matches = 0
-    for i in range(num_lines):
-      if not self.outputs_match(
-          golden_results["stdout"][i], student_results["stdout"][i],
-          golden_results["stderr"][i], student_results["stderr"][i],
-          golden_results["rc"][i], student_results["rc"][i]
-      ):
-        continue
-      num_matches += 1
-    
-    return Feedback(
-      score=(100.0 * num_matches / len(golden_results["stdout"])),
-      comments=f"Matched {num_matches} out of {len(golden_results['stdout'])}"
-    )
-  
-  
-  def grade_assignment(self, input_files: List[str], *args, **kwargs) -> Feedback:
-    
-    golden_lines = self.rubric["steps"]
-    student_lines = self.parse_student_file(input_files[0])
-    
-    results = self.grade_in_docker(golden_lines=golden_lines, student_lines=student_lines, *args, **kwargs)
-    
-    log.debug(f"final results: {results}")
-    return results
-

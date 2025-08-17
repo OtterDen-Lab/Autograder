@@ -1,34 +1,25 @@
 #!env python
 from __future__ import annotations
 
-import argparse
-import ast
 import base64
 import collections
-import dataclasses
-import importlib
 import math
-import pathlib
-import pkgutil
 import random
 import shutil
 import sys
 import threading
-import time
-import urllib
 from typing import List, Tuple, Dict, Optional
 import io
 import abc
-import enum
-import functools
 import fitz
 import fuzzywuzzy.fuzz
-import numpy as np
 import os
 
 import pandas as pd
 
 import Autograder.ai_helper as ai_helper
+import Autograder.exceptions
+from Autograder.registry import AssignmentRegistry
 from lms_interface.canvas_interface import CanvasCourse, CanvasAssignment
 from lms_interface.classes import Student, Submission, Feedback
 
@@ -38,7 +29,8 @@ import colorama
 
 log = logging.getLogger(__name__)
 
-NAME_SIMILARITY_THRESHOLD = 95
+# Constants
+NAME_SIMILARITY_THRESHOLD = 95  # Percentage threshold for fuzzy name matching
 
 
 class Assignment(abc.ABC):
@@ -109,46 +101,6 @@ class Assignment(abc.ABC):
         )
 
 
-class AssignmentRegistry:
-  _registry = {}
-  _scanned = False
-  
-  @classmethod
-  def register(cls, assignment_type=None):
-    log.debug("Registering...")
-    
-    def decorator(subclass):
-      # Use the provided name or fall back to the class name
-      name = assignment_type.lower() if assignment_type else subclass.__name__.lower()
-      cls._registry[name] = subclass
-      return subclass
-    
-    return decorator
-  
-  @classmethod
-  def create(cls, assignment_type, **kwargs):
-    """Instantiate a registered subclass."""
-    
-    # If we haven't already loaded our premades, do so now
-    if not cls._scanned:
-      cls.load_premade_questions()
-    # Check to see if it's in the registry
-    if assignment_type.lower() not in cls._registry:
-      raise ValueError(f"Unknown assignment type: {assignment_type}")
-    
-    return cls._registry[assignment_type.lower()](**kwargs)
-  
-  
-  @classmethod
-  def load_premade_questions(cls):
-    package_name = "Autograder"  # Fully qualified package name
-    package_path = pathlib.Path(__file__).parent / "grader"
-    log.debug(f"package_path: {package_path}")
-    
-    for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
-      # Import the module
-      module = importlib.import_module(f"{package_name}.{module_name}")
-      log.debug(f"Loaded module: {module}")
 
 
 @AssignmentRegistry.register("ProgrammingAssignment")
@@ -166,19 +118,29 @@ class Assignment__ProgrammingAssignment(Assignment):
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
   
-  def prepare(self, *args, limit=None, do_regrade=False, only_include_latest=True, **kwargs):
+  def prepare(self, 
+              *args, 
+              limit=None, 
+              do_regrade=False, 
+              only_include_latest=True, 
+              **kwargs):
     
     # Steps:
     #  1. Get the submissions
     #  2. Filter out submissions we don't want
     #  3. possibly download proactively
     log.info(f"Preparing assignment with do_regrade={do_regrade}, limit={limit}")
-    self.submissions = self.lms_assignment.get_submissions(limit=(None if not do_regrade else limit))
+    self.submissions = self.lms_assignment.get_submissions(
+      limit=(None if not do_regrade else limit)
+    )
     log.info(f"Retrieved {len(self.submissions)} total submissions from LMS")
     
     if not do_regrade:
       ungraded_before = len(self.submissions)
-      self.submissions = list(filter(lambda s: s.status == Submission.Status.UNGRADED, self.submissions))
+      self.submissions = list(filter(
+        lambda s: s.status == Submission.Status.UNGRADED, 
+        self.submissions
+      ))
       log.info(f"Filtered to {len(self.submissions)} ungraded submissions (was {ungraded_before})")
     else:
       log.info("Regrade mode: processing all submissions regardless of status")
@@ -188,7 +150,10 @@ class Assignment__ProgrammingAssignment(Assignment):
       for f in submission.files:
         if f.name not in self.__class__.allowed_filenames:
           # Then we'll need to try to match it.
-          new_name = max(self.allowed_filenames, key=(lambda s: fuzzywuzzy.fuzz.ratio(s, f.name)))
+          new_name = max(
+            self.allowed_filenames, 
+            key=(lambda s: fuzzywuzzy.fuzz.ratio(s, f.name))
+          )
           log.info(f"Renaming {f.name} to {new_name}")
           f.name = new_name
     
@@ -199,8 +164,11 @@ class Assignment__ProgrammingAssignment(Assignment):
     for i, submission in enumerate(self.submissions):
       try:
         log.debug(f"{i+1 : 0{math.ceil(math.log10(len(self.submissions)))}} : {submission.student.name} -> files: {[f.name for f in submission.files]}")
-      except:
-        log.debug(f"No files for {submission.student.name}")
+      except AttributeError as e:
+        log.warning(f"Failed to log submission info for {submission.student.name}: missing files attribute")
+        log.debug(f"AttributeError details: {e}")
+      except Exception as e:
+        log.error(f"Unexpected error logging submission info for {submission.student.name}: {e}")
     
   def finalize(self, *args, **kwargs):
     super().finalize(*args, **kwargs)
@@ -208,11 +176,12 @@ class Assignment__ProgrammingAssignment(Assignment):
 
 @AssignmentRegistry.register("Exam")
 class Assignment__Exam(Assignment):
-  NAME_RECT =  {
-    "x" : 350,
-    "y" : 0,
-    "width" : 250,
-    "height" : 150
+  # Default name detection rectangle coordinates (pixels)
+  NAME_RECT = {
+    "x": 350,
+    "y": 0,
+    "width": 250,
+    "height": 150
   }
 
   def __init__(self, *args, **kwargs):
@@ -489,13 +458,6 @@ class Assignment__Exam(Assignment):
         query_string += "\n - ".join(sorted(all_student_names))
       response = ai_helper.AI_Helper__Anthropic().query_ai(query_string, attachments=[("png", base64_str)])
       return response
-      
-      
-      # response = ai_helper.AI_Helper().query_ai("Can you summarize this for me?  Please return a json object with the key \"contents\" that elides the summary.", [("png", base64_str)], max_response_tokens=100)
-      # student_name = response.get("contents", None)
-      # if student_name is not None and ':' in student_name:
-      #   student_name = ''.join(student_name.split(':')[1:])
-      # return student_name
     else:
       return None
 
@@ -578,9 +540,10 @@ class Assignment__Exam(Assignment):
 
 @AssignmentRegistry.register("ExamCST231")
 class Assignment__JoshExam(Assignment__Exam):
+  # CST231-specific name detection rectangle coordinates (pixels)
   NAME_RECT = {
-    "x" : 210,
-    "y" : 150,
-    "width" : 350,
-    "height" : 100
+    "x": 210,
+    "y": 150,
+    "width": 350,
+    "height": 100
   }

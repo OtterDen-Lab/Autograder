@@ -12,18 +12,23 @@ from anthropic import Anthropic
 import logging
 log = logging.getLogger(__name__)
 
+# Constants
+DEFAULT_MAX_TOKENS = 1000  # Default token limit for AI responses
+DEFAULT_MAX_RETRIES = 3  # Default number of retries for failed requests
+
 
 class AI_Helper(abc.ABC):
   _client = None
   
   def __init__(self):
     if self._client is None:
-      log.debug("Loading dotenv")# Load the .env file
+      log.debug("Loading dotenv")  # Load the .env file
       dotenv.load_dotenv(os.path.expanduser('~/.env'))
   
   @classmethod
   @abc.abstractmethod
-  def query_ai(cls, message : str, attachments : List[Tuple[str, str]], *args, **kwargs):
+  def query_ai(cls, message: str, attachments: List[Tuple[str, str]], 
+               *args, **kwargs):
     pass
 
 
@@ -33,7 +38,11 @@ class AI_Helper__Anthropic(AI_Helper):
     self.__class__._client = Anthropic()
   
   @classmethod
-  def query_ai(cls, message : str, attachments : List[Tuple[str, str]], max_response_tokens=1000, max_retries=3):
+  def query_ai(cls, 
+               message: str, 
+               attachments: List[Tuple[str, str]], 
+               max_response_tokens=DEFAULT_MAX_TOKENS, 
+               max_retries=DEFAULT_MAX_RETRIES):
     messages = []
     
     attachment_messages = []
@@ -64,7 +73,7 @@ class AI_Helper__Anthropic(AI_Helper):
     
     message = cls._client.messages.create(
       model="claude-3-5-sonnet-20241022",
-      max_tokens=10-0,
+      max_tokens=DEFAULT_MAX_TOKENS,
       messages=messages
     )
     log.debug(message.content)
@@ -77,7 +86,11 @@ class AI_Helper__OpenAI(AI_Helper):
     self.__class__._client = OpenAI()
   
   @classmethod
-  def query_ai(cls, message : str, attachments : List[Tuple[str, str]], max_response_tokens=1000, max_retries=3):
+  def query_ai(cls, 
+               message: str, 
+               attachments: List[Tuple[str, str]], 
+               max_response_tokens=DEFAULT_MAX_TOKENS, 
+               max_retries=DEFAULT_MAX_RETRIES):
     messages = []
     
     attachment_messages = []
