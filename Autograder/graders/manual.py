@@ -53,7 +53,6 @@ class Grader__Manual(Grader):
     df = pd.DataFrame([
       {
         **submission.extra_info,
-        #"page_mappings" : page_mappings_by_user[submission.document_id],
         "name" : submission.student.name if submission.student is not None else "",
         "user_id" : submission.student.user_id if submission.student is not None else "",
         "total" : None
@@ -144,7 +143,7 @@ class Grader__Manual(Grader):
     return not self.is_grading_complete()
 
   def execute_grading(self, *args, **kwargs):
-    return NotImplemented
+    raise NotImplementedError("Manual grading uses a different workflow")
   
   def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
-    return NotImplemented
+    raise NotImplementedError("Manual grading uses a different workflow")

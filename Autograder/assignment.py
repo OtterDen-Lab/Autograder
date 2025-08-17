@@ -1,26 +1,18 @@
 #!env python
 from __future__ import annotations
 
-import argparse
-import ast
 import base64
 import collections
-import dataclasses
 import math
 import random
 import shutil
 import sys
 import threading
-import time
-import urllib
 from typing import List, Tuple, Dict, Optional
 import io
 import abc
-import enum
-import functools
 import fitz
 import fuzzywuzzy.fuzz
-import numpy as np
 import os
 
 import pandas as pd
@@ -460,13 +452,6 @@ class Assignment__Exam(Assignment):
         query_string += "\n - ".join(sorted(all_student_names))
       response = ai_helper.AI_Helper__Anthropic().query_ai(query_string, attachments=[("png", base64_str)])
       return response
-      
-      
-      # response = ai_helper.AI_Helper().query_ai("Can you summarize this for me?  Please return a json object with the key \"contents\" that elides the summary.", [("png", base64_str)], max_response_tokens=100)
-      # student_name = response.get("contents", None)
-      # if student_name is not None and ':' in student_name:
-      #   student_name = ''.join(student_name.split(':')[1:])
-      # return student_name
     else:
       return None
 
