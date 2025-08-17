@@ -11,6 +11,8 @@ import threading
 import uuid
 from typing import List, Tuple, Optional, Union
 
+import Autograder.exceptions
+
 import logging
 log = logging.getLogger(__name__)
 
@@ -46,10 +48,13 @@ class DockerClient:
             log.debug("Docker client connected successfully")
         except docker.errors.DockerException as e:
             log.error(f"Docker isn't running: {e}")
-            raise DockerConnectionError(f"Docker daemon not available: {e}")
+            raise Autograder.exceptions.DockerError(f"Docker daemon not available: {e}") from e
         except docker.errors.APIError as e:
             log.error(f"Docker API error: {e}")
-            raise DockerConnectionError(f"Docker API error: {e}")
+            raise Autograder.exceptions.DockerError(f"Docker API error: {e}") from e
+        except Exception as e:
+            log.error(f"Unexpected error connecting to Docker: {e}")
+            raise Autograder.exceptions.ConfigurationError(f"Failed to initialize Docker client: {e}") from e
     
     def build_image(self, dockerfile_content: str, tag: str) -> 'docker.models.images.Image':
         """
@@ -64,24 +69,36 @@ class DockerClient:
         """
         log.info(f"Building docker image: {tag}")
         
-        image, logs = self.client.images.build(
-            fileobj=io.BytesIO(dockerfile_content.encode()),
-            pull=True,
-            nocache=True,
-            tag=tag,
-            rm=True,
-            forcerm=True
-        )
-        
-        log.debug(f"Successfully built docker image {image.tags}")
-        return image
+        try:
+            image, logs = self.client.images.build(
+                fileobj=io.BytesIO(dockerfile_content.encode()),
+                pull=True,
+                nocache=True,
+                tag=tag,
+                rm=True,
+                forcerm=True
+            )
+            
+            log.debug(f"Successfully built docker image {image.tags}")
+            return image
+        except docker.errors.BuildError as e:
+            log.error(f"Docker build failed for tag {tag}: {e}")
+            raise Autograder.exceptions.ImageBuildError(f"Failed to build image {tag}: {e}") from e
+        except docker.errors.APIError as e:
+            log.error(f"Docker API error during build: {e}")
+            raise Autograder.exceptions.DockerError(f"Docker API error building {tag}: {e}") from e
     
     def remove_image(self, image, force=True):
         """Remove a Docker image with error handling."""
         try:
             image.remove(force=force)
-        except (AttributeError, docker.errors.APIError) as e:
-            log.warning(f"Failed to remove image: {e}")
+            log.debug(f"Successfully removed image: {getattr(image, 'tags', 'unknown')}")
+        except AttributeError as e:
+            log.warning(f"Image object missing remove method: {e}")
+        except docker.errors.APIError as e:
+            log.warning(f"Docker API error removing image: {e}")
+        except Exception as e:
+            log.warning(f"Unexpected error removing image: {e}")
 
 
 class DockerContainer:
@@ -106,14 +123,24 @@ class DockerContainer:
     
     def start(self):
         """Start the container."""
-        self.container = self.client.client.containers.run(
-            image=self.image,
-            detach=True,
-            tty=True,
-            remove=True,
-            name=self.container_name
-        )
-        log.debug(f"Started container: {self.container_name}")
+        try:
+            self.container = self.client.client.containers.run(
+                image=self.image,
+                detach=True,
+                tty=True,
+                remove=True,
+                name=self.container_name
+            )
+            log.debug(f"Started container: {self.container_name}")
+        except docker.errors.ContainerError as e:
+            log.error(f"Container failed to start: {e}")
+            raise Autograder.exceptions.ContainerError(f"Failed to start container {self.container_name}: {e}") from e
+        except docker.errors.ImageNotFound as e:
+            log.error(f"Image not found: {self.image}")
+            raise Autograder.exceptions.DockerError(f"Image not found: {self.image}") from e
+        except docker.errors.APIError as e:
+            log.error(f"Docker API error starting container: {e}")
+            raise Autograder.exceptions.DockerError(f"Docker API error: {e}") from e
     
     def stop(self, timeout=1):
         """Stop and remove the container."""
@@ -121,8 +148,12 @@ class DockerContainer:
             try:
                 self.container.stop(timeout=timeout)
                 log.debug(f"Stopped container: {self.container_name}")
+            except docker.errors.NotFound:
+                log.debug(f"Container {self.container_name} already removed")
+            except docker.errors.APIError as e:
+                log.warning(f"Docker API error stopping container {self.container_name}: {e}")
             except Exception as e:
-                log.warning(f"Error stopping container {self.container_name}: {e}")
+                log.warning(f"Unexpected error stopping container {self.container_name}: {e}")
             finally:
                 self.container = None
     
@@ -138,7 +169,7 @@ class DockerContainer:
             New Docker image
         """
         if not self.container:
-            raise DockerOperationError("Cannot commit - no running container")
+            raise Autograder.exceptions.ContainerError("Cannot commit - no running container")
         
         return self.container.commit(repository=repository, tag=tag)
     
@@ -150,7 +181,7 @@ class DockerContainer:
             files_to_copy: List of (file_object, target_directory) tuples
         """
         if not self.container:
-            raise DockerOperationError("Cannot copy files - no running container")
+            raise Autograder.exceptions.ContainerError("Cannot copy files - no running container")
         
         for src_file, target_dir in files_to_copy:
             self._copy_single_file(src_file, target_dir)
@@ -191,7 +222,7 @@ class DockerContainer:
             Tuple of (return_code, stdout, stderr)
         """
         if not self.container:
-            raise DockerOperationError("Cannot execute command - no running container")
+            raise Autograder.exceptions.ContainerError("Cannot execute command - no running container")
         
         log.debug(f"Executing command: {command}")
         

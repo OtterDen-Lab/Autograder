@@ -8,6 +8,7 @@ from typing import List, Tuple, Optional
 from Autograder.assignment import Assignment
 from Autograder.registry import GraderRegistry
 from Autograder.docker_utils import DockerClient, DockerContainer, DockerError
+import Autograder.exceptions
 from lms_interface.classes import Feedback, Submission
 
 # Import all grader implementations to ensure they're registered
@@ -119,7 +120,7 @@ class Grader__docker(Grader, abc.ABC):
       self.docker_client = DockerClient()
     except DockerError as e:
       log.error(f"Failed to initialize Docker client: {e}")
-      exit(8)
+      raise Autograder.exceptions.ConfigurationError(f"Docker client initialization failed: {e}") from e
     
     # Default to using ubuntu image
     self.image = image if image is not None else "ubuntu"

@@ -18,6 +18,7 @@ import os
 import pandas as pd
 
 import Autograder.ai_helper as ai_helper
+import Autograder.exceptions
 from Autograder.registry import AssignmentRegistry
 from lms_interface.canvas_interface import CanvasCourse, CanvasAssignment
 from lms_interface.classes import Student, Submission, Feedback
@@ -162,8 +163,11 @@ class Assignment__ProgrammingAssignment(Assignment):
     for i, submission in enumerate(self.submissions):
       try:
         log.debug(f"{i+1 : 0{math.ceil(math.log10(len(self.submissions)))}} : {submission.student.name} -> files: {[f.name for f in submission.files]}")
-      except:
-        log.debug(f"No files for {submission.student.name}")
+      except AttributeError as e:
+        log.warning(f"Failed to log submission info for {submission.student.name}: missing files attribute")
+        log.debug(f"AttributeError details: {e}")
+      except Exception as e:
+        log.error(f"Unexpected error logging submission info for {submission.student.name}: {e}")
     
   def finalize(self, *args, **kwargs):
     super().finalize(*args, **kwargs)

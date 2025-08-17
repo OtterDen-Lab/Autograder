@@ -13,6 +13,7 @@ import pandas as pd
 from Autograder.assignment import Assignment
 from Autograder.grader import Grader
 from Autograder.registry import GraderRegistry
+import Autograder.exceptions
 from lms_interface.classes import Feedback, Submission
 
 import logging
@@ -38,7 +39,14 @@ class Grader__Manual(Grader):
     if not os.path.exists(self.CSV_NAME): 
       return False
     
-    grades_df = pd.read_csv(self.CSV_NAME)
+    try:
+      grades_df = pd.read_csv(self.CSV_NAME)
+    except (pd.errors.EmptyDataError, pd.errors.ParserError) as e:
+      log.error(f"Failed to read grades CSV file {self.CSV_NAME}: {e}")
+      return False
+    except Exception as e:
+      log.error(f"Unexpected error reading grades CSV: {e}")
+      return False
     
     # Clean out the extra columns not associated with any submission
     grades_df = grades_df[grades_df["document_id"].notna()]
@@ -67,8 +75,9 @@ class Grader__Manual(Grader):
   def finalize(self, assignment, *args, **kwargs):
     log.debug("Finalizing manual grading")
     if not self.is_grading_complete():
-      log.error("It seems like some entries do not have scores.  Please correct and rerun.")
-      exit(4)
+      raise Autograder.exceptions.GradingIncompleteError(
+        "Some entries do not have scores. Please complete grading in the CSV file and rerun."
+      )
     
     # Steps:
     # 1. Recreate submissions
@@ -96,7 +105,15 @@ class Grader__Manual(Grader):
           status=Submission.Status.GRADED,
         )
         del canvas_students_by_id[int(row["user_id"])]
-      except:
+      except KeyError as e:
+        log.warning(f"Student with user_id {row['user_id']} not found in Canvas: {e}")
+        submission = Submission(
+          student=None,
+          status=Submission.Status.GRADED
+        )
+        num_students_unmmatched += 1
+      except (ValueError, TypeError) as e:
+        log.error(f"Invalid user_id format '{row['user_id']}': {e}")
         submission = Submission(
           student=None,
           status=Submission.Status.GRADED
@@ -124,9 +141,12 @@ class Grader__Manual(Grader):
     if kwargs.get("merge_only"):
       pass
     else:
-      if grades_df[grades_df["user_id"].isna()].shape[0] > 0 or num_students_unmmatched > 0:
-        log.error("There were unmatched students.  Please correct and re-run.")
-        exit(2)
+      unmatched_count = grades_df[grades_df["user_id"].isna()].shape[0]
+      if unmatched_count > 0 or num_students_unmmatched > 0:
+        raise Autograder.exceptions.UnmatchedStudentsError(
+          f"Found {unmatched_count + num_students_unmmatched} unmatched students. "
+          "Please match all students in the CSV file and re-run."
+        )
     
     # Now we have a list of graded submissions
     log.info(f"We have graded {len(graded_submissions)} submissions!")
