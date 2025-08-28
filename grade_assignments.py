@@ -175,8 +175,6 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
             log.warning(f"[Thread {thread_id}] Manual grading finalization for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode")
           grading_assignment.finalize(push=push_grades, merge_only=args.merge_only)
     
-    grader.cleanup()
-    
     return {
       'success': True,
       'assignment_name': lms_assignment.name,
@@ -193,6 +191,14 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
       'error': str(e),
       'thread_id': thread_id
     }
+  finally:
+    # Ensure cleanup always happens, even if errors occurred
+    try:
+      if 'grader' in locals():
+        grader.cleanup()
+        log.debug(f"[Thread {thread_id}] Cleanup completed for assignment {assignment_id or 'unknown'}")
+    except Exception as cleanup_error:
+      log.warning(f"[Thread {thread_id}] Error during cleanup: {cleanup_error}")
 
 
 @contextlib.contextmanager
@@ -407,6 +413,62 @@ def execute_grading(assignments_to_grade: List[Dict], args: argparse.Namespace) 
   return results
 
 
+def cleanup_all_docker_resources() -> None:
+  """
+  Global cleanup function to remove any remaining Docker containers and images
+  created by grading operations.
+  """
+  try:
+    # Import docker here to avoid issues when docker is not available
+    import docker
+    client = docker.from_env()
+    
+    # Clean up any remaining grader containers
+    containers = client.containers.list(all=True, filters={'name': 'grader'})
+    if containers:
+      log.info(f"Cleaning up {len(containers)} remaining grader containers")
+      for container in containers:
+        try:
+          container.stop(timeout=1)
+          container.remove(force=True)
+          log.debug(f"Cleaned up container: {container.name}")
+        except Exception as e:
+          log.debug(f"Failed to clean up container {container.name}: {e}")
+    
+    # Clean up grading images
+    grading_images = client.images.list(filters={'dangling': False})
+    cleaned_images = 0
+    for image in grading_images:
+      if image.tags:
+        for tag in image.tags:
+          if tag.startswith('grading:'):
+            try:
+              client.images.remove(image.id, force=True)
+              log.debug(f"Cleaned up grading image: {tag}")
+              cleaned_images += 1
+              break
+            except Exception as e:
+              log.debug(f"Failed to clean up grading image {tag}: {e}")
+    
+    if cleaned_images > 0:
+      log.info(f"Cleaned up {cleaned_images} grading images")
+      
+    # Clean up dangling images
+    dangling_images = client.images.list(filters={'dangling': True})
+    if dangling_images:
+      for image in dangling_images:
+        try:
+          client.images.remove(image.id, force=True)
+        except Exception:
+          pass
+      log.info(f"Cleaned up {len(dangling_images)} dangling images")
+    
+  except ImportError:
+    log.debug("Docker not available, skipping Docker cleanup")
+  except Exception as e:
+    log.warning(f"Failed to perform global Docker cleanup: {e}")
+
+
 def print_results_summary(results: List[Dict]) -> None:
   """
   Print summary of grading results.
@@ -433,13 +495,18 @@ def main() -> None:
   Coordinates the entire grading process using a clean, modular approach.
   """
   with ensure_single_instance():
-    args = parse_args()
-    config = load_and_validate_config(args.yaml)
-    
-    assignments_to_grade = collect_assignments_to_grade(config, args)
-    results = execute_grading(assignments_to_grade, args)
-    
-    print_results_summary(results)
+    try:
+      args = parse_args()
+      config = load_and_validate_config(args.yaml)
+      
+      assignments_to_grade = collect_assignments_to_grade(config, args)
+      results = execute_grading(assignments_to_grade, args)
+      
+      print_results_summary(results)
+    finally:
+      # Always perform global Docker cleanup at the end
+      log.info("Performing final Docker cleanup...")
+      cleanup_all_docker_resources()
 
 
 if __name__ == "__main__":

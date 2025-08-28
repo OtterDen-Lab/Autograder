@@ -148,11 +148,57 @@ class Grader__docker(Grader, abc.ABC):
   
   def cleanup(self) -> None:
     """Clean up Docker resources."""
-    if hasattr(self, 'image') and hasattr(self.image, 'remove'):
-      self.docker_client.remove_image(self.image)
-    
+    # Stop any running containers first
     if self.container:
       self.container.stop()
+      self.container = None
+    
+    # Remove custom built images (skip base images like 'ubuntu')
+    if hasattr(self, 'image') and hasattr(self.image, 'remove'):
+      try:
+        self.docker_client.remove_image(self.image)
+        log.debug(f"Cleaned up Docker image: {getattr(self.image, 'tags', 'unknown')}")
+      except Exception as e:
+        log.warning(f"Failed to clean up Docker image: {e}")
+    
+    # Clean up any orphaned containers and images created by this grader
+    self._cleanup_orphaned_resources()
+  
+  def _cleanup_orphaned_resources(self) -> None:
+    """Clean up any orphaned Docker containers and images created by this grader."""
+    try:
+      # Clean up containers with our grader prefix
+      containers = self.docker_client.client.containers.list(all=True, filters={'name': 'grader'})
+      for container in containers:
+        try:
+          container.stop(timeout=1)
+          container.remove(force=True)
+          log.debug(f"Cleaned up orphaned container: {container.name}")
+        except Exception as e:
+          log.debug(f"Failed to clean up container {container.name}: {e}")
+      
+      # Clean up dangling images from our grading operations
+      grading_images = self.docker_client.client.images.list(filters={'label': 'grading'})
+      for image in grading_images:
+        try:
+          self.docker_client.remove_image(image)
+        except Exception as e:
+          log.debug(f"Failed to clean up grading image {image.tags}: {e}")
+      
+      # Clean up images with our grading tag pattern
+      all_images = self.docker_client.client.images.list(filters={'dangling': False})
+      for image in all_images:
+        if image.tags:
+          for tag in image.tags:
+            if tag.startswith('grading:'):
+              try:
+                self.docker_client.remove_image(image)
+                log.debug(f"Cleaned up grading image: {tag}")
+                break
+              except Exception as e:
+                log.debug(f"Failed to clean up grading image {tag}: {e}")
+    except Exception as e:
+      log.warning(f"Failed to clean up orphaned Docker resources: {e}")
       
   # Helper functions below here
   def build_docker_image(self, dockerfile_str: str):
