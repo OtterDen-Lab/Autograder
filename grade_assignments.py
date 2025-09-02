@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--merge_only", dest="merge_only", action="store_true")
   parser.add_argument("--max_workers", default=None, type=int, help="Maximum number of parallel grading threads (default: number of assignments)")
   
+  parser.add_argument("--test", action="store_true", help="Only downloads for test student")
   
   return parser.parse_args()
 
@@ -162,6 +163,7 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
             limit=args.limit,
             do_regrade=do_regrade,
             merge_only=args.merge_only,
+            test=args.test,
             **merged_assignment.get("kwargs", {})
           )
           

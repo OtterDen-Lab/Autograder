@@ -131,7 +131,8 @@ class Assignment__ProgrammingAssignment(Assignment):
     #  3. possibly download proactively
     log.info(f"Preparing assignment with do_regrade={do_regrade}, limit={limit}")
     self.submissions = self.lms_assignment.get_submissions(
-      limit=(None if not do_regrade else limit)
+      limit=(None if not do_regrade else limit),
+      **kwargs
     )
     log.info(f"Retrieved {len(self.submissions)} total submissions from LMS")
     
