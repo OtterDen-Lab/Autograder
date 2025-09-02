@@ -31,24 +31,30 @@ class Grader__CST334(Grader__docker_configurable):
   grading scripts from the course repository.
   """
   
-  def __init__(self, assignment_path, git_repo="https://www.github.com/samogden/CST334-assignments.git", *args, **kwargs):
-    # Always need to clone the assignments repo to get the grading scripts
-    dockerfile_text = f"""FROM samogden/cst334
-RUN git clone {git_repo} /tmp/grading/
-WORKDIR /tmp/grading
-CMD ["/bin/bash"]"""
+  def __init__(self, assignment_path, git_repo="git@github.com:CSUMB-SCD-instructors/CST334.git", *args, **kwargs):
+    # Extract additional_files for runtime use (not build time)
+    additional_files_for_runtime = kwargs.pop('additional_files', [])
+    log.debug(f"CST334 init - additional_files: {additional_files_for_runtime}")
     
     # Set working directory to the specific assignment folder
     assignment_working_dir = f"/tmp/grading/programming-assignments/{assignment_path}"
     
+    # Add the git clone command as an additional install
+    additional_installs = [f"git clone {git_repo} /tmp/grading/"]
+    
     super().__init__(
-      dockerfile_text=dockerfile_text,
+      image="samogden/cst334",
       grading_commands=[f"timeout {GRADING_TIMEOUT_SECONDS} python ../../helpers/grader.py --output /tmp/results.json"],
       working_dir=assignment_working_dir,
+      additional_installs=additional_installs,
+      # Don't pass additional_files to parent - we handle it at runtime
       *args,
       **kwargs
     )
     self.assignment_path = assignment_path
+    # Store additional_files AFTER super() to avoid being overwritten
+    self.additional_files = additional_files_for_runtime
+    log.debug(f"CST334 init - self.additional_files stored: {self.additional_files}")
   
   def check_for_trickery(self, submission) -> bool:
     def contains_string(search_str, f) -> bool:
@@ -127,6 +133,17 @@ CMD ["/bin/bash"]"""
             textwrap.indent('\n'.join(results_dict["suites"][suite_name]["FAILED"]), '    '),
             ""
           ])
+        
+        # Show reserved tests that were configured but missing
+        if "RESERVED" in results_dict["suites"][suite_name] and len(results_dict["suites"][suite_name]["RESERVED"]) > 0:
+          feedback_strs.extend([
+            f"SUITE: {suite_name} (Reserved Tests - Not Available)",
+            "  * missing:",
+          ])
+          feedback_strs.extend([
+            textwrap.indent('\n'.join(results_dict["suites"][suite_name]["RESERVED"]), '    '),
+            ""
+          ])
       feedback_strs.extend([
         "################",
         "",
@@ -191,6 +208,25 @@ CMD ["/bin/bash"]"""
       # Your original logic: .c files go to src/, others go to include/
       target_dir = f"/tmp/grading/{path_to_programming_assignment}/{'src' if f.name.endswith('.c') else 'include'}"
       submission_files.append((f, target_dir))
+    
+    # Add reserved test files at runtime
+    if hasattr(self, 'additional_files') and self.additional_files:
+      import io
+      log.debug(f"Processing {len(self.additional_files)} additional files")
+      for file_spec in self.additional_files:
+        if isinstance(file_spec, dict):
+          src = file_spec.get('src')
+          dst = file_spec.get('dst', self.working_dir)
+          if src and os.path.exists(src):
+            log.debug(f"Adding additional file: {src} -> {dst}")
+            with open(src, 'rb') as f:
+              file_content = f.read()
+            mock_file = io.BytesIO(file_content)
+            mock_file.name = os.path.basename(src)
+            mock_file.seek(0)
+            submission_files.append((mock_file, dst))
+          else:
+            log.warning(f"Additional file not found: {src}")
     
     # Check for trickery using your original detection logic
     if self.check_for_trickery(submission):

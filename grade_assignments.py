@@ -141,7 +141,8 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     grader = GraderRegistry.create(
       grader_name,
       assignment_path=repo_path,
-      assignment_name=assignment_name
+      assignment_name=assignment_name,
+      **assignment_grading_kwargs
     )
     
     with working_directory(root_dir) as working_dir:
