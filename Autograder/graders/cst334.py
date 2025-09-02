@@ -93,13 +93,28 @@ CMD ["/bin/bash"]"""
     if "suites" in results_dict:
       for suite_name in results_dict["suites"].keys():
         
-        if len(results_dict["suites"][suite_name]["PASSED"]) > 0:
+        # Separate regular tests from RESERVE_ tests
+        passed_tests = results_dict["suites"][suite_name]["PASSED"]
+        regular_passed = [test for test in passed_tests if not test.startswith("RESERVE_")]
+        reserve_passed = [test for test in passed_tests if test.startswith("RESERVE_")]
+        
+        if len(regular_passed) > 0:
           feedback_strs.extend([
             f"SUITE: {suite_name}",
             "  * passed:",
           ])
           feedback_strs.extend([
-            textwrap.indent('\n'.join(results_dict["suites"][suite_name]["PASSED"]), '    '),
+            textwrap.indent('\n'.join(regular_passed), '    '),
+            ""
+          ])
+        
+        if len(reserve_passed) > 0:
+          feedback_strs.extend([
+            f"SUITE: {suite_name} (Enhanced Tests)",
+            "  * passed:",
+          ])
+          feedback_strs.extend([
+            textwrap.indent('\n'.join(reserve_passed), '    '),
             ""
           ])
         
