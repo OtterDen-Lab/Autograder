@@ -38,7 +38,8 @@ class Grader__CST334(Grader__docker_configurable):
                                   
     golden_base_dir (str): Base directory path to the golden/reference repository
                           containing the master copies of test files and other
-                          instructor resources.
+                          instructor resources. Can be an absolute or relative path.
+                          Relative paths are resolved from the current working directory.
   """
   
   def __init__(self, assignment_path, git_repo="git@github.com:CSUMB-SCD-instructors/CST334.git", *args, **kwargs):
@@ -46,7 +47,13 @@ class Grader__CST334(Grader__docker_configurable):
     # Support both new name and backward compatibility with additional_files
     files_from_golden_repo = kwargs.pop('files_from_golden_repo', kwargs.pop('additional_files', []))
     # Extract golden_base_dir parameter
-    self.golden_base_dir = kwargs.pop('golden_base_dir', None)
+    golden_base_dir = kwargs.pop('golden_base_dir', None)
+    # Convert relative paths to absolute paths
+    golden_base_dir = os.path.expanduser(golden_base_dir)
+    if golden_base_dir and not os.path.isabs(golden_base_dir):
+      self.golden_base_dir = os.path.abspath(golden_base_dir)
+    else:
+      self.golden_base_dir = golden_base_dir
     log.debug(f"CST334 init - files_from_golden_repo: {files_from_golden_repo}")
     
     # Set working directory to the specific assignment folder

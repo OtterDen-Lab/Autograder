@@ -9,7 +9,7 @@ courses:
       kind: ProgrammingAssignment
       kwargs:
         num_repeats: 10
-        golden_base_dir: "/Users/ssogden/repos/classes/CST334-golden/programming-assignments"
+        golden_base_dir: "~/repos/classes/CST334-golden/programming-assignments"
         files_from_golden_repo:
           - "tests/unittests_reserved.c"
     assignments:
