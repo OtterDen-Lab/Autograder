@@ -17,9 +17,9 @@ import Autograder.exceptions
 import logging
 log = logging.getLogger(__name__)
 
-# Global image reference counter with thread-safe access
-_image_ref_counter = defaultdict(int)
-_image_ref_lock = threading.Lock()
+# Global image usage counter - tracks how many containers are using each image
+_image_usage_counter = defaultdict(int)
+_image_usage_lock = threading.Lock()
 
 # Lazy import docker to avoid import errors when docker is not available
 docker = None
@@ -39,23 +39,23 @@ class DockerClient:
     """
     
     @staticmethod
-    def acquire_image_reference(image_id: str) -> None:
-        """Increment reference count for a Docker image."""
-        with _image_ref_lock:
-            _image_ref_counter[image_id] += 1
-            log.debug(f"Acquired reference for image {image_id}, count: {_image_ref_counter[image_id]}")
+    def increment_image_usage(image_id: str) -> None:
+        """Increment usage count when a container starts using an image."""
+        with _image_usage_lock:
+            _image_usage_counter[image_id] += 1
+            log.debug(f"Container started using image {image_id}, usage count: {_image_usage_counter[image_id]}")
     
     @staticmethod
-    def release_image_reference(image_id: str) -> bool:
-        """Decrement reference count for a Docker image. Returns True if safe to remove."""
-        with _image_ref_lock:
-            if image_id in _image_ref_counter:
-                _image_ref_counter[image_id] -= 1
-                count = _image_ref_counter[image_id]
-                log.debug(f"Released reference for image {image_id}, count: {count}")
+    def decrement_image_usage(image_id: str) -> bool:
+        """Decrement usage count when a container stops using an image. Returns True if safe to remove."""
+        with _image_usage_lock:
+            if image_id in _image_usage_counter:
+                _image_usage_counter[image_id] -= 1
+                count = _image_usage_counter[image_id]
+                log.debug(f"Container stopped using image {image_id}, usage count: {count}")
                 
                 if count <= 0:
-                    del _image_ref_counter[image_id]
+                    del _image_usage_counter[image_id]
                     return True
             return False
     
@@ -99,8 +99,6 @@ class DockerClient:
         try:
             existing_image = self.client.images.get(tag)
             log.debug(f"Found existing image {tag}, reusing")
-            # Acquire reference for the existing image
-            DockerClient.acquire_image_reference(existing_image.id)
             return existing_image
         except docker.errors.ImageNotFound:
             # Image doesn't exist, need to build it
@@ -116,8 +114,6 @@ class DockerClient:
                 forcerm=True
             )
             
-            # Acquire reference for the newly built image
-            DockerClient.acquire_image_reference(image.id)
             log.debug(f"Successfully built docker image {image.tags}")
             return image
         except docker.errors.BuildError as e:
@@ -140,16 +136,16 @@ class DockerClient:
             log.warning(f"Unexpected error removing image: {e}")
     
     def safe_remove_image(self, image, force: bool = True) -> None:
-        """Remove a Docker image only if no other threads are using it."""
+        """Remove a Docker image only if no containers are using it."""
         try:
-            # Get image ID for reference counting
+            # Get image ID for usage counting
             image_id = getattr(image, 'id', None) or str(image)
             
             # Check if it's safe to remove the image
-            if DockerClient.release_image_reference(image_id):
+            if DockerClient.decrement_image_usage(image_id):
                 self.remove_image(image, force)
             else:
-                log.debug(f"Image {image_id} still has active references, not removing")
+                log.debug(f"Image {image_id} still has active containers, not removing")
                 
         except Exception as e:
             log.warning(f"Error in safe_remove_image: {e}")
@@ -178,6 +174,10 @@ class DockerContainer:
     def start(self) -> None:
         """Start the container."""
         try:
+            # Increment usage counter when container starts using the image
+            if hasattr(self.image, 'id'):
+                DockerClient.increment_image_usage(self.image.id)
+            
             self.container = self.client.client.containers.run(
                 image=self.image,
                 detach=True,
@@ -210,6 +210,10 @@ class DockerContainer:
                 log.warning(f"Unexpected error stopping container {self.container_name}: {e}")
             finally:
                 self.container = None
+                
+                # Decrement usage counter when container stops using the image
+                if hasattr(self.image, 'id'):
+                    DockerClient.decrement_image_usage(self.image.id)
     
     def commit(self, repository: str, tag: str = "latest") -> 'docker.models.images.Image':
         """

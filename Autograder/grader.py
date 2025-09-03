@@ -153,7 +153,7 @@ class Grader__docker(Grader, abc.ABC):
       self.container.stop()
       self.container = None
     
-    # Remove custom built images using safe removal (reference counting)
+    # Remove custom built images using safe removal (usage counting)
     if hasattr(self, 'image') and hasattr(self.image, 'remove'):
       try:
         self.docker_client.safe_remove_image(self.image)
