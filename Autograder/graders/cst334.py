@@ -29,12 +29,25 @@ class Grader__CST334(Grader__docker_configurable):
   
   Uses a specialized Docker image with CST334-specific tools and
   grading scripts from the course repository.
+  
+  Parameters:
+    files_from_golden_repo (list): Files to copy from the golden/reference repository.
+                                  Can be relative paths (resolved against golden_base_dir/assignment_path)
+                                  or full path specifications with src/dst.
+                                  Also supports 'additional_files' for backward compatibility.
+                                  
+    golden_base_dir (str): Base directory path to the golden/reference repository
+                          containing the master copies of test files and other
+                          instructor resources.
   """
   
   def __init__(self, assignment_path, git_repo="git@github.com:CSUMB-SCD-instructors/CST334.git", *args, **kwargs):
-    # Extract additional_files for runtime use (not build time)
-    additional_files_for_runtime = kwargs.pop('additional_files', [])
-    log.debug(f"CST334 init - additional_files: {additional_files_for_runtime}")
+    # Extract files_from_golden_repo for runtime use (not build time)
+    # Support both new name and backward compatibility with additional_files
+    files_from_golden_repo = kwargs.pop('files_from_golden_repo', kwargs.pop('additional_files', []))
+    # Extract golden_base_dir parameter
+    self.golden_base_dir = kwargs.pop('golden_base_dir', None)
+    log.debug(f"CST334 init - files_from_golden_repo: {files_from_golden_repo}")
     
     # Set working directory to the specific assignment folder
     assignment_working_dir = f"/tmp/grading/programming-assignments/{assignment_path}"
@@ -52,9 +65,9 @@ class Grader__CST334(Grader__docker_configurable):
       **kwargs
     )
     self.assignment_path = assignment_path
-    # Store additional_files AFTER super() to avoid being overwritten
-    self.additional_files = additional_files_for_runtime
-    log.debug(f"CST334 init - self.additional_files stored: {self.additional_files}")
+    # Store files_from_golden_repo AFTER super() to avoid being overwritten
+    self.files_from_golden_repo = files_from_golden_repo
+    log.debug(f"CST334 init - self.files_from_golden_repo stored: {self.files_from_golden_repo}")
   
   def check_for_trickery(self, submission) -> bool:
     def contains_string(search_str, f) -> bool:
@@ -209,14 +222,20 @@ class Grader__CST334(Grader__docker_configurable):
       target_dir = f"/tmp/grading/{path_to_programming_assignment}/{'src' if f.name.endswith('.c') else 'include'}"
       submission_files.append((f, target_dir))
     
-    # Add reserved test files at runtime
-    if hasattr(self, 'additional_files') and self.additional_files:
+    # Add files from golden repo at runtime
+    if hasattr(self, 'files_from_golden_repo') and self.files_from_golden_repo:
       import io
-      log.debug(f"Processing {len(self.additional_files)} additional files")
-      for file_spec in self.additional_files:
+      log.debug(f"Processing {len(self.files_from_golden_repo)} files from golden repo")
+      for file_spec in self.files_from_golden_repo:
         if isinstance(file_spec, dict):
           src = file_spec.get('src')
           dst = file_spec.get('dst', self.working_dir)
+          
+          # Handle relative paths with golden_base_dir
+          if src and not os.path.isabs(src) and self.golden_base_dir:
+            src = os.path.join(self.golden_base_dir, self.assignment_path, src)
+            log.debug(f"Resolved relative path to: {src}")
+          
           if src and os.path.exists(src):
             log.debug(f"Adding additional file: {src} -> {dst}")
             with open(src, 'rb') as f:
@@ -226,7 +245,26 @@ class Grader__CST334(Grader__docker_configurable):
             mock_file.seek(0)
             submission_files.append((mock_file, dst))
           else:
-            log.warning(f"Additional file not found: {src}")
+            log.warning(f"Golden repo file not found: {src}")
+        elif isinstance(file_spec, str):
+          # Handle simple string specification (relative path only)
+          src = file_spec
+          if not os.path.isabs(src) and self.golden_base_dir:
+            src = os.path.join(self.golden_base_dir, self.assignment_path, src)
+            log.debug(f"Resolved relative path to: {src}")
+          
+          if os.path.exists(src):
+            # Default destination is working_dir/tests for .c files
+            dst = f"{self.working_dir}/tests" if src.endswith('.c') else self.working_dir
+            log.debug(f"Adding additional file: {src} -> {dst}")
+            with open(src, 'rb') as f:
+              file_content = f.read()
+            mock_file = io.BytesIO(file_content)
+            mock_file.name = os.path.basename(src)
+            mock_file.seek(0)
+            submission_files.append((mock_file, dst))
+          else:
+            log.warning(f"Golden repo file not found: {src}")
     
     # Check for trickery using your original detection logic
     if self.check_for_trickery(submission):
