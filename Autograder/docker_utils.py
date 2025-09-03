@@ -10,11 +10,16 @@ import time
 import threading
 import uuid
 from typing import List, Tuple, Optional, Union
+from collections import defaultdict
 
 import Autograder.exceptions
 
 import logging
 log = logging.getLogger(__name__)
+
+# Global image reference counter with thread-safe access
+_image_ref_counter = defaultdict(int)
+_image_ref_lock = threading.Lock()
 
 # Lazy import docker to avoid import errors when docker is not available
 docker = None
@@ -32,6 +37,27 @@ class DockerClient:
     Thread-safe Docker client wrapper with connection management
     and error handling.
     """
+    
+    @staticmethod
+    def acquire_image_reference(image_id: str) -> None:
+        """Increment reference count for a Docker image."""
+        with _image_ref_lock:
+            _image_ref_counter[image_id] += 1
+            log.debug(f"Acquired reference for image {image_id}, count: {_image_ref_counter[image_id]}")
+    
+    @staticmethod
+    def release_image_reference(image_id: str) -> bool:
+        """Decrement reference count for a Docker image. Returns True if safe to remove."""
+        with _image_ref_lock:
+            if image_id in _image_ref_counter:
+                _image_ref_counter[image_id] -= 1
+                count = _image_ref_counter[image_id]
+                log.debug(f"Released reference for image {image_id}, count: {count}")
+                
+                if count <= 0:
+                    del _image_ref_counter[image_id]
+                    return True
+            return False
     
     def __init__(self):
         self.client = None
@@ -69,6 +95,17 @@ class DockerClient:
         """
         log.info(f"Building docker image: {tag}")
         
+        # Check if image already exists to avoid rebuilding
+        try:
+            existing_image = self.client.images.get(tag)
+            log.debug(f"Found existing image {tag}, reusing")
+            # Acquire reference for the existing image
+            DockerClient.acquire_image_reference(existing_image.id)
+            return existing_image
+        except docker.errors.ImageNotFound:
+            # Image doesn't exist, need to build it
+            pass
+        
         try:
             image, logs = self.client.images.build(
                 fileobj=io.BytesIO(dockerfile_content.encode()),
@@ -79,6 +116,8 @@ class DockerClient:
                 forcerm=True
             )
             
+            # Acquire reference for the newly built image
+            DockerClient.acquire_image_reference(image.id)
             log.debug(f"Successfully built docker image {image.tags}")
             return image
         except docker.errors.BuildError as e:
@@ -99,6 +138,21 @@ class DockerClient:
             log.warning(f"Docker API error removing image: {e}")
         except Exception as e:
             log.warning(f"Unexpected error removing image: {e}")
+    
+    def safe_remove_image(self, image, force: bool = True) -> None:
+        """Remove a Docker image only if no other threads are using it."""
+        try:
+            # Get image ID for reference counting
+            image_id = getattr(image, 'id', None) or str(image)
+            
+            # Check if it's safe to remove the image
+            if DockerClient.release_image_reference(image_id):
+                self.remove_image(image, force)
+            else:
+                log.debug(f"Image {image_id} still has active references, not removing")
+                
+        except Exception as e:
+            log.warning(f"Error in safe_remove_image: {e}")
 
 
 class DockerContainer:

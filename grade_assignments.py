@@ -424,6 +424,8 @@ def cleanup_all_docker_resources() -> None:
   try:
     # Import docker here to avoid issues when docker is not available
     import docker
+    from Autograder.docker_utils import _image_ref_counter, _image_ref_lock
+    
     client = docker.from_env()
     
     # Clean up any remaining grader containers
@@ -438,7 +440,7 @@ def cleanup_all_docker_resources() -> None:
         except Exception as e:
           log.debug(f"Failed to clean up container {container.name}: {e}")
     
-    # Clean up grading images
+    # Force cleanup all grading images (ignore reference counting since we're shutting down)
     grading_images = client.images.list(filters={'dangling': False})
     cleaned_images = 0
     for image in grading_images:
@@ -455,6 +457,11 @@ def cleanup_all_docker_resources() -> None:
     
     if cleaned_images > 0:
       log.info(f"Cleaned up {cleaned_images} grading images")
+    
+    # Clear the reference counter since we're shutting down
+    with _image_ref_lock:
+      _image_ref_counter.clear()
+      log.debug("Cleared image reference counter")
       
     # Clean up dangling images
     dangling_images = client.images.list(filters={'dangling': True})

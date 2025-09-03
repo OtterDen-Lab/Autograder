@@ -153,11 +153,11 @@ class Grader__docker(Grader, abc.ABC):
       self.container.stop()
       self.container = None
     
-    # Remove custom built images (skip base images like 'ubuntu')
+    # Remove custom built images using safe removal (reference counting)
     if hasattr(self, 'image') and hasattr(self.image, 'remove'):
       try:
-        self.docker_client.remove_image(self.image)
-        log.debug(f"Cleaned up Docker image: {getattr(self.image, 'tags', 'unknown')}")
+        self.docker_client.safe_remove_image(self.image)
+        log.debug(f"Safely cleaned up Docker image: {getattr(self.image, 'tags', 'unknown')}")
       except Exception as e:
         log.warning(f"Failed to clean up Docker image: {e}")
     
