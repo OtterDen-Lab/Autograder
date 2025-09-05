@@ -37,6 +37,7 @@ class Grader__docker_configurable(Grader__docker):
                dockercompose_text=None,
                additional_files=None,
                base_image=None,
+               canvas_points=None,
                *args, **kwargs):
     # Map base_image to image parameter for parent class
     if base_image:
@@ -49,6 +50,8 @@ class Grader__docker_configurable(Grader__docker):
     self.dockerfile_text = dockerfile_text
     self.dockercompose_text = dockercompose_text
     self.additional_files = additional_files if additional_files else []
+    self.canvas_points = canvas_points  # Override for Canvas assignment points
+    self.assignment = None  # Will store the assignment object for score scaling
     
     if not self.grading_script and not self.grading_commands:
       raise ValueError(
@@ -163,6 +166,7 @@ class Grader__docker_configurable(Grader__docker):
       if results_content:
         yaml_output = yaml.safe_load(results_content)
         log.info("Successfully loaded YAML from results.yaml file")
+        log.info(f"YAML content: {yaml_output}")
     except Exception as e:
       log.debug(f"Failed to read results.yaml file: {e}")
     
@@ -183,14 +187,50 @@ class Grader__docker_configurable(Grader__docker):
         test_summary = yaml_output['test_summary']
         total_earned = test_summary.get('total_points_earned', 0)
         total_possible = test_summary.get('total_points_possible', 1)
-        score = float(total_earned / total_possible * 100) if total_possible > 0 else 0.0
+        
+        # Calculate percentage from local points
+        percentage = float(total_earned / total_possible) if total_possible > 0 else 0.0
+        
+        # Determine Canvas points to use (in priority order)
+        canvas_points_possible = None
+        
+        # 1. Use explicit canvas_points parameter from YAML config
+        if self.canvas_points is not None:
+          canvas_points_possible = float(self.canvas_points)
+          log.info(f"Using explicit canvas_points from config: {canvas_points_possible}")
+        
+        # 2. Try to get points_possible from Canvas assignment
+        elif self.assignment and hasattr(self.assignment, 'lms_assignment'):
+          try:
+            canvas_points_possible = getattr(self.assignment.lms_assignment, 'points_possible', None)
+            if canvas_points_possible is not None:
+              canvas_points_possible = float(canvas_points_possible)
+              log.info(f"Using Canvas assignment points_possible: {canvas_points_possible}")
+          except Exception as e:
+            log.warning(f"Failed to get Canvas points_possible: {e}")
+        
+        # Convert percentage to Canvas points or use percentage as fallback
+        if canvas_points_possible is not None:
+          score = percentage * canvas_points_possible
+          log.info(f"Converted local score {total_earned}/{total_possible} ({percentage:.1%}) to Canvas score {score}/{canvas_points_possible}")
+        else:
+          # Fallback to percentage (0-100) if no Canvas points info available
+          score = percentage * 100
+          log.info(f"Using percentage score: {score:.1f}% (no Canvas points info available)")
         
         # Create detailed feedback
-        feedback_lines = [
-          f"Score: {total_earned}/{total_possible} ({score:.1f}%)",
-          f"Tests passed: {test_summary.get('passed_tests', 0)}/{test_summary.get('total_tests', 0)}",
-          ""
-        ]
+        if canvas_points_possible is not None:
+          feedback_lines = [
+            f"Score: {total_earned}/{total_possible} local points ({percentage:.1%}) = {score:.1f}/{canvas_points_possible} Canvas points",
+            f"Tests passed: {test_summary.get('passed_tests', 0)}/{test_summary.get('total_tests', 0)}",
+            ""
+          ]
+        else:
+          feedback_lines = [
+            f"Score: {total_earned}/{total_possible} ({score:.1f}%)",
+            f"Tests passed: {test_summary.get('passed_tests', 0)}/{test_summary.get('total_tests', 0)}",
+            ""
+          ]
         
         # Add individual test results
         for test_result in yaml_output.get('test_results', []):
@@ -217,6 +257,11 @@ class Grader__docker_configurable(Grader__docker):
       score=score,
       comments=full_feedback.strip()
     )
+  
+  def grade_assignment(self, assignment, *args, **kwargs) -> None:
+    """Override to capture assignment object for score scaling."""
+    self.assignment = assignment
+    return super().grade_assignment(assignment, *args, **kwargs)
   
   def grade_submission(self, submission, *args, **kwargs) -> Feedback:
     # Prepare files to copy to docker container
