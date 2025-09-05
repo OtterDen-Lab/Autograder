@@ -35,8 +35,12 @@ class Grader__docker_configurable(Grader__docker):
                additional_installs=None, 
                dockerfile_text=None, 
                dockercompose_text=None,
-               additional_files=None, 
+               additional_files=None,
+               base_image=None,
                *args, **kwargs):
+    # Map base_image to image parameter for parent class
+    if base_image:
+      kwargs['image'] = base_image
     super().__init__(*args, **kwargs)
     self.grading_script = grading_script
     self.grading_commands = grading_commands if grading_commands else []
@@ -147,20 +151,60 @@ class Grader__docker_configurable(Grader__docker):
     stdout_str = stdout.decode() if isinstance(stdout, bytes) else stdout
     stderr_str = stderr.decode() if isinstance(stderr, bytes) else stderr
     
-    # Try to parse YAML output from stdout
+    # Try to parse YAML output - first from results file, then from stdout
     score = 0.0
     feedback_text = ""
+    yaml_output = None
     
+    # First, try to read from results.yaml file in the container
     try:
-      # Look for YAML in stdout
-      yaml_output = yaml.safe_load(stdout_str)
-      if isinstance(yaml_output, dict):
+      results_file_path = f"/tmp/results.yaml"
+      results_content = self.read_file_from_container(results_file_path)
+      if results_content:
+        yaml_output = yaml.safe_load(results_content)
+        log.info("Successfully loaded YAML from results.yaml file")
+    except Exception as e:
+      log.debug(f"Failed to read results.yaml file: {e}")
+    
+    # Fallback to parsing stdout if file reading failed
+    if yaml_output is None:
+      try:
+        yaml_output = yaml.safe_load(stdout_str)
+        log.info("Successfully loaded YAML from stdout")
+      except (yaml.YAMLError, ValueError, TypeError) as e:
+        log.warning(f"Failed to parse YAML from grading output: {e}")
+        feedback_text = "Failed to parse grading results"
+    
+    # Extract score and feedback if we have valid YAML
+    if yaml_output and isinstance(yaml_output, dict):
+      # Handle different possible YAML structures
+      if 'test_summary' in yaml_output:
+        # Structure from run_tests.py
+        test_summary = yaml_output['test_summary']
+        total_earned = test_summary.get('total_points_earned', 0)
+        total_possible = test_summary.get('total_points_possible', 1)
+        score = float(total_earned / total_possible * 100) if total_possible > 0 else 0.0
+        
+        # Create detailed feedback
+        feedback_lines = [
+          f"Score: {total_earned}/{total_possible} ({score:.1f}%)",
+          f"Tests passed: {test_summary.get('passed_tests', 0)}/{test_summary.get('total_tests', 0)}",
+          ""
+        ]
+        
+        # Add individual test results
+        for test_result in yaml_output.get('test_results', []):
+          status = "✓" if test_result['status'] == 'PASSED' else "✗"
+          points = f"{test_result.get('points_earned', 0)}/{test_result.get('points_possible', 0)}"
+          feedback_lines.append(f"{status} {test_result['test_name']}: {points} pts")
+          if test_result.get('error_message'):
+            feedback_lines.append(f"   Error: {test_result['error_message']}")
+        
+        feedback_text = "\n".join(feedback_lines)
+      else:
+        # Simple structure with direct score and feedback
         score = float(yaml_output.get('score', 0.0))
         feedback_text = yaml_output.get('feedback', '')
-    except (yaml.YAMLError, ValueError, TypeError) as e:
-      log.warning(f"Failed to parse YAML from grading output: {e}")
-      # If YAML parsing fails, use default score and include raw output
-      feedback_text = "Failed to parse grading results"
     
     # Include raw stdout as additional feedback
     full_feedback = feedback_text

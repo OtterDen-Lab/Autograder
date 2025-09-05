@@ -115,8 +115,15 @@ class Assignment__ProgrammingAssignment(Assignment):
     "student_code.h"
   ]
   
-  def __init__(self, *args, **kwargs):
+  def __init__(self, allowed_filenames=None, *args, **kwargs):
     super().__init__(*args, **kwargs)
+    # Allow overriding the default allowed filenames
+    if allowed_filenames is not None:
+      self.allowed_filenames = allowed_filenames
+      log.info(f"Using custom allowed_filenames: {self.allowed_filenames}")
+    else:
+      self.allowed_filenames = self.__class__.allowed_filenames
+      log.info(f"Using default allowed_filenames: {self.allowed_filenames}")
   
   def prepare(self, 
               *args, 
@@ -149,7 +156,7 @@ class Assignment__ProgrammingAssignment(Assignment):
     # If a student changed the filename, try to fix it automatically.
     for submission in self.submissions:
       for f in submission.files:
-        if f.name not in self.__class__.allowed_filenames:
+        if f.name not in self.allowed_filenames:
           # Then we'll need to try to match it.
           new_name = max(
             self.allowed_filenames, 

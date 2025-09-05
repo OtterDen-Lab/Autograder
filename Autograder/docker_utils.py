@@ -295,9 +295,9 @@ class DockerContainer:
             **extra_args
         )
         
-        # log.debug(f"Command '{command}' returned {rc}")
-        # log.debug(f"stdout: {stdout}")
-        # log.debug(f"stderr: {stderr}")
+        log.debug(f"Command '{command}' returned {rc}")
+        log.debug(f"stdout: {stdout}")
+        log.debug(f"stderr: {stderr}")
         
         return rc, stdout or b'', stderr or b''
     
