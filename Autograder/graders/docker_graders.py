@@ -26,6 +26,7 @@ class Grader__docker_configurable(Grader__docker):
   - Additional package installs
   - Custom Dockerfiles
   - File copying to containers
+  - Score scaling to Canvas assignment points (canvas_points parameter overrides Canvas API)
   """
   
   def __init__(self, 
@@ -50,7 +51,7 @@ class Grader__docker_configurable(Grader__docker):
     self.dockerfile_text = dockerfile_text
     self.dockercompose_text = dockercompose_text
     self.additional_files = additional_files if additional_files else []
-    self.canvas_points = canvas_points  # Override for Canvas assignment points
+    self.canvas_points = canvas_points  # OVERRIDES Canvas API points_possible for score scaling
     self.assignment = None  # Will store the assignment object for score scaling
     
     if not self.grading_script and not self.grading_commands:
