@@ -1,5 +1,5 @@
 prod: False
-push: False
+push: True
 
 courses:
 
@@ -17,6 +17,7 @@ courses:
     assignments:
       - repo_path: PA1
         id: 506889
+        record_retention: true
       - repo_path: PA2
         id: 506890
       - repo_path: PA3
@@ -42,7 +43,6 @@ courses:
         working_dir: "/tmp/grading/programming-assignments/PA1"
         grading_script: "uv sync && uv run python ../run_tests.py PA1 --output /tmp/results.yaml"
         base_image: "python:3.13-slim"
-#        canvas_points: 50  # Convert local scores to Canvas points (assignment worth 70 pts)
         additional_installs:
           - "apt-get update && apt-get install -y git"
           - "python -m ensurepip --upgrade"

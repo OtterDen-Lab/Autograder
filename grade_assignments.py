@@ -176,7 +176,26 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
         if grader.ready_to_finalize:
           if grader_name.lower() in ["manual"]:
             log.warning(f"[Thread {thread_id}] Manual grading finalization for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode")
-          grading_assignment.finalize(push=push_grades, merge_only=args.merge_only)
+          # Check for record retention setting and determine records directory
+          record_retention = merged_assignment.get('record_retention', False)
+          if record_retention:
+            # Determine where to save records
+            records_dir = merged_assignment.get('records_dir')
+            if records_dir is None:
+              # Default to 'records' directory in the main project directory
+              records_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "records")
+            else:
+              # Expand user paths (like ~/records)
+              records_dir = os.path.expanduser(records_dir)
+            
+            grading_assignment.finalize(
+              push=push_grades, 
+              merge_only=args.merge_only, 
+              record_retention=record_retention,
+              records_dir=records_dir
+            )
+          else:
+            grading_assignment.finalize(push=push_grades, merge_only=args.merge_only)
     
     return {
       'success': True,
