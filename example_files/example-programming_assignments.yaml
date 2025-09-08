@@ -5,6 +5,8 @@ courses:
     id: 29233
     # Course-level defaults
     grader: CST334online
+    record_retention: true  # Enable feedback record retention for entire course
+    records_dir: "./course_records"  # Custom directory for records (default: ./records)
     assignment_defaults:
       kind: ProgrammingAssignment
       kwargs:
@@ -14,6 +16,7 @@ courses:
         id: 487781
       - repo_path: PA2
         id: 487782
+        record_retention: false  # Override course-level setting - disable for this assignment
       - repo_path: PA3
         id: 487783
       - repo_path: PA4
@@ -38,6 +41,8 @@ courses:
       - repo_path: PA8-advanced
         id: 487788
         grader: docker-configurable
+        record_retention: true  # Explicitly enable for this assignment (redundant with course-level, but shows usage)
+        records_dir: "~/assignment_specific_records"  # Assignment-specific records directory
         kwargs:
           image: "python:3.9"
           additional_installs:

@@ -5,9 +5,11 @@ import base64
 import collections
 import math
 import random
+import re
 import shutil
 import sys
 import threading
+from datetime import datetime
 from typing import List, Tuple, Dict, Optional
 import io
 import abc
@@ -91,6 +93,16 @@ class Assignment(abc.ABC):
       log.debug("Pushing")
       for submission in self.submissions:
         log.info(f"Pushing feedback for: {submission}")
+        
+        # Handle record retention before pushing to LMS
+        if kwargs.get("record_retention", False):
+          self._save_feedback_record(
+            submission.student, 
+            submission.feedback.comments,
+            kwargs.get("records_dir"),
+            self.lms_assignment.name
+          )
+        
         self.lms_assignment.push_feedback(
           score=submission.feedback.score,
           comments=submission.feedback.comments,
@@ -99,6 +111,44 @@ class Assignment(abc.ABC):
           keep_previous_best=True,
           clobber_feedback=False
         )
+  
+  def _save_feedback_record(self, student: Student, comments: str, records_dir: str, assignment_name: str) -> None:
+    """
+    Save feedback to records directory for record retention.
+    
+    Args:
+        student: Student object
+        comments: Feedback comments to save
+        records_dir: Directory path where records should be saved
+        assignment_name: Name of the assignment
+    """
+    try:
+      # Sanitize student name for filename (remove/replace unsafe characters)
+      student_name = re.sub(r'[^\w\-_.]', '', student.name.replace(' ', '_'))
+      
+      # Sanitize assignment name for filename (remove/replace unsafe characters)
+      assignment_safe = re.sub(r'[^\w\-_.]', '', assignment_name.replace(' ', '_'))
+      
+      # Create timestamp
+      timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+      
+      # Ensure records directory exists
+      if not os.path.exists(records_dir):
+        os.makedirs(records_dir)
+        log.info(f"Created records directory: {records_dir}")
+      
+      # Create filename: [assignment_name].[student_name].[timestamp].log
+      filename = f"{assignment_safe}.{student_name}.{timestamp}.log"
+      filepath = os.path.join(records_dir, filename)
+      
+      # Write feedback to file
+      with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(comments)
+      
+      log.info(f"Saved feedback record: {filepath}")
+      
+    except Exception as e:
+      log.error(f"Failed to save feedback record for student {student.name}: {e}")
 
 
 
