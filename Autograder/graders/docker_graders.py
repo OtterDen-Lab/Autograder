@@ -16,6 +16,53 @@ import logging
 log = logging.getLogger(__name__)
 
 
+@GraderRegistry.register("template-grader")
+class Grader__template_grader(Grader__docker_configurable):
+  """
+  Template-based grader that runs [repo]/.venv/bin/python scripts/grader.py
+  and reads /tmp/feedback.yaml for results.
+  """
+  
+  def __init__(self, assignment_name=None, repo_path="/tmp/repo", *args, **kwargs):
+    if not assignment_name:
+      raise ValueError("assignment_name is required for template-grader")
+    
+    # Configure the parent class with our specific grading command
+    grading_script = f"{repo_path}/.venv/bin/python {repo_path}/scripts/grader.py --PA {assignment_name}"
+    
+    super().__init__(
+      grading_script=grading_script,
+      working_dir="/tmp/grading",
+      base_image="ubuntu",
+      *args, **kwargs
+    )
+  
+  def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
+    rc, stdout, stderr = execution_results
+    
+    # Try to read the feedback.yaml file (note: different from results.yaml in parent)
+    feedback_content = self.read_file_from_container("/tmp/feedback.yaml")
+    
+    if feedback_content:
+      try:
+        feedback_data = yaml.safe_load(feedback_content)
+        if isinstance(feedback_data, dict):
+          grade = float(feedback_data.get('grade', 0.0))
+          comments = feedback_data.get('comments', 'No comments provided')
+          logs = feedback_data.get('logs', '')
+          
+          full_feedback = comments
+          if logs and logs.strip():
+            full_feedback += f"\n\n--- Execution Logs ---\n{logs}"
+          
+          return Feedback(score=grade, comments=full_feedback)
+      except Exception as e:
+        log.error(f"Failed to parse feedback YAML: {e}")
+    
+    # Fallback to parent class behavior
+    return super().score_grading(execution_results, *args, **kwargs)
+
+
 @GraderRegistry.register("docker-configurable")
 class Grader__docker_configurable(Grader__docker):
   """
