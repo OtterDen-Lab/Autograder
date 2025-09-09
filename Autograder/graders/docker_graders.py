@@ -19,21 +19,48 @@ log = logging.getLogger(__name__)
 @GraderRegistry.register("template-grader")
 class Grader__template_grader(Grader__docker_configurable):
   """
-  Template-based grader that runs [repo]/.venv/bin/python scripts/grader.py
-  and reads /tmp/feedback.yaml for results.
+  Template-based grader that automatically sets up a course template repository
+  and runs scripts/grader.py with minimal configuration required.
+  
+  Automatically handles:
+  - Default Python 3.11 environment
+  - Cloning template repository (local or remote)
+  - Installing uv and running uv sync
+  - Running grader.py with assignment name
   """
   
-  def __init__(self, assignment_name=None, repo_path="/tmp/repo", *args, **kwargs):
+  def __init__(self, repo_path, assignment_name=None, *args, **kwargs):
+    # Use repo_path as assignment_name if not specified
     if not assignment_name:
-      raise ValueError("assignment_name is required for template-grader")
+      # Extract assignment name from repo_path (e.g., "PA1" from "/path/to/PA1" or "PA1")
+      assignment_name = repo_path.split('/')[-1] if '/' in repo_path else repo_path
     
-    # Configure the parent class with our specific grading command
-    grading_script = f"{repo_path}/.venv/bin/python {repo_path}/scripts/grader.py --PA {assignment_name}"
+    # Determine if repo_path is a remote URL or local path
+    is_remote = repo_path.startswith(('http://', 'https://', 'git@'))
+    template_dir = "/tmp/course-template"
+    
+    # Build setup commands
+    setup_commands = []
+    if is_remote:
+      setup_commands.append(f"git clone {repo_path} {template_dir}")
+    else:
+      # For local paths, we assume they'll be copied in via additional_files
+      template_dir = repo_path
+    
+    # Always install uv and sync dependencies
+    setup_commands.extend([
+      "python -m pip install uv",
+      f"cd {template_dir} && uv sync"
+    ])
+    
+    # Configure the parent class with standardized setup
+    grading_script = f"{template_dir}/.venv/bin/python {template_dir}/scripts/grader.py --PA {assignment_name}"
     
     super().__init__(
       grading_script=grading_script,
       working_dir="/tmp/grading",
-      base_image="ubuntu",
+      base_image="python:3.11-slim",
+      additional_installs=setup_commands,
       *args, **kwargs
     )
   

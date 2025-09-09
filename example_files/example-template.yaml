@@ -1,0 +1,14 @@
+prod: False
+push: False
+
+courses:
+  - name: CS101-Template
+    id: 29740
+    grader: template-grader
+    assignment_defaults:
+      kind: ProgrammingAssignment
+      kwargs:
+        repo_path: "https://github.com/your-org/course-template"
+    assignments:
+      - repo_path: PA1
+        id: 528720
