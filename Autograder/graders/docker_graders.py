@@ -4,6 +4,7 @@ Docker-based grader implementations.
 Contains configurable Docker graders that can run arbitrary grading scripts
 in containerized environments.
 """
+import os
 import yaml
 from collections import defaultdict
 from typing import Tuple
@@ -14,80 +15,6 @@ from lms_interface.classes import Feedback
 
 import logging
 log = logging.getLogger(__name__)
-
-
-@GraderRegistry.register("template-grader")
-class Grader__template_grader(Grader__docker_configurable):
-  """
-  Template-based grader that automatically sets up a course template repository
-  and runs scripts/grader.py with minimal configuration required.
-  
-  Automatically handles:
-  - Default Python 3.11 environment
-  - Cloning template repository (local or remote)
-  - Installing uv and running uv sync
-  - Running grader.py with assignment name
-  """
-  
-  def __init__(self, repo_path, assignment_name=None, *args, **kwargs):
-    # Use repo_path as assignment_name if not specified
-    if not assignment_name:
-      # Extract assignment name from repo_path (e.g., "PA1" from "/path/to/PA1" or "PA1")
-      assignment_name = repo_path.split('/')[-1] if '/' in repo_path else repo_path
-    
-    # Determine if repo_path is a remote URL or local path
-    is_remote = repo_path.startswith(('http://', 'https://', 'git@'))
-    template_dir = "/tmp/course-template"
-    
-    # Build setup commands
-    setup_commands = []
-    if is_remote:
-      setup_commands.append(f"git clone {repo_path} {template_dir}")
-    else:
-      # For local paths, we assume they'll be copied in via additional_files
-      template_dir = repo_path
-    
-    # Always install uv and sync dependencies
-    setup_commands.extend([
-      "python -m pip install uv",
-      f"cd {template_dir} && uv sync"
-    ])
-    
-    # Configure the parent class with standardized setup
-    grading_script = f"{template_dir}/.venv/bin/python {template_dir}/scripts/grader.py --PA {assignment_name}"
-    
-    super().__init__(
-      grading_script=grading_script,
-      working_dir="/tmp/grading",
-      base_image="python:3.11-slim",
-      additional_installs=setup_commands,
-      *args, **kwargs
-    )
-  
-  def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
-    rc, stdout, stderr = execution_results
-    
-    # Try to read the feedback.yaml file (note: different from results.yaml in parent)
-    feedback_content = self.read_file_from_container("/tmp/feedback.yaml")
-    
-    if feedback_content:
-      try:
-        feedback_data = yaml.safe_load(feedback_content)
-        if isinstance(feedback_data, dict):
-          grade = float(feedback_data.get('grade', 0.0))
-          comments = feedback_data.get('comments', 'No comments provided')
-          logs = feedback_data.get('logs', '')
-          
-          full_feedback = comments
-          if logs and logs.strip():
-            full_feedback += f"\n\n--- Execution Logs ---\n{logs}"
-          
-          return Feedback(score=grade, comments=full_feedback)
-      except Exception as e:
-        log.error(f"Failed to parse feedback YAML: {e}")
-    
-    # Fallback to parent class behavior
-    return super().score_grading(execution_results, *args, **kwargs)
 
 
 @GraderRegistry.register("docker-configurable")
@@ -144,45 +71,129 @@ class Grader__docker_configurable(Grader__docker):
       self.image = self._build_custom_image()
   
   def _build_custom_image(self):
-    """Build a custom Docker image with additional installs and files"""
+    """Build a custom Docker image with additional installs and files using temporary build context"""
+    import tempfile
+    import shutil
+    import os
+    import subprocess
     
-    if self.dockerfile_text:
-      # Use provided dockerfile
-      dockerfile_content = self.dockerfile_text
-    else:
-      # Build dockerfile from base image + additions
-      base_image = self.image if hasattr(self, 'image') and self.image != "ubuntu" else "ubuntu"
+    with tempfile.TemporaryDirectory() as temp_build_dir:
+      log.info(f"Creating temporary build context in {temp_build_dir}")
       
-      dockerfile_lines = [f"FROM {base_image}"]
-      
-      # Add additional package installs
-      if self.additional_installs:
-        dockerfile_lines.append("# Install additional packages")
-        for install_cmd in self.additional_installs:
-          dockerfile_lines.append(f"RUN {install_cmd}")
-      
-      # Add additional files via COPY commands
+      # Copy additional files to build context
       if self.additional_files:
-        dockerfile_lines.append("# Copy additional files")
         for file_spec in self.additional_files:
           if isinstance(file_spec, dict):
             src = file_spec.get('src')
-            dst = file_spec.get('dst', self.working_dir)
+            dst_relative = file_spec.get('dst', self.working_dir).lstrip('/')
             if src:
-              dockerfile_lines.append(f"COPY {src} {dst}")
+              self._copy_to_build_context(src, temp_build_dir, dst_relative)
           elif isinstance(file_spec, str):
-            dockerfile_lines.append(f"COPY {file_spec} {self.working_dir}")
+            dst_relative = self.working_dir.lstrip('/')
+            self._copy_to_build_context(file_spec, temp_build_dir, dst_relative)
       
-      # Set working directory
-      dockerfile_lines.append(f"WORKDIR {self.working_dir}")
-      dockerfile_lines.append("CMD [\"/bin/bash\"]")
+      # Build dockerfile
+      if self.dockerfile_text:
+        dockerfile_content = self.dockerfile_text
+      else:
+        base_image = self.image if hasattr(self, 'image') and self.image != "ubuntu" else "ubuntu"
+        dockerfile_lines = [f"FROM {base_image}"]
+        
+        # Separate pre-copy and post-copy commands
+        pre_copy_commands = []
+        post_copy_commands = []
+        
+        for install_cmd in self.additional_installs:
+          # Commands that need files should run after COPY
+          if 'uv sync' in install_cmd or 'cd /tmp/course-template' in install_cmd:
+            post_copy_commands.append(install_cmd)
+          else:
+            pre_copy_commands.append(install_cmd)
+        
+        # Add pre-copy installs (like installing uv)
+        if pre_copy_commands:
+          dockerfile_lines.append("# Install additional packages")
+          for install_cmd in pre_copy_commands:
+            dockerfile_lines.append(f"RUN {install_cmd}")
+        
+        # Add file copying using relative paths
+        if self.additional_files:
+          dockerfile_lines.append("# Copy additional files")
+          for file_spec in self.additional_files:
+            if isinstance(file_spec, dict):
+              src = file_spec.get('src')
+              dst = file_spec.get('dst', self.working_dir)
+              if src:
+                # Use relative path in build context
+                src_relative = self._get_relative_copy_path(src, file_spec.get('dst', self.working_dir))
+                # Ensure destination ends with / for directory copy
+                dst_with_slash = dst if dst.endswith('/') else dst + '/'
+                dockerfile_lines.append(f"COPY {src_relative} {dst_with_slash}")
+            elif isinstance(file_spec, str):
+              src_relative = os.path.basename(file_spec) if '*' not in file_spec else "*"
+              # Ensure destination ends with / for directory copy
+              work_dir_with_slash = self.working_dir if self.working_dir.endswith('/') else self.working_dir + '/'
+              dockerfile_lines.append(f"COPY {src_relative} {work_dir_with_slash}")
+        
+        # Add post-copy commands (like uv sync)
+        if post_copy_commands:
+          dockerfile_lines.append("# Post-copy setup")
+          for install_cmd in post_copy_commands:
+            dockerfile_lines.append(f"RUN {install_cmd}")
+        
+        dockerfile_lines.extend([
+          f"WORKDIR {self.working_dir}",
+          "CMD [\"/bin/bash\"]"
+        ])
+        dockerfile_content = '\n'.join(dockerfile_lines)
       
-      dockerfile_content = '\n'.join(dockerfile_lines)
+      # Write Dockerfile to build context
+      dockerfile_path = os.path.join(temp_build_dir, 'Dockerfile')
+      with open(dockerfile_path, 'w') as f:
+        f.write(dockerfile_content)
+      
+      log.info("Building custom Docker image with additional configuration...")
+      log.debug(f"Build context: {temp_build_dir}")
+      log.debug(f"Build context: {os.listdir(os.path.join(temp_build_dir, 'tmp'))}")
+      log.debug(f"Dockerfile content:\n{dockerfile_content}")
+      
+      # Build image using the temp directory as build context
+      tag = f"grading:{self.__class__.__name__.lower()}"
+      return self.docker_client.build_image_from_context(temp_build_dir, tag)
+
+  def _copy_to_build_context(self, src_path, build_dir, dst_relative):
+    """Copy files/directories to the Docker build context"""
+    import glob
+    import os
+    import shutil
     
-    log.info("Building custom Docker image with additional configuration...")
-    log.debug(f"Dockerfile content:\n{dockerfile_content}")
-    
-    return self.build_docker_image(dockerfile_content)
+    # Handle glob patterns
+    if '*' in src_path:
+      matched_files = glob.glob(os.path.expanduser(src_path))
+      for matched_file in matched_files:
+        dst_path = os.path.join(build_dir, dst_relative, os.path.basename(matched_file))
+        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+        if os.path.isdir(matched_file):
+          shutil.copytree(matched_file, dst_path, dirs_exist_ok=True)
+        else:
+          shutil.copy2(matched_file, dst_path)
+    else:
+      # Single file or directory
+      expanded_src = os.path.expanduser(src_path)
+      dst_path = os.path.join(build_dir, dst_relative)
+      os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+      
+      if os.path.isdir(expanded_src):
+        shutil.copytree(expanded_src, dst_path, dirs_exist_ok=True)
+      else:
+        shutil.copy2(expanded_src, dst_path)
+
+  def _get_relative_copy_path(self, src_path, dst_path):
+    """Get the relative path for COPY command in Dockerfile"""
+    if '*' in src_path:
+      return "*"
+    else:
+      return dst_path.lstrip('/') + "/" + os.path.basename(os.path.expanduser(src_path))
   
   def execute_grading(self, *args, **kwargs) -> Tuple[int, str, str]:
     # Create working directory
@@ -219,6 +230,8 @@ class Grader__docker_configurable(Grader__docker):
       rc = final_rc
       stdout = '\n'.join(combined_stdout).encode() if combined_stdout else b''
       stderr = '\n'.join(combined_stderr).encode() if combined_stderr else b''
+      
+      log.debug(f"stdout: {stdout}")
     
     return rc, stdout, stderr
   
@@ -351,5 +364,91 @@ class Grader__docker_configurable(Grader__docker):
       files_to_copy=submission_files,
       *args, **kwargs
     )
+
+
+@GraderRegistry.register("template-grader")
+class Grader__template_grader(Grader__docker_configurable):
+  """
+  Template-based grader that automatically sets up a course template repository
+  and runs scripts/grader.py with minimal configuration required.
+  
+  Automatically handles:
+  - Default Python 3.11 environment
+  - Cloning template repository (local or remote)
+  - Installing uv and running uv sync
+  - Running grader.py with assignment name
+  """
+  
+  def __init__(self, repo_path, assignment_name=None, *args, **kwargs):
+    # Extract assignment name from repo_path if not provided
+    if not assignment_name:
+      assignment_name = repo_path.split('/')[-1] if '/' in repo_path else repo_path
+    
+    # Container paths
+    template_dir = "/tmp/course-template"
+    working_dir = "/tmp/grading"
+    
+    # Determine setup based on repo type
+    is_remote = repo_path.startswith(('http://', 'https://', 'git@'))
+    
+    if is_remote:
+      # Remote repository: clone during build
+      additional_installs = [
+        "python -m pip install uv",
+        f"git clone {repo_path} {template_dir}",
+        f"cd {template_dir} && uv sync"
+      ]
+      additional_files = kwargs.get('additional_files', [])
+    else:
+      # Local repository: copy files during build
+      expanded_path = os.path.expanduser(repo_path)
+      additional_installs = [
+        "python -m pip install uv",
+        # f"cd {template_dir} && uv sync"  # This will run after COPY
+      ]
+      additional_files = kwargs.get('additional_files', [])
+      additional_files.append({
+        'src': f"{expanded_path}/*",
+        'dst': template_dir
+      })
+    
+    # Build grading command
+    grading_script = f"{template_dir}/.venv/bin/python {template_dir}/scripts/grader.py --PA {assignment_name}"
+    grading_script = f"ls -l /tmp ; ls -l {template_dir}"
+    
+    # Call parent with clean parameters
+    super().__init__(
+      grading_script=grading_script,
+      working_dir=working_dir,
+      base_image="python:3.11-slim",
+      additional_installs=additional_installs,
+      additional_files=additional_files,
+      *args, **kwargs
+    )
+  
+  def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
+    rc, stdout, stderr = execution_results
+    
+    # Try to read the feedback.yaml file (note: different from results.yaml in parent)
+    feedback_content = self.read_file_from_container("/tmp/feedback.yaml")
+    
+    if feedback_content:
+      try:
+        feedback_data = yaml.safe_load(feedback_content)
+        if isinstance(feedback_data, dict):
+          grade = float(feedback_data.get('grade', 0.0))
+          comments = feedback_data.get('comments', 'No comments provided')
+          logs = feedback_data.get('logs', '')
+          
+          full_feedback = comments
+          if logs and logs.strip():
+            full_feedback += f"\n\n--- Execution Logs ---\n{logs}"
+          
+          return Feedback(score=grade, comments=full_feedback)
+      except Exception as e:
+        log.error(f"Failed to parse feedback YAML: {e}")
+    
+    # Fallback to parent class behavior
+    return super().score_grading(execution_results, *args, **kwargs)
 
 

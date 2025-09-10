@@ -123,6 +123,47 @@ class DockerClient:
             log.error(f"Docker API error during build: {e}")
             raise Autograder.exceptions.DockerError(f"Docker API error building {tag}: {e}") from e
     
+    def build_image_from_context(self, context_path: str, tag: str) -> 'docker.models.images.Image':
+        """
+        Build a Docker image from a directory context (containing Dockerfile and files).
+        
+        Args:
+            context_path: Path to directory containing Dockerfile and build context
+            tag: Tag for the built image
+            
+        Returns:
+            Built Docker image
+        """
+        log.info(f"Building docker image from context: {tag}")
+        
+        # Check if image already exists to avoid rebuilding
+        try:
+            existing_image = self.client.images.get(tag)
+            log.debug(f"Found existing image {tag}, reusing")
+            return existing_image
+        except docker.errors.ImageNotFound:
+            # Image doesn't exist, need to build it
+            pass
+        
+        try:
+            image, logs = self.client.images.build(
+                path=context_path,
+                pull=True,
+                nocache=True,
+                tag=tag,
+                rm=True,
+                forcerm=True
+            )
+            
+            log.debug(f"Successfully built docker image {image.tags}")
+            return image
+        except docker.errors.BuildError as e:
+            log.error(f"Docker build failed for tag {tag}: {e}")
+            raise Autograder.exceptions.ImageBuildError(f"Failed to build image {tag}: {e}") from e
+        except docker.errors.APIError as e:
+            log.error(f"Docker API error during build: {e}")
+            raise Autograder.exceptions.DockerError(f"Docker API error building {tag}: {e}") from e
+    
     def remove_image(self, image, force: bool = True) -> None:
         """Remove a Docker image with error handling."""
         try:

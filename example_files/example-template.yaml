@@ -8,7 +8,7 @@ courses:
     assignment_defaults:
       kind: ProgrammingAssignment
       kwargs:
-        repo_path: "https://github.com/your-org/course-template"
+        repo_path: "~/repos/classes/course-template" #"https://github.com/CSUMB-SCD-instructors/course-template"
     assignments:
       - repo_path: PA1
         id: 528720
