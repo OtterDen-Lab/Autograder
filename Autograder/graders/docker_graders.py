@@ -5,6 +5,11 @@ Contains configurable Docker graders that can run arbitrary grading scripts
 in containerized environments.
 """
 import os
+import shutil
+import tempfile
+import shutil
+import os
+import subprocess
 import yaml
 from collections import defaultdict
 from typing import Tuple
@@ -72,10 +77,7 @@ class Grader__docker_configurable(Grader__docker):
   
   def _build_custom_image(self):
     """Build a custom Docker image with additional installs and files using temporary build context"""
-    import tempfile
-    import shutil
-    import os
-    import subprocess
+
     
     with tempfile.TemporaryDirectory() as temp_build_dir:
       log.info(f"Creating temporary build context in {temp_build_dir}")
@@ -367,7 +369,7 @@ class Grader__docker_configurable(Grader__docker):
 
 
 @GraderRegistry.register("template-grader")
-class Grader__template_grader(Grader__docker_configurable):
+class Grader__template_grader(Grader__docker):
   """
   Template-based grader that automatically sets up a course template repository
   and runs scripts/grader.py with minimal configuration required.
@@ -383,49 +385,46 @@ class Grader__template_grader(Grader__docker_configurable):
     # Extract assignment name from repo_path if not provided
     if not assignment_name:
       assignment_name = repo_path.split('/')[-1] if '/' in repo_path else repo_path
-    
-    # Container paths
-    template_dir = "/tmp/course-template"
-    working_dir = "/tmp/grading"
-    
-    # Determine setup based on repo type
-    is_remote = repo_path.startswith(('http://', 'https://', 'git@'))
-    
-    if is_remote:
-      # Remote repository: clone during build
-      additional_installs = [
-        "python -m pip install uv",
-        f"git clone {repo_path} {template_dir}",
-        f"cd {template_dir} && uv sync"
+      
+    # What we want to do is to create a docker image that has the repository in it and installs all the required dependencies.
+    # In this case that means we need to get the repo from either locally or remotely and then run `uv sync` in the right directory
+
+    super().__init__(*args, **kwargs)
+    with tempfile.TemporaryDirectory() as temp_build_dir:
+      
+      # os.chdir(temp_build_dir)
+      
+      # First, let's make the repo in place.
+      # This consists of copying the repo from it's origin to a folder named "repo" in the temp directory
+      # todo: make work for remote as well
+      repo_path = os.path.expanduser(repo_path)
+      shutil.copytree(repo_path, os.path.join(temp_build_dir, "repo"))
+      
+      dockerfile_lines = [
+        "FROM python:3.11-slim",
+        "COPY repo /repo",
+        "COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /bin/",
+        # "RUN python -m pip install uv",
+        "WORKDIR /repo",
+        "RUN rm -rf .venv",
+        "RUN uv sync --locked",
       ]
-      additional_files = kwargs.get('additional_files', [])
-    else:
-      # Local repository: copy files during build
-      expanded_path = os.path.expanduser(repo_path)
-      additional_installs = [
-        "python -m pip install uv",
-        # f"cd {template_dir} && uv sync"  # This will run after COPY
-      ]
-      additional_files = kwargs.get('additional_files', [])
-      additional_files.append({
-        'src': f"{expanded_path}/*",
-        'dst': template_dir
-      })
+      
+      self.working_dir = "/repo"
+      self.grading_script = f"/repo/.venv/bin/python /repo/scripts/grader.py --PA {assignment_name}"
+      
+      # Next, we want to save our dockerfile
+      with open(os.path.join(temp_build_dir,"Dockerfile"), "w") as dockerfile_fid:
+        dockerfile_fid.write('\n'.join(dockerfile_lines))
+      
+      
+      self.image = self.docker_client.build_image_from_context(
+        context_path=temp_build_dir,
+        tag="template-grader-image"
+      )
+      
+    return
     
-    # Build grading command
-    grading_script = f"{template_dir}/.venv/bin/python {template_dir}/scripts/grader.py --PA {assignment_name}"
-    grading_script = f"ls -l /tmp ; ls -l {template_dir}"
-    
-    # Call parent with clean parameters
-    super().__init__(
-      grading_script=grading_script,
-      working_dir=working_dir,
-      base_image="python:3.11-slim",
-      additional_installs=additional_installs,
-      additional_files=additional_files,
-      *args, **kwargs
-    )
-  
   def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
     rc, stdout, stderr = execution_results
     
@@ -450,5 +449,42 @@ class Grader__template_grader(Grader__docker_configurable):
     
     # Fallback to parent class behavior
     return super().score_grading(execution_results, *args, **kwargs)
-
-
+  
+  def execute_grading(self, *args, **kwargs) -> Tuple[int, str, str]:
+    # Create working directory
+    rc, stdout, stderr = self.execute_command_in_container(f"mkdir -p {self.working_dir}")
+    if rc != 0:
+      log.error(f"Failed to create working directory: {stderr}")
+      return rc, stdout, stderr
+    
+    if self.grading_script:
+      # Execute the grading script
+      rc, stdout, stderr = self.execute_command_in_container(
+        command=self.grading_script,
+        workdir=self.working_dir
+      )
+    else:
+      # Execute the series of commands
+      combined_stdout = []
+      combined_stderr = []
+      final_rc = 0
+      
+      for command in self.grading_commands:
+        rc, stdout, stderr = self.execute_command_in_container(
+          command=command,
+          workdir=self.working_dir
+        )
+        if stdout:
+          combined_stdout.append(stdout.decode() if isinstance(stdout, bytes) else stdout)
+        if stderr:
+          combined_stderr.append(stderr.decode() if isinstance(stderr, bytes) else stderr)
+        if rc != 0:
+          final_rc = rc
+      
+      rc = final_rc
+      stdout = '\n'.join(combined_stdout).encode() if combined_stdout else b''
+      stderr = '\n'.join(combined_stderr).encode() if combined_stderr else b''
+      
+      log.debug(f"stdout: {stdout}")
+    
+    return rc, stdout, stderr
