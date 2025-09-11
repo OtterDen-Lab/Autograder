@@ -523,9 +523,9 @@ def main() -> None:
   
   Coordinates the entire grading process using a clean, modular approach.
   """
+  args = parse_args()
   with ensure_single_instance():
     try:
-      args = parse_args()
       config = load_and_validate_config(args.yaml)
       
       assignments_to_grade = collect_assignments_to_grade(config, args)
