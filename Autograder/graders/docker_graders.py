@@ -382,9 +382,11 @@ class Grader__template_grader(Grader__docker):
   """
   
   def __init__(self, repo_path, assignment_name=None, *args, **kwargs):
+    
     # Extract assignment name from repo_path if not provided
     if not assignment_name:
       assignment_name = repo_path.split('/')[-1] if '/' in repo_path else repo_path
+    self.assignment_name = assignment_name
       
     # What we want to do is to create a docker image that has the repository in it and installs all the required dependencies.
     # In this case that means we need to get the repo from either locally or remotely and then run `uv sync` in the right directory
@@ -417,14 +419,30 @@ class Grader__template_grader(Grader__docker):
       with open(os.path.join(temp_build_dir,"Dockerfile"), "w") as dockerfile_fid:
         dockerfile_fid.write('\n'.join(dockerfile_lines))
       
-      
       self.image = self.docker_client.build_image_from_context(
         context_path=temp_build_dir,
-        tag="template-grader-image"
+        tag="template-grader-image",
+        use_cached=True
       )
       
     return
     
+  def grade_submission(self, submission, *args, **kwargs) -> Feedback:
+    # Prepare files to copy to docker container
+    submission_files = []
+    for f in submission.files:
+      # Copy all files to the working directory
+      submission_files.append((f, os.path.join(self.working_dir, f"programming-assignments/{self.assignment_name}")))
+    
+    log.debug(f"adding files: {submission_files}")
+    
+    # Grade using parent class method
+    return super().grade_submission(
+      submission,
+      files_to_copy=submission_files,
+      *args, **kwargs
+    )
+  
   def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
     rc, stdout, stderr = execution_results
     
@@ -451,40 +469,9 @@ class Grader__template_grader(Grader__docker):
     return super().score_grading(execution_results, *args, **kwargs)
   
   def execute_grading(self, *args, **kwargs) -> Tuple[int, str, str]:
-    # Create working directory
-    rc, stdout, stderr = self.execute_command_in_container(f"mkdir -p {self.working_dir}")
-    if rc != 0:
-      log.error(f"Failed to create working directory: {stderr}")
-      return rc, stdout, stderr
-    
-    if self.grading_script:
-      # Execute the grading script
-      rc, stdout, stderr = self.execute_command_in_container(
-        command=self.grading_script,
-        workdir=self.working_dir
-      )
-    else:
-      # Execute the series of commands
-      combined_stdout = []
-      combined_stderr = []
-      final_rc = 0
-      
-      for command in self.grading_commands:
-        rc, stdout, stderr = self.execute_command_in_container(
-          command=command,
-          workdir=self.working_dir
-        )
-        if stdout:
-          combined_stdout.append(stdout.decode() if isinstance(stdout, bytes) else stdout)
-        if stderr:
-          combined_stderr.append(stderr.decode() if isinstance(stderr, bytes) else stderr)
-        if rc != 0:
-          final_rc = rc
-      
-      rc = final_rc
-      stdout = '\n'.join(combined_stdout).encode() if combined_stdout else b''
-      stderr = '\n'.join(combined_stderr).encode() if combined_stderr else b''
-      
-      log.debug(f"stdout: {stdout}")
-    
-    return rc, stdout, stderr
+    # Execute the grading script
+    rc, stdout, stderr = self.execute_command_in_container(
+      command=self.grading_script,
+      workdir=self.working_dir
+    )
+    return rc, stdout.decode(), stderr.decode()

@@ -123,7 +123,7 @@ class DockerClient:
             log.error(f"Docker API error during build: {e}")
             raise Autograder.exceptions.DockerError(f"Docker API error building {tag}: {e}") from e
     
-    def build_image_from_context(self, context_path: str, tag: str) -> 'docker.models.images.Image':
+    def build_image_from_context(self, context_path: str, tag: str, use_cached=True) -> 'docker.models.images.Image':
         """
         Build a Docker image from a directory context (containing Dockerfile and files).
         
@@ -137,13 +137,14 @@ class DockerClient:
         log.info(f"Building docker image from context: {tag}")
         
         # Check if image already exists to avoid rebuilding
-        try:
-            existing_image = self.client.images.get(tag)
-            log.debug(f"Found existing image {tag}, reusing")
-            return existing_image
-        except docker.errors.ImageNotFound:
-            # Image doesn't exist, need to build it
-            pass
+        if use_cached:
+          try:
+              existing_image = self.client.images.get(tag)
+              log.debug(f"Found existing image {tag}, reusing")
+              return existing_image
+          except docker.errors.ImageNotFound:
+              # Image doesn't exist, need to build it
+              pass
         
         try:
             image, logs = self.client.images.build(
