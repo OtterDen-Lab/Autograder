@@ -12,14 +12,193 @@ import os
 import subprocess
 import yaml
 from collections import defaultdict
-from typing import Tuple
+from typing import Tuple, Optional, List
 
-from Autograder.grader import Grader__docker
 from Autograder.registry import GraderRegistry
 from lms_interface.classes import Feedback
+from Autograder.docker_utils import DockerClient, DockerContainer, DockerError
+import Autograder.exceptions
+from Autograder.grader import Grader
 
 import logging
 log = logging.getLogger(__name__)
+
+
+class Grader__docker(Grader):
+  """
+  Base class for Docker-based graders.
+
+  Provides common Docker functionality like container management,
+  file copying, and command execution using docker_utils.
+  """
+  
+  def __init__(self, image=None, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    
+    # Set up docker client
+    try:
+      self.docker_client = DockerClient()
+    except DockerError as e:
+      log.error(f"Failed to initialize Docker client: {e}")
+      raise Autograder.exceptions.ConfigurationError(f"Docker client initialization failed: {e}") from e
+    
+    # Default to using ubuntu image
+    self.image = image if image is not None else "ubuntu"
+    self.container: Optional[DockerContainer] = None
+  
+  def cleanup(self) -> None:
+    """Clean up Docker resources."""
+    # Stop any running containers first
+    if self.container:
+      self.container.stop()
+      self.container = None
+    
+    # Remove custom built images using safe removal (usage counting)
+    if hasattr(self, 'image') and hasattr(self.image, 'remove'):
+      try:
+        self.docker_client.safe_remove_image(self.image)
+        log.debug(f"Safely cleaned up Docker image: {getattr(self.image, 'tags', 'unknown')}")
+      except Exception as e:
+        log.warning(f"Failed to clean up Docker image: {e}")
+    
+    # Clean up any orphaned containers and images created by this grader
+    self._cleanup_orphaned_resources()
+  
+  def _cleanup_orphaned_resources(self) -> None:
+    """Clean up any orphaned Docker containers and images created by this grader."""
+    try:
+      # Clean up containers with our grader prefix
+      containers = self.docker_client.client.containers.list(all=True, filters={'name': 'grader'})
+      for container in containers:
+        try:
+          container.stop(timeout=1)
+          container.remove(force=True)
+          log.debug(f"Cleaned up orphaned container: {container.name}")
+        except Exception as e:
+          log.debug(f"Failed to clean up container {container.name}: {e}")
+      
+      # Clean up dangling images from our grading operations
+      grading_images = self.docker_client.client.images.list(filters={'label': 'grading'})
+      for image in grading_images:
+        try:
+          self.docker_client.remove_image(image)
+        except Exception as e:
+          log.debug(f"Failed to clean up grading image {image.tags}: {e}")
+      
+      # Clean up images with our grading tag pattern
+      all_images = self.docker_client.client.images.list(filters={'dangling': False})
+      for image in all_images:
+        if image.tags:
+          for tag in image.tags:
+            if tag.startswith('grading:'):
+              try:
+                self.docker_client.remove_image(image)
+                log.debug(f"Cleaned up grading image: {tag}")
+                break
+              except Exception as e:
+                log.debug(f"Failed to clean up grading image {tag}: {e}")
+    except Exception as e:
+      log.warning(f"Failed to clean up orphaned Docker resources: {e}")
+  
+  # Helper functions below here
+  def build_docker_image(self, dockerfile_str: str):
+    """
+    Build a Docker image from dockerfile content.
+
+    Args:
+        dockerfile_str: Dockerfile as a single string
+
+    Returns:
+        Built Docker image
+    """
+    tag = f"grading:{self.__class__.__name__.lower()}"
+    return self.docker_client.build_image(dockerfile_str, tag)
+  
+  def start_container(self, image=None) -> None:
+    """Start a Docker container."""
+    image_to_use = image if image is not None else self.image
+    self.container = DockerContainer(
+      self.docker_client,
+      image_to_use,
+      name_prefix="grader"
+    )
+    self.container.start()
+  
+  def stop_container(self) -> None:
+    """Stop the Docker container."""
+    if self.container:
+      self.container.stop()
+      self.container = None
+  
+  def add_files_to_docker(self, files_to_copy: List[Tuple] = None) -> None:
+    """
+    Copy files to the Docker container.
+
+    Args:
+        files_to_copy: List of (file_object, target_directory) tuples
+    """
+    if files_to_copy and self.container:
+      self.container.copy_files(files_to_copy)
+  
+  def execute_command_in_container(self, command="", container=None, workdir=None) -> Tuple[int, bytes, bytes]:
+    """
+    Execute a command in the Docker container.
+
+    Args:
+        command: Command to execute
+        container: Container to use (defaults to self.container)
+        workdir: Working directory for command
+
+    Returns:
+        Tuple of (return_code, stdout, stderr)
+    """
+    target_container = container if container is not None else self.container
+    if not target_container:
+      raise RuntimeError("No container available for command execution")
+    
+    return target_container.execute_command(command, workdir)
+  
+  def read_file_from_container(self, path_to_file: str) -> Optional[str]:
+    """
+    Read a file from the Docker container.
+
+    Args:
+        path_to_file: Path to file in container
+
+    Returns:
+        File contents as string, or None if not found
+    """
+    if not self.container:
+      return None
+    
+    return self.container.read_file(path_to_file)
+  
+  def __enter__(self):
+    """Context manager entry - start container."""
+    log.debug(f"Starting docker image {self.image} context")
+    self.start_container()
+    return self
+  
+  def __exit__(self, exc_type, exc_val, exc_tb):
+    """Context manager exit - stop container."""
+    log.debug(f"Exiting docker image context")
+    self.stop_container()
+    if exc_type is not None:
+      log.error(f"An exception occurred: {exc_val}")
+    return False
+  
+  def grade_submission(self, submission, files_to_copy=None, *args, **kwargs) -> Feedback:
+    """
+    Overrides method to add files to docker and then relies on children to implement two other required files
+    :param files_to_copy:
+    :param args:
+    :param kwargs:
+    :return:
+    """
+    with self:
+      if files_to_copy is not None:
+        self.add_files_to_docker(files_to_copy)
+      return super().grade_submission(submission, *args, **kwargs)
 
 
 @GraderRegistry.register("docker-configurable")
@@ -155,9 +334,6 @@ class Grader__docker_configurable(Grader__docker):
         f.write(dockerfile_content)
       
       log.info("Building custom Docker image with additional configuration...")
-      log.debug(f"Build context: {temp_build_dir}")
-      log.debug(f"Build context: {os.listdir(os.path.join(temp_build_dir, 'tmp'))}")
-      log.debug(f"Dockerfile content:\n{dockerfile_content}")
       
       # Build image using the temp directory as build context
       tag = f"grading:{self.__class__.__name__.lower()}"
@@ -433,8 +609,6 @@ class Grader__template_grader(Grader__docker):
     for f in submission.files:
       # Copy all files to the working directory
       submission_files.append((f, os.path.join(self.working_dir, f"programming-assignments/{self.assignment_name}")))
-    
-    log.debug(f"adding files: {submission_files}")
     
     # Grade using parent class method
     return super().grade_submission(

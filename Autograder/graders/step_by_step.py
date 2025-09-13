@@ -8,7 +8,7 @@ import yaml
 from collections import defaultdict
 from typing import List
 
-from Autograder.grader import Grader__docker
+from Autograder.graders.docker_graders import Grader__docker
 from Autograder.registry import GraderRegistry
 from Autograder.docker_utils import DockerContainerManager
 from lms_interface.classes import Feedback

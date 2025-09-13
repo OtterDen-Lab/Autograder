@@ -9,7 +9,6 @@ import os
 import textwrap
 from typing import Tuple
 
-from Autograder.grader import Grader__docker
 from Autograder.graders.docker_graders import Grader__docker_configurable
 from Autograder.registry import GraderRegistry
 from lms_interface.classes import Feedback
