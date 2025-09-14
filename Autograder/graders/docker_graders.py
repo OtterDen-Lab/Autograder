@@ -11,6 +11,8 @@ import tempfile
 import shutil
 import os
 import subprocess
+import uuid
+
 import yaml
 from collections import defaultdict
 from typing import Tuple, Optional, List
@@ -44,7 +46,8 @@ class Grader__docker(Grader):
       raise Autograder.exceptions.ConfigurationError(f"Docker client initialization failed: {e}") from e
     
     # Default to using ubuntu image
-    self.image = image if image is not None else "ubuntu"
+    self.base_name_name = image if image is not None else "ubuntu"
+    self.image = None # Only set this when we actually run grading to reduce how often we build
     self.container: Optional[DockerContainer] = None
   
   # Helper functions below here
@@ -120,8 +123,14 @@ class Grader__docker(Grader):
     
     return self.container.read_file(path_to_file)
   
+  def _get_image(self, *args, **kwargs):
+    return "ubuntu"
+  
   def __enter__(self):
     """Context manager entry - start container."""
+    if self.image is None:
+      log.debug("Building docker image")
+      self.image = self._get_image()
     log.debug(f"Starting docker image {self.image} context")
     self.start_container()
     return self
@@ -548,13 +557,14 @@ class Grader__template_grader(Grader__docker):
       self,
       assignment_name,
       base_image_name: str = "python:3.11-slim", # assume this is based on linux
-      source_repo: str = "https://github.com/CSUMB-SCD-instructors/course-template", # remote access with deploy key could be interesting..
+      source_repo: str = "https://github.com/CSUMB-SCD-instructors/course-template",
       extra_installs=None, # todo: these will be tough, do later
       *args, **kwargs
   ):
     
     if extra_installs is None:
       extra_installs = []
+      
     self.assignment_name = assignment_name
     self.base_image_name = base_image_name
     self.source_repo = source_repo
@@ -565,8 +575,6 @@ class Grader__template_grader(Grader__docker):
     self.files_from_golden = kwargs.get("files_from_golden", [])
     
     super().__init__(*args, **kwargs)
-    
-    self._build_image()
     
     # todo: these two can likely be removed if we go full template.
     self.working_dir = "/repo"
@@ -604,7 +612,7 @@ class Grader__template_grader(Grader__docker):
       
       subprocess.run(cmd, check=True, env=env)
     
-  def _build_image(self):
+  def _get_image(self):
     # What we want to do is to create a docker image that has the repository in it and installs all the required dependencies.
     # In this case that means we need to get the repo from either locally or remotely and then run `uv sync` in the right directory
 
@@ -643,11 +651,12 @@ class Grader__template_grader(Grader__docker):
       with open(os.path.join(temp_build_dir, "Dockerfile"), "w") as dockerfile_fid:
         dockerfile_fid.write('\n'.join(dockerfile_lines))
       
-      self.image = self.docker_client.build_image_from_context(
+      image = self.docker_client.build_image_from_context(
         context_path=temp_build_dir,
-        tag="template-grader-image",
+        tag=f"template-grader:{self.assignment_name}-{uuid.uuid4().hex}",
         use_cached=True
       )
+    return image
   
   def grade_submission(self, submission, *args, **kwargs) -> Feedback:
     # Prepare files to copy to docker container
