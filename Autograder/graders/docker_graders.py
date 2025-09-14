@@ -600,7 +600,7 @@ class Grader__template_grader(Grader__docker):
   
   def __init__(
       self,
-      assignment_name,  # todo: ensure this is provided
+      assignment_name,
       base_image_name: str = "python:3.11-slim", # assume this is based on linux
       source_repo: str = "https://github.com/CSUMB-SCD-instructors/course-template", # remote access with deploy key could be interesting..
       extra_installs=None, # todo: these will be tough, do later
@@ -666,7 +666,7 @@ class Grader__template_grader(Grader__docker):
       
       # Set up dockerfile
       dockerfile_lines = [
-        "FROM python:3.11-slim",
+        f"FROM {self.base_image_name}",
         "COPY repo /repo",
         "COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /bin/",
         "WORKDIR /repo",
