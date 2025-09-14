@@ -92,6 +92,7 @@ class DockerClient:
       )
       
       log.debug(f"Successfully built docker image {image.tags}")
+      log.debug(f"Adding image: {image}")
       self._images.add(image)
       return image
     except docker.errors.BuildError as e:
@@ -103,11 +104,18 @@ class DockerClient:
   
   @classmethod
   def cleanup(cls):
+    log.debug("Running docker clean up")
     for container in cls._containers:
-      # todo: these two should be wrapped in a try-except
-      container.stop(timeout=1)
-      container.remove(force=True)
+      log.debug(f"Removing container: {container}")
+      try:
+        container.stop(timeout=1)
+        container.remove(force=True)
+      except docker.errors.APIError as e:
+        log.warning("Stopping containers failed.")
+        log.warning(e)
+    log.debug("Still working...")
     for image in cls._images:
+      log.debug(f"Removing image: {image}")
       cls.remove_image(image, force=True)
   
   @staticmethod
@@ -162,6 +170,7 @@ class DockerClient:
       )
       
       log.debug(f"Successfully built docker image {image.tags}")
+      self.__class__._images.add(image)
       return image
     except docker.errors.BuildError as e:
       log.error(f"Docker build failed for tag {tag}: {e}")
