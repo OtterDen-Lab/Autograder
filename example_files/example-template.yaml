@@ -1,5 +1,5 @@
-prod: False
-push: True
+prod: True
+push: False
 
 courses:
   - name: CS101-Template
@@ -8,11 +8,11 @@ courses:
     assignment_defaults:
       kind: ProgrammingAssignment
       kwargs:
-        repo_path: "~/scratch/CST463" #"https://github.com/CSUMB-SCD-instructors/course-template"
+        source_repo: "https://github.com/CSUMB-SCD-instructors/CST463"
       assignment_kwargs:
         allowed_filenames:
           - "student_code.py"
     assignments:
       - repo_path: PA1
-        id: 528720
+        id: 527876
         record_retention: true

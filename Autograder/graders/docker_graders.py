@@ -5,6 +5,7 @@ Contains configurable Docker graders that can run arbitrary grading scripts
 in containerized environments.
 """
 import os
+import pathlib
 import shutil
 import tempfile
 import shutil
@@ -214,12 +215,12 @@ class Grader__docker_configurable(Grader__docker):
   - Score scaling to Canvas assignment points (canvas_points parameter overrides Canvas API)
   """
   
-  def __init__(self, 
-               grading_script=None, 
-               grading_commands=None, 
-               working_dir="/tmp/grading", 
-               additional_installs=None, 
-               dockerfile_text=None, 
+  def __init__(self,
+               grading_script=None,
+               grading_commands=None,
+               working_dir="/tmp/grading",
+               additional_installs=None,
+               dockerfile_text=None,
                dockercompose_text=None,
                additional_files=None,
                base_image="ubuntu",
@@ -250,7 +251,7 @@ class Grader__docker_configurable(Grader__docker):
       )
     
     # Build custom image if needed
-    if (self.dockerfile_text or self.additional_installs or 
+    if (self.dockerfile_text or self.additional_installs or
         self.additional_files):
       # todo: put off building until we actually need the image -- that is, until we actually need it
       # note: this will rely on haveing a separate "image" and "base_image"
@@ -597,42 +598,84 @@ class Grader__template_grader(Grader__docker):
   - Running grader.py with assignment name
   """
   
-  def __init__(self, repo_path, assignment_name=None, *args, **kwargs):
+  def __init__(
+      self,
+      assignment_name,  # todo: ensure this is provided
+      base_image_name: str = "python:3.11-slim", # assume this is based on linux
+      source_repo: str = "https://github.com/CSUMB-SCD-instructors/course-template", # remote access with deploy key could be interesting..
+      extra_installs=None, # todo: these will be tough, do later
+      *args, **kwargs
+  ):
     
-    # Extract assignment name from repo_path if not provided
-    if not assignment_name:
-      assignment_name = repo_path.split('/')[-1] if '/' in repo_path else repo_path
+    if extra_installs is None:
+      extra_installs = []
     self.assignment_name = assignment_name
+    self.base_image_name = base_image_name
+    self.source_repo = source_repo
+    self.extra_installs = extra_installs
     
+    super().__init__(*args, **kwargs)
+    
+    self._build_image()
+    
+    # todo: these two can likely be removed if we go full template.
+    self.working_dir = "/repo"
+    self.grading_script = f"/repo/.venv/bin/python /repo/scripts/grader.py --PA {self.assignment_name}"
+    
+    return
+  
+  @staticmethod
+  def _clone_repo(remote: str, dest="repo", depth=None, deploy_key_path=None):
+    dest = pathlib.Path(dest).expanduser().resolve()
+    if dest.exists():
+      raise FileExistsError(f"{dest} already exists")
+    
+    env = os.environ.copy()
+    
+    # If you need to use an SSH deploy key just for this command:
+    # (works for git@host:org/repo.git or ssh://host/...)
+    if deploy_key_path:
+      ssh_cmd = f"ssh -i {deploy_key_path} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+      env["GIT_SSH_COMMAND"] = ssh_cmd
+    
+    cmd = ["git", "clone", remote, str(dest)]
+    if depth:
+      cmd[2:2] = ["--depth", str(depth)]  # insert after "clone" (optional shallow clone)
+    
+    subprocess.run(cmd, check=True, env=env)
+    
+  def _build_image(self):
     # What we want to do is to create a docker image that has the repository in it and installs all the required dependencies.
     # In this case that means we need to get the repo from either locally or remotely and then run `uv sync` in the right directory
 
-    super().__init__(*args, **kwargs)
     with tempfile.TemporaryDirectory() as temp_build_dir:
-      
-      # os.chdir(temp_build_dir)
+      os.chdir(temp_build_dir)
       
       # First, let's make the repo in place.
       # This consists of copying the repo from it's origin to a folder named "repo" in the temp directory
       # todo: make work for remote as well
-      repo_path = os.path.expanduser(repo_path)
-      shutil.copytree(repo_path, os.path.join(temp_build_dir, "repo"))
       
+      # If local, then it will exist locally.  Else, try to pull it from remote.
+      if pathlib.Path(self.source_repo).expanduser().exists():
+        shutil.copytree(
+          pathlib.Path(self.source_repo).expanduser(),
+          "repo"
+        )
+      else: # Then we are using a remote repo
+        self._clone_repo(self.source_repo, depth=1)
+      
+      # Set up dockerfile
       dockerfile_lines = [
         "FROM python:3.11-slim",
         "COPY repo /repo",
         "COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /bin/",
-        # "RUN python -m pip install uv",
         "WORKDIR /repo",
         "RUN rm -rf .venv",
         "RUN uv sync --locked",
       ]
       
-      self.working_dir = "/repo"
-      self.grading_script = f"/repo/.venv/bin/python /repo/scripts/grader.py --PA {assignment_name}"
-      
       # Next, we want to save our dockerfile
-      with open(os.path.join(temp_build_dir,"Dockerfile"), "w") as dockerfile_fid:
+      with open(os.path.join(temp_build_dir, "Dockerfile"), "w") as dockerfile_fid:
         dockerfile_fid.write('\n'.join(dockerfile_lines))
       
       self.image = self.docker_client.build_image_from_context(
@@ -640,9 +683,7 @@ class Grader__template_grader(Grader__docker):
         tag="template-grader-image",
         use_cached=True
       )
-      
-    return
-    
+  
   def grade_submission(self, submission, *args, **kwargs) -> Feedback:
     # Prepare files to copy to docker container
     submission_files = []
