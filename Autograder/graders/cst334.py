@@ -63,7 +63,7 @@ class Grader__CST334(Grader__docker_configurable):
     additional_installs = [f"git clone {git_repo} /tmp/grading/"]
     
     super().__init__(
-      image="samogden/cst334",
+      base_image="samogden/cst334",
       grading_commands=[f"timeout {GRADING_TIMEOUT_SECONDS} python ../../helpers/grader.py --output /tmp/results.json"],
       working_dir=assignment_working_dir,
       additional_installs=additional_installs,

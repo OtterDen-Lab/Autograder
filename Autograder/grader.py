@@ -132,7 +132,7 @@ class Grader__docker(Grader, abc.ABC):
   Provides common Docker functionality like container management,
   file copying, and command execution using docker_utils.
   """
-  def __init__(self, image=None, *args, **kwargs):
+  def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
     
     # Set up docker client
@@ -141,10 +141,12 @@ class Grader__docker(Grader, abc.ABC):
     except DockerError as e:
       log.error(f"Failed to initialize Docker client: {e}")
       raise Autograder.exceptions.ConfigurationError(f"Docker client initialization failed: {e}") from e
-    
+
     # Default to using ubuntu image
-    self.image = image if image is not None else "ubuntu"
+    self.image = kwargs.get("image", "ubuntu")
     self.container: Optional[DockerContainer] = None
+    
+    log.debug(f"self.image: {self.image}")
   
   def cleanup(self) -> None:
     """Clean up Docker resources."""

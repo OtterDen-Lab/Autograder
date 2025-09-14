@@ -78,17 +78,9 @@ class DockerClient:
     Returns:
         Built Docker image
     """
-    log.info(f"Building docker image: {tag}")
+    log.info(f"Building docker image: \"{tag}\"")
     
-    # Check if image already exists to avoid rebuilding
-    try:
-      existing_image = self.client.images.get(tag)
-      log.debug(f"Found existing image {tag}, reusing")
-      return existing_image
-    except docker.errors.ImageNotFound:
-      # Image doesn't exist, need to build it
-      pass
-    
+    # Rebuild docker image every time.
     try:
       image, logs = self.client.images.build(
         fileobj=io.BytesIO(dockerfile_content.encode()),
@@ -145,8 +137,6 @@ class DockerContainer:
   like file copying and command execution.
   """
   
-  _containers = set()
-  
   def __init__(
       self, client: DockerClient, image: Union[str, 'docker.models.images.Image'],
       name_prefix: str = "grader"
@@ -172,7 +162,6 @@ class DockerContainer:
         name=self.container_name
       )
       log.debug(f"Started container: {self.container_name}")
-      self.__class__._containers.add(self.container)
     except docker.errors.ContainerError as e:
       log.error(f"Container failed to start: {e}")
       raise Autograder.exceptions.ContainerError(f"Failed to start container {self.container_name}: {e}") from e

@@ -37,7 +37,7 @@ class Grader__docker_configurable(Grader__docker):
                dockerfile_text=None, 
                dockercompose_text=None,
                additional_files=None,
-               base_image=None,
+               base_image="ubuntu",
                canvas_points=None,
                *args, **kwargs):
     # Map base_image to image parameter for parent class
@@ -64,13 +64,19 @@ class Grader__docker_configurable(Grader__docker):
         "Cannot specify both grading_script and grading_commands"
       )
     
+    
     # Build custom image if needed
     if (self.dockerfile_text or self.additional_installs or 
         self.additional_files):
+      # todo: put off building until we actually need the image -- that is, until we actually need it
+      # note: this will rely on haveing a separate "image" and "base_image"
       self.image = self._build_custom_image()
   
   def _build_custom_image(self):
     """Build a custom Docker image with additional installs and files"""
+    
+    log.debug(f"dockerfile_test: {self.dockerfile_text}")
+    log.debug(f"image: {self.image}")
     
     if self.dockerfile_text:
       # Use provided dockerfile

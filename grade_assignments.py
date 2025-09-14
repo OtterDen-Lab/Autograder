@@ -53,8 +53,9 @@ def ensure_single_instance():
   try:
     fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     yield
-  except IOError:
+  except IOError as e:
     log.warning("Early exiting because another instance is already running")
+    log.warning(e)
     raise SystemExit(0)
   finally:
     try:
