@@ -663,30 +663,25 @@ class Grader__template_grader(Grader__docker):
     # In this case that means we need to get the repo from either locally or remotely and then run `uv sync` in the right directory
 
     with tempfile.TemporaryDirectory() as temp_build_dir:
-      os.chdir(temp_build_dir)
-      
-      # First, let's make the repo in place.
-      # This consists of copying the repo from it's origin to a folder named "repo" in the temp directory
-      # todo: make work for remote as well
       
       # Get the main repo
-      self._get_repo(self.source_repo, depth=1)
+      self._get_repo(self.source_repo, os.path.join(temp_build_dir, "repo"), depth=1)
       
       # If we have a golden repo, let's use it to set the extra files
       if self.golden_repo:
         # Download the golden repo, and we'll delete it later
-        self._get_repo(self.golden_repo, "golden")
+        self._get_repo(self.golden_repo, os.path.join(temp_build_dir, "golden"))
         
         logging.debug(temp_build_dir)
         
         for f in self.files_from_golden:
           shutil.copy(
-            os.path.join("golden", "programming-assignments", self.assignment_name, f),
-            os.path.join("repo", "programming-assignments", self.assignment_name, f),
+            os.path.join(temp_build_dir, "golden", "programming-assignments", self.assignment_name, f),
+            os.path.join(temp_build_dir, "repo", "programming-assignments", self.assignment_name, f),
           )
         
         # Remove the golden for now
-        shutil.rmtree("golden")
+        shutil.rmtree(os.path.join(temp_build_dir, "golden"))
       
       # Set up dockerfile
       dockerfile_lines = [
