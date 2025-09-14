@@ -17,6 +17,7 @@ import yaml
 from lms_interface.canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment
 from Autograder.assignment import AssignmentRegistry
 from Autograder.grader import GraderRegistry
+from Autograder.docker_utils import DockerClient, DockerContainer
 
 import logging
 
@@ -40,67 +41,27 @@ def parse_args() -> argparse.Namespace:
 
 
 @contextlib.contextmanager
-def working_directory(directory: Optional[str] = None):
+def ensure_single_instance():
   """
-  Context manager that either:
-  1. Creates a temporary directory if no directory is provided
-  2. Uses the provided directory if one is given
-  
-  In both cases, it yields the directory path and handles cleanup only for temp dirs
-  Note: In multi-threaded mode, we don't change the working directory to avoid conflicts
-  
-  Help from Claude: https://claude.ai/share/f5dc7e5a-23ab-4b7d-bef7-e6234587956a
+  Context manager for file locking to prevent multiple instances.
+
+  Ensures only one grading process runs at a time to avoid conflicts
+  with Docker and Canvas operations.
   """
-  temp_dir = None
-  original_dir = None
-  
-  thread_id = threading.current_thread().ident
+  lockfile = "/tmp/TeachingTools.grade_assignments.lock"
+  lock_fd = open(lockfile, "w")
   try:
-    if directory is None:
-      # Create a temporary directory if none is provided - make it thread-safe
-      if threading.current_thread() != threading.main_thread():
-        # For worker threads, create a unique temp directory
-        temp_base = tempfile.gettempdir()
-        temp_name = f"grader_thread_{thread_id}_{uuid.uuid4().hex[:8]}"
-        directory = os.path.join(temp_base, temp_name)
-        os.makedirs(directory, exist_ok=True)
-        temp_dir = directory  # Store path for cleanup, not TemporaryDirectory object
-      else:
-        # For main thread, use standard TemporaryDirectory
-        temp_dir_obj = tempfile.TemporaryDirectory()
-        temp_dir = temp_dir_obj  # Store the object for cleanup
-        directory = temp_dir_obj.name
-    else:
-      directory = os.path.expanduser(directory)
-      if not os.path.exists(directory):
-        os.makedirs(directory, exist_ok=True)
-    
-    # Only change working directory if we're in the main thread to avoid conflicts
-    if threading.current_thread() == threading.main_thread():
-      original_dir = os.getcwd()
-      os.chdir(directory)
-    
-    # Yield the path of the working directory
-    yield directory
-  
+    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    yield
+  except IOError as e:
+    log.warning("Early exiting because another instance is already running")
+    log.warning(e)
+    raise SystemExit(0)
   finally:
-    # Only restore working directory if we changed it
-    if original_dir is not None:
-      os.chdir(original_dir)
-    
-    # Clean up the temporary directory if we created one
-    if temp_dir is not None:
-      if threading.current_thread() != threading.main_thread():
-        # For worker threads, manually remove the directory
-        try:
-          if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-        except Exception as e:
-          log.warning(f"Failed to cleanup temp directory {temp_dir}: {e}")
-      else:
-        # For main thread with TemporaryDirectory object
-        if hasattr(temp_dir, 'cleanup'):
-          temp_dir.cleanup()
+    try:
+      lock_fd.close()
+    except Exception:
+      pass
 
 
 def grade_single_assignment(assignment_data: Dict) -> Dict:
@@ -121,7 +82,6 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     merged_assignment = assignment_data['merged_assignment']
     args = assignment_data['args']
     push_grades = assignment_data['push_grades']
-    root_dir = assignment_data['root_dir']
     
     assignment_id = yaml_assignment['id']
     
@@ -145,7 +105,7 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
       **assignment_grading_kwargs
     )
     
-    with working_directory(root_dir) as working_dir:
+    with tempfile.TemporaryDirectory() as working_dir:
       # Focus on the given assignment
       with AssignmentRegistry.create(
           merged_assignment['kind'],
@@ -223,29 +183,6 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
       log.warning(f"[Thread {thread_id}] Error during cleanup: {cleanup_error}")
 
 
-@contextlib.contextmanager
-def ensure_single_instance():
-  """
-  Context manager for file locking to prevent multiple instances.
-  
-  Ensures only one grading process runs at a time to avoid conflicts
-  with Docker and Canvas operations.
-  """
-  lockfile = "/tmp/TeachingTools.grade_assignments.lock"
-  lock_fd = open(lockfile, "w")
-  try:
-    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    yield
-  except IOError:
-    log.warning("Early exiting because another instance is already running")
-    raise SystemExit(0)
-  finally:
-    try:
-      lock_fd.close()
-    except Exception:
-      pass
-
-
 def load_and_validate_config(yaml_path: str) -> Dict:
   """
   Load YAML configuration and extract global settings.
@@ -264,7 +201,7 @@ def load_and_validate_config(yaml_path: str) -> Dict:
 
 
 def create_assignment_data(course, yaml_assignment: Dict, merged_assignment: Dict, 
-                          args: argparse.Namespace, push_grades: bool, root_dir: Optional[str]) -> Dict:
+                          args: argparse.Namespace, push_grades: bool) -> Dict:
   """
   Create assignment data structure for grading.
   
@@ -274,20 +211,11 @@ def create_assignment_data(course, yaml_assignment: Dict, merged_assignment: Dic
     merged_assignment: Merged assignment configuration
     args: Command line arguments
     push_grades: Whether to push grades to LMS
-    root_dir: Root directory for grading operations
     
   Returns:
     Dictionary containing assignment data for grading
   """
   assignment_id = yaml_assignment['id']
-  
-  # Create a unique working directory for each assignment to avoid conflicts
-  if root_dir:
-    # If root_dir is specified, create a unique subdirectory for this assignment
-    assignment_root = os.path.join(root_dir, f"assignment_{assignment_id}_{uuid.uuid4().hex[:8]}")
-  else:
-    # If no root_dir, each thread will create its own temp directory
-    assignment_root = None
     
   return {
     'course': course,
@@ -295,7 +223,6 @@ def create_assignment_data(course, yaml_assignment: Dict, merged_assignment: Dic
     'merged_assignment': merged_assignment,
     'args': args,
     'push_grades': push_grades,
-    'root_dir': assignment_root
   }
 
 
@@ -313,7 +240,6 @@ def collect_assignments_to_grade(config: Dict, args: argparse.Namespace) -> List
   # Pull flags from YAML file that will be applied to all submissions
   use_prod = config.get('prod', False)
   push_grades = config.get('push', False)
-  root_dir = config.get('root_dir', None)
   
   # Create the LMS interface
   lms_interface = CanvasInterface(prod=use_prod)
@@ -367,7 +293,11 @@ def collect_assignments_to_grade(config: Dict, args: argparse.Namespace) -> List
       
       # Add this assignment to our list to be graded
       assignment_data = create_assignment_data(
-        course, yaml_assignment, merged_assignment, args, push_grades, root_dir
+        course,
+        yaml_assignment,
+        merged_assignment,
+        args,
+        push_grades
       )
       assignments_to_grade.append(assignment_data)
   
@@ -390,112 +320,42 @@ def execute_grading(assignments_to_grade: List[Dict], args: argparse.Namespace) 
   # Determine number of worker threads
   max_workers = args.max_workers
   if max_workers is None:
-    max_workers = min(len(assignments_to_grade), 6)  # Default to 4 or number of assignments, whichever is smaller
+    max_workers = min(len(assignments_to_grade), 4)  # Default to 4 or number of assignments, whichever is smaller
   
   log.info(f"Using {max_workers} worker threads for grading")
   
   # Grade assignments in parallel
   results = []
-  if len(assignments_to_grade) == 1 or max_workers == 1:
-    # Single-threaded execution for single assignment or when max_workers is 1
-    log.info("Running in single-threaded mode")
-    for assignment_data in assignments_to_grade:
-      result = grade_single_assignment(assignment_data)
-      results.append(result)
-  else:
-    # Multi-threaded execution
-    log.info("Running in multi-threaded mode")
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-      # Submit all assignments for grading
-      future_to_assignment = {
-        executor.submit(grade_single_assignment, assignment_data): assignment_data
-        for assignment_data in assignments_to_grade
-      }
-      
-      # Collect results as they complete
-      for future in as_completed(future_to_assignment):
-        assignment_data = future_to_assignment[future]
-        try:
-          result = future.result()
-          results.append(result)
+  # Multi-threaded execution
+  log.info("Running in multi-threaded mode")
+  with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # Submit all assignments for grading
+    future_to_assignment = {
+      executor.submit(grade_single_assignment, assignment_data): assignment_data
+      for assignment_data in assignments_to_grade
+    }
+    
+    # Collect results as they complete
+    for future in as_completed(future_to_assignment):
+      assignment_data = future_to_assignment[future]
+      try:
+        result = future.result()
+        results.append(result)
+        
+        if result['success']:
+          log.info(f"Successfully graded assignment {result['assignment_name']} (ID: {result['assignment_id']})")
+        else:
+          log.error(f"Failed to grade assignment {result['assignment_id']}: {result['error']}")
           
-          if result['success']:
-            log.info(f"Successfully graded assignment {result['assignment_name']} (ID: {result['assignment_id']})")
-          else:
-            log.error(f"Failed to grade assignment {result['assignment_id']}: {result['error']}")
-            
-        except Exception as exc:
-          log.error(f"Assignment {assignment_data['yaml_assignment']['id']} generated an exception: {exc}")
-          results.append({
-            'success': False,
-            'assignment_id': assignment_data['yaml_assignment']['id'],
-            'error': str(exc)
-          })
+      except Exception as exc:
+        log.error(f"Assignment {assignment_data['yaml_assignment']['id']} generated an exception: {exc}")
+        results.append({
+          'success': False,
+          'assignment_id': assignment_data['yaml_assignment']['id'],
+          'error': str(exc)
+        })
   
   return results
-
-
-def cleanup_all_docker_resources() -> None:
-  """
-  Global cleanup function to remove any remaining Docker containers and images
-  created by grading operations.
-  """
-  try:
-    # Import docker here to avoid issues when docker is not available
-    import docker
-    from Autograder.docker_utils import _image_usage_counter, _image_usage_lock
-    
-    client = docker.from_env()
-    
-    # Clean up any remaining grader containers
-    containers = client.containers.list(all=True, filters={'name': 'grader'})
-    if containers:
-      log.info(f"Cleaning up {len(containers)} remaining grader containers")
-      for container in containers:
-        try:
-          container.stop(timeout=1)
-          container.remove(force=True)
-          log.debug(f"Cleaned up container: {container.name}")
-        except Exception as e:
-          log.debug(f"Failed to clean up container {container.name}: {e}")
-    
-    # Force cleanup all grading images (ignore reference counting since we're shutting down)
-    grading_images = client.images.list(filters={'dangling': False})
-    cleaned_images = 0
-    for image in grading_images:
-      if image.tags:
-        for tag in image.tags:
-          if tag.startswith('grading:'):
-            try:
-              client.images.remove(image.id, force=True)
-              log.debug(f"Cleaned up grading image: {tag}")
-              cleaned_images += 1
-              break
-            except Exception as e:
-              log.debug(f"Failed to clean up grading image {tag}: {e}")
-    
-    if cleaned_images > 0:
-      log.info(f"Cleaned up {cleaned_images} grading images")
-    
-    # Clear the usage counter since we're shutting down
-    with _image_usage_lock:
-      _image_usage_counter.clear()
-      log.debug("Cleared image usage counter")
-      
-    # Clean up dangling images
-    dangling_images = client.images.list(filters={'dangling': True})
-    if dangling_images:
-      for image in dangling_images:
-        try:
-          client.images.remove(image.id, force=True)
-        except Exception:
-          pass
-      log.info(f"Cleaned up {len(dangling_images)} dangling images")
-    
-  except ImportError:
-    log.debug("Docker not available, skipping Docker cleanup")
-  except Exception as e:
-    log.warning(f"Failed to perform global Docker cleanup: {e}")
 
 
 def print_results_summary(results: List[Dict]) -> None:
@@ -523,9 +383,9 @@ def main() -> None:
   
   Coordinates the entire grading process using a clean, modular approach.
   """
+  args = parse_args()
   with ensure_single_instance():
     try:
-      args = parse_args()
       config = load_and_validate_config(args.yaml)
       
       assignments_to_grade = collect_assignments_to_grade(config, args)
@@ -535,7 +395,7 @@ def main() -> None:
     finally:
       # Always perform global Docker cleanup at the end
       log.info("Performing final Docker cleanup...")
-      cleanup_all_docker_resources()
+      DockerClient.cleanup()
 
 
 if __name__ == "__main__":

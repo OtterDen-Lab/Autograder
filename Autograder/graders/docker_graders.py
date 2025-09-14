@@ -222,7 +222,7 @@ class Grader__docker_configurable(Grader__docker):
                dockerfile_text=None, 
                dockercompose_text=None,
                additional_files=None,
-               base_image=None,
+               base_image="ubuntu",
                canvas_points=None,
                *args, **kwargs):
     # Map base_image to image parameter for parent class
@@ -252,6 +252,8 @@ class Grader__docker_configurable(Grader__docker):
     # Build custom image if needed
     if (self.dockerfile_text or self.additional_installs or 
         self.additional_files):
+      # todo: put off building until we actually need the image -- that is, until we actually need it
+      # note: this will rely on haveing a separate "image" and "base_image"
       self.image = self._build_custom_image()
   
   def _build_custom_image(self):
@@ -344,6 +346,44 @@ class Grader__docker_configurable(Grader__docker):
     import glob
     import os
     import shutil
+    log.debug(f"dockerfile_test: {self.dockerfile_text}")
+    log.debug(f"image: {self.image}")
+    
+    if self.dockerfile_text:
+      # Use provided dockerfile
+      dockerfile_content = self.dockerfile_text
+    else:
+      # Build dockerfile from base image + additions
+      base_image = self.image if hasattr(self, 'image') and self.image != "ubuntu" else "ubuntu"
+      
+      dockerfile_lines = [f"FROM {base_image}"]
+      
+      # Add additional package installs
+      if self.additional_installs:
+        dockerfile_lines.append("# Install additional packages")
+        for install_cmd in self.additional_installs:
+          dockerfile_lines.append(f"RUN {install_cmd}")
+      
+      # Add additional files via COPY commands
+      if self.additional_files:
+        dockerfile_lines.append("# Copy additional files")
+        for file_spec in self.additional_files:
+          if isinstance(file_spec, dict):
+            src = file_spec.get('src')
+            dst = file_spec.get('dst', self.working_dir)
+            if src:
+              dockerfile_lines.append(f"COPY {src} {dst}")
+          elif isinstance(file_spec, str):
+            dockerfile_lines.append(f"COPY {file_spec} {self.working_dir}")
+      
+      # Set working directory
+      dockerfile_lines.append(f"WORKDIR {self.working_dir}")
+      dockerfile_lines.append("CMD [\"/bin/bash\"]")
+      
+      dockerfile_content = '\n'.join(dockerfile_lines)
+    
+    log.info("Building custom Docker image with additional configuration...")
+    log.debug(f"Dockerfile content:\n{dockerfile_content}")
     
     # Handle glob patterns
     if '*' in src_path:
@@ -563,7 +603,7 @@ class Grader__template_grader(Grader__docker):
     if not assignment_name:
       assignment_name = repo_path.split('/')[-1] if '/' in repo_path else repo_path
     self.assignment_name = assignment_name
-      
+    
     # What we want to do is to create a docker image that has the repository in it and installs all the required dependencies.
     # In this case that means we need to get the repo from either locally or remotely and then run `uv sync` in the right directory
 
