@@ -614,6 +614,10 @@ class Grader__template_grader(Grader__docker):
     self.source_repo = source_repo
     self.extra_installs = extra_installs
     
+    # Potential includes
+    self.golden_repo = kwargs.get("golden_repo", None)
+    self.files_from_golden = kwargs.get("files_from_golden", [])
+    
     super().__init__(*args, **kwargs)
     
     self._build_image()
@@ -625,24 +629,34 @@ class Grader__template_grader(Grader__docker):
     return
   
   @staticmethod
-  def _clone_repo(remote: str, dest="repo", depth=None, deploy_key_path=None):
+  def _get_repo(repo_path: str, dest="repo", depth=None, deploy_key_path=None):
+    
     dest = pathlib.Path(dest).expanduser().resolve()
     if dest.exists():
       raise FileExistsError(f"{dest} already exists")
     
-    env = os.environ.copy()
+    # If it's local, copy it from local
+    if pathlib.Path(repo_path).expanduser().exists():
+      shutil.copytree(
+        pathlib.Path(repo_path).expanduser(),
+        dest
+      )
+      return
     
-    # If you need to use an SSH deploy key just for this command:
-    # (works for git@host:org/repo.git or ssh://host/...)
-    if deploy_key_path:
-      ssh_cmd = f"ssh -i {deploy_key_path} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-      env["GIT_SSH_COMMAND"] = ssh_cmd
-    
-    cmd = ["git", "clone", remote, str(dest)]
-    if depth:
-      cmd[2:2] = ["--depth", str(depth)]  # insert after "clone" (optional shallow clone)
-    
-    subprocess.run(cmd, check=True, env=env)
+    else: # Get it from the remote location
+      env = os.environ.copy()
+      
+      # If you need to use an SSH deploy key just for this command:
+      # (works for git@host:org/repo.git or ssh://host/...)
+      if deploy_key_path:
+        ssh_cmd = f"ssh -i {deploy_key_path} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+        env["GIT_SSH_COMMAND"] = ssh_cmd
+      
+      cmd = ["git", "clone", repo_path, str(dest)]
+      if depth:
+        cmd[2:2] = ["--depth", str(depth)]  # insert after "clone" (optional shallow clone)
+      
+      subprocess.run(cmd, check=True, env=env)
     
   def _build_image(self):
     # What we want to do is to create a docker image that has the repository in it and installs all the required dependencies.
@@ -655,14 +669,24 @@ class Grader__template_grader(Grader__docker):
       # This consists of copying the repo from it's origin to a folder named "repo" in the temp directory
       # todo: make work for remote as well
       
-      # If local, then it will exist locally.  Else, try to pull it from remote.
-      if pathlib.Path(self.source_repo).expanduser().exists():
-        shutil.copytree(
-          pathlib.Path(self.source_repo).expanduser(),
-          "repo"
-        )
-      else: # Then we are using a remote repo
-        self._clone_repo(self.source_repo, depth=1)
+      # Get the main repo
+      self._get_repo(self.source_repo, depth=1)
+      
+      # If we have a golden repo, let's use it to set the extra files
+      if self.golden_repo:
+        # Download the golden repo, and we'll delete it later
+        self._get_repo(self.golden_repo, "golden")
+        
+        logging.debug(temp_build_dir)
+        
+        for f in self.files_from_golden:
+          shutil.copy(
+            os.path.join("golden", "programming-assignments", self.assignment_name, f),
+            os.path.join("repo", "programming-assignments", self.assignment_name, f),
+          )
+        
+        # Remove the golden for now
+        shutil.rmtree("golden")
       
       # Set up dockerfile
       dockerfile_lines = [

@@ -9,6 +9,9 @@ courses:
       kind: ProgrammingAssignment
       kwargs:
         source_repo: "https://github.com/CSUMB-SCD-instructors/CST463"
+        golden_repo: "https://github.com/CSUMB-SCD-instructors/CST463-golden"
+        files_from_golden:
+          - "tests-reserved.py" # relative to the programming assignment
       assignment_kwargs:
         allowed_filenames:
           - "student_code.py"
