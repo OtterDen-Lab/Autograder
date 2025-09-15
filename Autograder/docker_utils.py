@@ -92,6 +92,7 @@ class DockerClient:
       )
       
       log.debug(f"Successfully built docker image {image.tags}")
+      log.debug(f"Adding image: {image}")
       self._images.add(image)
       return image
     except docker.errors.BuildError as e:
@@ -103,11 +104,17 @@ class DockerClient:
   
   @classmethod
   def cleanup(cls):
+    log.debug("Running docker clean up")
     for container in cls._containers:
-      # todo: these two should be wrapped in a try-except
-      container.stop(timeout=1)
-      container.remove(force=True)
+      log.debug(f"Removing container: {container}")
+      try:
+        container.stop(timeout=1)
+        container.remove(force=True)
+      except docker.errors.APIError as e:
+        log.warning("Stopping containers failed.")
+        log.warning(e)
     for image in cls._images:
+      log.debug(f"Removing image: {image}")
       cls.remove_image(image, force=True)
   
   @staticmethod
@@ -127,6 +134,49 @@ class DockerClient:
     container = self.client.containers.run(*args, **kwargs)
     self._containers.add(container)
     return container
+  
+  def build_image_from_context(self, context_path: str, tag: str, use_cached=True) -> 'docker.models.images.Image':
+    """
+    Build a Docker image from a directory context (containing Dockerfile and files).
+
+    Args:
+        context_path: Path to directory containing Dockerfile and build context
+        tag: Tag for the built image
+
+    Returns:
+        Built Docker image
+    """
+    log.info(f"Building docker image from context: {tag}")
+    
+    # Check if image already exists to avoid rebuilding
+    if False: # todo: does it ever make sense to cache?  We'd want to check all inputs and that seems errorprone
+      try:
+        existing_image = self.client.images.get(tag)
+        log.debug(f"Found existing image {tag}, reusing")
+        return existing_image
+      except docker.errors.ImageNotFound:
+        # Image doesn't exist, need to build it
+        pass
+    
+    try:
+      image, logs = self.client.images.build(
+        path=context_path,
+        pull=True,
+        nocache=True,
+        tag=tag,
+        rm=True,
+        forcerm=True
+      )
+      
+      log.debug(f"Successfully built docker image {image.tags}")
+      self.__class__._images.add(image)
+      return image
+    except docker.errors.BuildError as e:
+      log.error(f"Docker build failed for tag {tag}: {e}")
+      raise Autograder.exceptions.ImageBuildError(f"Failed to build image {tag}: {e}") from e
+    except docker.errors.APIError as e:
+      log.error(f"Docker API error during build: {e}")
+      raise Autograder.exceptions.DockerError(f"Docker API error building {tag}: {e}") from e
 
 
 class DockerContainer:

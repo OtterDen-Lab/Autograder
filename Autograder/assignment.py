@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import collections
 import math
+import pathlib
 import random
 import re
 import shutil
@@ -89,20 +90,20 @@ class Assignment(abc.ABC):
     if kwargs.get("merge_only", False):
       return
     
-    if kwargs.get("push", False):
-      log.debug("Pushing")
-      for submission in self.submissions:
+    log.debug("Pushing")
+    for submission in self.submissions:
+      
+      # Handle record retention before pushing to LMS
+      if kwargs.get("record_retention", False):
+        self._save_feedback_record(
+          submission.student,
+          submission.feedback.comments,
+          kwargs.get("records_dir"),
+          self.lms_assignment.name
+        )
+      
+      if kwargs.get("push", False):
         log.info(f"Pushing feedback for: {submission}")
-        
-        # Handle record retention before pushing to LMS
-        if kwargs.get("record_retention", False):
-          self._save_feedback_record(
-            submission.student, 
-            submission.feedback.comments,
-            kwargs.get("records_dir"),
-            self.lms_assignment.name
-          )
-        
         self.lms_assignment.push_feedback(
           score=submission.feedback.score,
           comments=submission.feedback.comments,
@@ -161,19 +162,14 @@ class Assignment__ProgrammingAssignment(Assignment):
   """
   
   allowed_filenames = [
-    "student_code.c",
-    "student_code.h"
+    "student_code"
   ]
   
-  def __init__(self, allowed_filenames=None, *args, **kwargs):
+  def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
     # Allow overriding the default allowed filenames
-    if allowed_filenames is not None:
-      self.allowed_filenames = allowed_filenames
-      log.info(f"Using custom allowed_filenames: {self.allowed_filenames}")
-    else:
-      self.allowed_filenames = self.__class__.allowed_filenames
-      log.info(f"Using default allowed_filenames: {self.allowed_filenames}")
+    self.allowed_filenames = kwargs.get("allowed_filenames", self.__class__.allowed_filenames)
+    log.debug(f"Using allowed_filenames: {self.allowed_filenames}")
   
   def prepare(self, 
               *args, 
@@ -212,6 +208,13 @@ class Assignment__ProgrammingAssignment(Assignment):
             self.allowed_filenames, 
             key=(lambda s: fuzzywuzzy.fuzz.ratio(s, f.name))
           )
+
+          # If we have a suffix, use it to rename -- otherwise take the original final name
+          if pathlib.Path(new_name).suffix == "":
+            new_name = f"{new_name}{pathlib.Path(f.name).suffix}"
+          else:
+            new_name = f"{new_name}"
+          
           log.info(f"Renaming {f.name} to {new_name}")
           f.name = new_name
     

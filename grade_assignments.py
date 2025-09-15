@@ -88,6 +88,7 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     # Create assignment object if we have enough information
     lms_assignment = course.get_assignment(assignment_id)
     assignment_grading_kwargs = merged_assignment.get('kwargs', {})
+    assignment_grading_kwargs["course_name"] = assignment_data.get("course_name")
     do_regrade = args.do_regrade
     
     log.info(f"[Thread {thread_id}] Grading assignment \"{lms_assignment.name}\"")
@@ -97,7 +98,7 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     repo_path = merged_assignment.get('repo_path')
     
     # Create grader with assignment identifier for better logging
-    assignment_name = lms_assignment.name
+    assignment_name = lms_assignment.name.split()[0]
     grader = GraderRegistry.create(
       grader_name,
       assignment_path=repo_path,
@@ -196,12 +197,18 @@ def load_and_validate_config(yaml_path: str) -> Dict:
   with open(yaml_path) as fid:
     grader_info = yaml.safe_load(fid)
   
-  log.debug(grader_info)
+  log.debug(f"grader_info: {grader_info}")
   return grader_info
 
 
-def create_assignment_data(course, yaml_assignment: Dict, merged_assignment: Dict, 
-                          args: argparse.Namespace, push_grades: bool) -> Dict:
+def create_assignment_data(
+    course,
+    course_name,
+    yaml_assignment: Dict,
+    merged_assignment: Dict,
+    args: argparse.Namespace,
+    push_grades: bool
+) -> Dict:
   """
   Create assignment data structure for grading.
   
@@ -219,6 +226,7 @@ def create_assignment_data(course, yaml_assignment: Dict, merged_assignment: Dic
     
   return {
     'course': course,
+    'course_name': course_name,
     'yaml_assignment': yaml_assignment,
     'merged_assignment': merged_assignment,
     'args': args,
@@ -294,6 +302,7 @@ def collect_assignments_to_grade(config: Dict, args: argparse.Namespace) -> List
       # Add this assignment to our list to be graded
       assignment_data = create_assignment_data(
         course,
+        yaml_course.get("name"),
         yaml_assignment,
         merged_assignment,
         args,
