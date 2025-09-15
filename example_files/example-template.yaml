@@ -1,8 +1,30 @@
 prod: True
-push: True
+push: False
 
 courses:
-  - name: CS101-Template
+  - name: CST334
+    id: 29978
+    # Course-level defaults
+    grader: template-grader
+    assignment_defaults:
+      kind: ProgrammingAssignment
+      kwargs:
+        base_image_name: "samogden/cst334"
+        source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
+        golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
+        files_from_golden:
+          - "tests/unittests_reserved.c"
+        student_code_path: "src"
+        num_repeats: 10
+    assignments:
+      - repo_path: PA1
+        id: 506889
+        record_retention: true
+      - repo_path: PA2
+        id: 506890
+        record_retention: true
+
+  - name: CS463
     id: 29740
     grader: template-grader
     assignment_defaults:
@@ -15,4 +37,5 @@ courses:
     assignments:
       - repo_path: PA1
         id: 527876
-        record_retention: true
+      - repo_path: PA2
+        id: 529948
