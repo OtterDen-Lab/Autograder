@@ -65,7 +65,7 @@ class Grader(abc.ABC):
       
       submission.feedback = self.grade_submission(submission, **kwargs)
       
-    log.info(f"[{assignment_id}] Finished grading all {total_submissions} submissions")
+    log.info(f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions")
 
   def grade_submission(self, submission: Submission, *args, **kwargs) -> Feedback:
     """
