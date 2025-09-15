@@ -90,20 +90,20 @@ class Assignment(abc.ABC):
     if kwargs.get("merge_only", False):
       return
     
-    if kwargs.get("push", False):
-      log.debug("Pushing")
-      for submission in self.submissions:
+    log.debug("Pushing")
+    for submission in self.submissions:
+      
+      # Handle record retention before pushing to LMS
+      if kwargs.get("record_retention", False):
+        self._save_feedback_record(
+          submission.student,
+          submission.feedback.comments,
+          kwargs.get("records_dir"),
+          self.lms_assignment.name
+        )
+      
+      if kwargs.get("push", False):
         log.info(f"Pushing feedback for: {submission}")
-        
-        # Handle record retention before pushing to LMS
-        if kwargs.get("record_retention", False):
-          self._save_feedback_record(
-            submission.student, 
-            submission.feedback.comments,
-            kwargs.get("records_dir"),
-            self.lms_assignment.name
-          )
-        
         self.lms_assignment.push_feedback(
           score=submission.feedback.score,
           comments=submission.feedback.comments,
