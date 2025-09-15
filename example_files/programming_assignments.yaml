@@ -1,53 +1,51 @@
-prod: False
-push: True
+prod: True
+push: False
 
 courses:
 
   - name: CST334
     id: 29978
     # Course-level defaults
-    grader: CST334
+    grader: template-grader
     assignment_defaults:
       kind: ProgrammingAssignment
       kwargs:
-        num_repeats: 10
-        golden_base_dir: "~/repos/classes/CST334-golden/programming-assignments"
-        files_from_golden_repo:
+        base_image_name: "samogden/cst334"
+        source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
+        golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
+        files_from_golden:
           - "tests/unittests_reserved.c"
+        student_code_path: "src"
+        num_repeats: 10
+        record_retention: true
     assignments:
       - repo_path: PA1
         id: 506889
-        record_retention: true
-  #     - repo_path: PA2
-  #       id: 506890
-  #     - repo_path: PA3
-  #       id: 506891
-  #     - repo_path: PA4
-  #       id: 506892
-  #     - repo_path: PA5
-  #       id: 506893
-  #     - repo_path: PA6
-  #       id: 506894
+      - repo_path: PA2
+        id: 506890
+      - repo_path: PA3
+        id: 506891
+      - repo_path: PA4
+        id: 506892
+      - repo_path: PA5
+        id: 506893
+      - repo_path: PA6
+        id: 506894
 
-  # - name: CST463
-  #   id: 29740
-  #   # Course-level defaults
-  #   grader: docker-configurable
-  #   assignment_defaults:
-  #     kind: ProgrammingAssignment
-  #     assignment_kwargs:
-  #       allowed_filenames:
-  #         - "student_code.py"
-  #     kwargs:
-  #       num_repeats: 10
-  #       working_dir: "/tmp/grading/programming-assignments/PA1"
-  #       grading_script: "uv sync && uv run python ../run_tests.py PA1 --output /tmp/results.yaml"
-  #       base_image: "python:3.13-slim"
-  #       additional_installs:
-  #         - "apt-get update && apt-get install -y git"
-  #         - "python -m ensurepip --upgrade"
-  #         - "python -m pip install --root-user-action=ignore uv"
-  #         - "git clone https://github.com/CSUMB-SCD-instructors/CST463 /tmp/grading/"
-  #   assignments:
-  #     - repo_path: PA1
-  #       id: 527876
+  - name: CS463
+    id: 29740
+    grader: template-grader
+    assignment_defaults:
+      kind: ProgrammingAssignment
+      kwargs:
+        source_repo: "https://github.com/CSUMB-SCD-instructors/CST463"
+        golden_repo: "https://github.com/CSUMB-SCD-instructors/CST463-golden"
+        files_from_golden:
+          - "tests-reserved.py" # relative to the programming assignment
+    assignments:
+      - repo_path: PA1
+        id: 527876
+        record_retention: true
+      - repo_path: PA2
+        id: 529948
+        record_retention: true
