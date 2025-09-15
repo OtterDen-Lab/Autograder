@@ -113,7 +113,6 @@ class DockerClient:
       except docker.errors.APIError as e:
         log.warning("Stopping containers failed.")
         log.warning(e)
-    log.debug("Still working...")
     for image in cls._images:
       log.debug(f"Removing image: {image}")
       cls.remove_image(image, force=True)

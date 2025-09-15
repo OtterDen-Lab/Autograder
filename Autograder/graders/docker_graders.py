@@ -556,18 +556,22 @@ class Grader__template_grader(Grader__docker):
   def __init__(
       self,
       assignment_name,
+      course_name: str = "UnknownCourse",
       base_image_name: str = "python:3.11-slim", # assume this is based on linux
       source_repo: str = "https://github.com/CSUMB-SCD-instructors/course-template",
+      student_code_path: str = "",
       extra_installs=None, # todo: these will be tough, do later
       *args, **kwargs
   ):
     
     if extra_installs is None:
       extra_installs = []
-      
+    
+    self.course_name = course_name
     self.assignment_name = assignment_name
     self.base_image_name = base_image_name
     self.source_repo = source_repo
+    self.student_code_path = student_code_path
     self.extra_installs = extra_installs
     
     # Potential includes
@@ -629,6 +633,7 @@ class Grader__template_grader(Grader__docker):
         logging.debug(temp_build_dir)
         
         for f in self.files_from_golden:
+          log.debug(f"Copying over golden file: {f}")
           shutil.copy(
             os.path.join(temp_build_dir, "golden", "programming-assignments", self.assignment_name, f),
             os.path.join(temp_build_dir, "repo", "programming-assignments", self.assignment_name, f),
@@ -644,16 +649,17 @@ class Grader__template_grader(Grader__docker):
         "COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /bin/",
         "WORKDIR /repo",
         "RUN rm -rf .venv",
-        "RUN uv sync --locked",
+        "USER root",
+        "RUN uv sync --locked"
       ]
       
       # Next, we want to save our dockerfile
       with open(os.path.join(temp_build_dir, "Dockerfile"), "w") as dockerfile_fid:
-        dockerfile_fid.write('\n'.join(dockerfile_lines))
+        dockerfile_fid.write('\n'.join(dockerfile_lines) + "\n")
       
       image = self.docker_client.build_image_from_context(
         context_path=temp_build_dir,
-        tag=f"template-grader:{self.assignment_name}-{uuid.uuid4().hex}",
+        tag=f"template-grader:{self.course_name}-{self.assignment_name}-{uuid.uuid4().hex}",
         use_cached=True
       )
     return image
@@ -663,7 +669,17 @@ class Grader__template_grader(Grader__docker):
     submission_files = []
     for f in submission.files:
       # Copy all files to the working directory
-      submission_files.append((f, os.path.join(self.working_dir, f"programming-assignments/{self.assignment_name}")))
+      submission_files.append(
+        (
+          f,
+          os.path.join(
+            f"/repo/programming-assignments/{self.assignment_name}",
+            self.student_code_path
+          )
+        )
+      )
+    log.debug(f"submission.files: {submission.files}")
+    log.debug(f"submission_files: {submission_files}")
     
     # Grade using parent class method
     return super().grade_submission(
