@@ -208,12 +208,15 @@ class Assignment__ProgrammingAssignment(Assignment):
             self.allowed_filenames, 
             key=(lambda s: fuzzywuzzy.fuzz.ratio(s, f.name))
           )
-          log.info(f"Renaming {f.name} to {new_name}")
+
           # If we have a suffix, use it to rename -- otherwise take the original final name
           if pathlib.Path(new_name).suffix == "":
-            f.name = f"{new_name}{pathlib.Path(f.name).suffix}"
+            new_name = f"{new_name}{pathlib.Path(f.name).suffix}"
           else:
-            f.name = f"{new_name}"
+            new_name = f"{new_name}"
+          
+          log.info(f"Renaming {f.name} to {new_name}")
+          f.name = new_name
     
     log.info(f"Total students to grade: {len(self.submissions)}")
     if limit is not None:
