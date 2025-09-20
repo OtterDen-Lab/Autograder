@@ -21,13 +21,13 @@ from Autograder.registry import GraderRegistry
 from lms_interface.classes import Feedback
 from Autograder.docker_utils import DockerClient, DockerContainer, DockerError, DockerContainerManager
 import Autograder.exceptions
-from Autograder.grader import Grader
+from Autograder.grader import FileBasedGrader
 
 import logging
 log = logging.getLogger(__name__)
 
 
-class Grader__docker(Grader):
+class Grader__docker(FileBasedGrader):
   """
   Base class for Docker-based graders.
 

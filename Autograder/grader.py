@@ -7,7 +7,7 @@ from typing import List, Tuple, Optional
 
 from Autograder.assignment import Assignment
 from Autograder.registry import GraderRegistry
-from lms_interface.classes import Feedback, Submission
+from lms_interface.classes import Feedback, Submission, FileSubmission
 
 # Import all grader implementations to ensure they're registered
 try:
@@ -21,11 +21,10 @@ import logging
 log = logging.getLogger(__name__)
 
 
-@GraderRegistry.register("Dummy")
 class Grader(abc.ABC):
   """
   Base abstract class for all graders.
-  
+
   Provides the framework for grading assignments by processing submissions
   and generating feedback.
   """
@@ -33,9 +32,9 @@ class Grader(abc.ABC):
     super().__init__()
     self.ready_to_finalize = True
     # Store assignment identifier for logging (prefer repo_path, then assignment_name, then assignment_path)
-    self.assignment_identifier = (kwargs.get('assignment_path') or 
-                                 kwargs.get('repo_path') or 
-                                 kwargs.get('assignment_name') or 
+    self.assignment_identifier = (kwargs.get('assignment_path') or
+                                 kwargs.get('repo_path') or
+                                 kwargs.get('assignment_name') or
                                  'unknown')
 
   def grade_assignment(self, assignment: Assignment, *args, **kwargs) -> None:
@@ -49,22 +48,22 @@ class Grader(abc.ABC):
     """
     total_submissions = len(assignment.submissions)
     assignment_id = self.assignment_identifier
-    
+
     log.info(f"[{assignment_id}] Starting to grade {total_submissions} submissions")
-    
+
     for i, submission in enumerate(assignment.submissions, 1):
-      # Get student identifier for logging (prefer name, fallback to user_id)
-      
       log.info(f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {submission.student.name})")
-      
-      if not submission.files:
-        submission.feedback = Feedback(0.0, "Assignment submission files missing")
+
+      # Check if this grader can handle this submission type
+      if not self.can_grade_submission(submission):
+        submission.feedback = Feedback(0.0, f"Cannot grade {type(submission).__name__} with {type(self).__name__}")
         continue
+
       if submission.status == Submission.Status.GRADED and not kwargs.get('do_regrade', False):
         continue
-      
+
       submission.feedback = self.grade_submission(submission, **kwargs)
-      
+
     log.info(f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions")
 
   def grade_submission(self, submission: Submission, *args, **kwargs) -> Feedback:
@@ -97,6 +96,17 @@ class Grader(abc.ABC):
     :return:
     """
     pass
+
+  @abc.abstractmethod
+  def can_grade_submission(self, submission: Submission) -> bool:
+    """
+    Check if this grader can handle the given submission type.
+    Subclasses must override this to specify their supported submission types.
+
+    :param submission: The submission to check
+    :return: True if this grader can grade the submission, False otherwise
+    """
+    pass
   
   def assignment_needs_preparation(self) -> bool:
     return True
@@ -121,4 +131,45 @@ class Grader(abc.ABC):
   
   def cleanup(self) -> None:
     pass
+
+
+@GraderRegistry.register("Dummy")
+class FileBasedGrader(Grader):
+  """
+  Base class for graders that work with file submissions (e.g., programming assignments).
+  This maintains the original behavior of the Grader class for backward compatibility.
+  """
+
+  def can_grade_submission(self, submission: Submission) -> bool:
+    """
+    File-based graders can only grade FileSubmission objects that have files.
+    """
+    return isinstance(submission, FileSubmission) and bool(submission.files)
+
+  def grade_assignment(self, assignment: Assignment, *args, **kwargs) -> None:
+    """
+    Override to add file-specific error messages while maintaining original logic.
+    """
+    total_submissions = len(assignment.submissions)
+    assignment_id = self.assignment_identifier
+
+    log.info(f"[{assignment_id}] Starting to grade {total_submissions} submissions")
+
+    for i, submission in enumerate(assignment.submissions, 1):
+      log.info(f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {submission.student.name})")
+
+      # Check if this grader can handle this submission type
+      if not self.can_grade_submission(submission):
+        if isinstance(submission, FileSubmission) and not submission.files:
+          submission.feedback = Feedback(0.0, "Assignment submission files missing")
+        else:
+          submission.feedback = Feedback(0.0, f"Cannot grade {type(submission).__name__} with {type(self).__name__}")
+        continue
+
+      if submission.status == Submission.Status.GRADED and not kwargs.get('do_regrade', False):
+        continue
+
+      submission.feedback = self.grade_submission(submission, **kwargs)
+
+    log.info(f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions")
 

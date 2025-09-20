@@ -11,7 +11,7 @@ import pprint
 import pandas as pd
 
 from Autograder.assignment import Assignment
-from Autograder.grader import Grader
+from Autograder.grader import FileBasedGrader
 from Autograder.registry import GraderRegistry
 import Autograder.exceptions
 from lms_interface.classes import Feedback, Submission
@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 
 @GraderRegistry.register("Manual")
-class Grader__Manual(Grader):
+class Grader__Manual(FileBasedGrader):
   """
   Grader for manual grading workflows.
   
