@@ -48,6 +48,7 @@ class Assignment(abc.ABC):
     self.grading_root_dir = grading_root_dir
     self.submissions : List[Submission] = []
     self.original_dir = None
+    self.canvas_points = kwargs.get('canvas_points', None)  # Override for Canvas assignment points
   
   def __enter__(self) -> Assignment:
     """Enables use as a context manager (e.g. `with [Assignment]`) by managing working directory"""
@@ -104,8 +105,10 @@ class Assignment(abc.ABC):
       
       if kwargs.get("push", False):
         log.info(f"Pushing feedback for: {submission}")
+        # Scale the score for Canvas submission
+        scaled_score = self.scale_score_for_canvas(submission.feedback.score)
         self.lms_assignment.push_feedback(
-          score=submission.feedback.score,
+          score=scaled_score,
           comments=submission.feedback.comments,
           attachments=submission.feedback.attachments,
           user_id=submission.student.user_id,
@@ -150,6 +153,57 @@ class Assignment(abc.ABC):
       
     except Exception as e:
       log.error(f"Failed to save feedback record for student {student.name}: {e}")
+
+  def scale_score_for_canvas(self, raw_score: float) -> float:
+    """
+    Scale a raw score to match Canvas assignment points.
+
+    Prioritizes:
+    1. Explicit canvas_points parameter from YAML config
+    2. Canvas assignment's points_possible if available
+    3. Raw score as-is if no scaling info available
+
+    Args:
+        raw_score: The raw score from the grader
+
+    Returns:
+        Scaled score for Canvas submission
+    """
+    try:
+      # Determine Canvas points to use (in priority order)
+      canvas_points_possible = None
+
+      # 1. Use explicit canvas_points parameter from YAML config
+      if self.canvas_points is not None:
+        canvas_points_possible = float(self.canvas_points)
+        log.info(f"Using explicit canvas_points from config: {canvas_points_possible}")
+
+      # 2. Try to get points_possible from Canvas assignment
+      elif hasattr(self.lms_assignment, 'points_possible') and self.lms_assignment.points_possible is not None:
+        canvas_points_possible = float(self.lms_assignment.points_possible)
+        log.info(f"Using Canvas assignment points_possible: {canvas_points_possible}")
+
+      # Convert to Canvas points or use raw score as fallback
+      if canvas_points_possible is not None:
+        # If raw_score looks like a percentage (0-100), convert to Canvas points
+        if raw_score <= 100:
+          percentage = raw_score / 100.0
+          scaled_score = percentage * canvas_points_possible
+          log.info(f"Scaled score {raw_score:.1f}% to {scaled_score:.1f}/{canvas_points_possible} Canvas points")
+          return scaled_score
+        else:
+          # If raw_score is already in points, scale proportionally
+          scaled_score = (raw_score / 100.0) * canvas_points_possible
+          log.info(f"Scaled score {raw_score:.1f} points to {scaled_score:.1f}/{canvas_points_possible} Canvas points")
+          return scaled_score
+      else:
+        # Fallback to raw score if no Canvas points info available
+        log.info(f"Using raw score: {raw_score:.1f} (no Canvas points info available)")
+        return raw_score
+
+    except Exception as e:
+      log.warning(f"Failed to scale score for Canvas: {e}. Using raw score: {raw_score}")
+      return raw_score
 
 
 
