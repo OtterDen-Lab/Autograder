@@ -14,7 +14,7 @@ from typing import Optional, Dict, List
 
 import yaml
 
-from lms_interface.canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment
+from lms_interface.canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment, CanvasQuiz
 from Autograder.assignment import AssignmentRegistry
 from Autograder.grader import GraderRegistry
 from Autograder.docker_utils import DockerClient, DockerContainer
@@ -84,14 +84,19 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     push_grades = assignment_data['push_grades']
     
     assignment_id = yaml_assignment['id']
-    
-    # Create assignment object if we have enough information
-    lms_assignment = course.get_assignment(assignment_id)
+    assignment_type = merged_assignment.get('type', 'assignment')  # Default to assignment
+
+    # Create assignment or quiz object based on type
+    if assignment_type.lower() == 'quiz':
+      lms_assignment = course.get_quiz(assignment_id)
+      log.info(f"[Thread {thread_id}] Grading quiz \"{lms_assignment.name}\"")
+    else:
+      lms_assignment = course.get_assignment(assignment_id)
+      log.info(f"[Thread {thread_id}] Grading assignment \"{lms_assignment.name}\"")
+
     assignment_grading_kwargs = merged_assignment.get('kwargs', {})
     assignment_grading_kwargs["course_name"] = assignment_data.get("course_name")
     do_regrade = args.do_regrade
-    
-    log.info(f"[Thread {thread_id}] Grading assignment \"{lms_assignment.name}\"")
     
     # Get the grader from the registry
     grader_name = merged_assignment.get("grader")
