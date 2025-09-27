@@ -28,16 +28,30 @@ log.setLevel(logging.DEBUG)
 
 def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser()
-  
+  subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+  # TEST command - for testing text submission flow
+  test_parser = subparsers.add_parser("TEST", help="Test text submission flow with learning-logs.yaml")
+
+  # Keep existing arguments for backward compatibility when no subcommand is used
   parser.add_argument("--yaml", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "example_files/programming_assignments.yaml"))
   parser.add_argument("--limit", default=None, type=int)
   parser.add_argument("--regrade", "--do_regrade", dest="do_regrade", action="store_true")
   parser.add_argument("--merge_only", dest="merge_only", action="store_true")
   parser.add_argument("--max_workers", default=None, type=int, help="Maximum number of parallel grading threads (default: number of assignments)")
-  
   parser.add_argument("--test", action="store_true", help="Only downloads for test student")
-  
-  return parser.parse_args()
+
+  args = parser.parse_args()
+
+  # Handle TEST command
+  if args.command == "TEST":
+    args.yaml = os.path.join(os.path.dirname(os.path.abspath(__file__)), "example_files/learning-logs.yaml")
+    args.regrade = True
+    args.limit = 3
+    args.text = True
+    args.max_workers = 1
+
+  return args
 
 
 @contextlib.contextmanager
@@ -391,20 +405,75 @@ def print_results_summary(results: List[Dict]) -> None:
         log.error(f"  Assignment {result['assignment_id']}: {result['error']}")
 
 
+def test(args: argparse.Namespace) -> None:
+  """
+  Test function for experimenting with text submission assignments.
+
+  Args:
+    args: Command line arguments
+  """
+  log.info("Running TEST mode for text submissions...")
+
+  config = load_and_validate_config(args.yaml)
+
+  # Pull flags from YAML file
+  use_prod = config.get('prod', False)
+
+  # Create the LMS interface
+  lms_interface = CanvasInterface(prod=use_prod)
+
+  # Get the first course and assignment for testing
+  if not config.get('courses'):
+    log.error("No courses found in configuration")
+    return
+
+  yaml_course = config['courses'][0]
+  course_id = int(yaml_course['id'])
+  course = lms_interface.get_course(course_id)
+  log.info(f"Testing with Course \"{course.name}\" (ID: {course_id})")
+
+  if not yaml_course.get('assignments'):
+    log.error("No assignments found in course configuration")
+    return
+
+  yaml_assignment = yaml_course['assignments'][0]
+  assignment_id = yaml_assignment['id']
+
+  # Get the assignment from Canvas
+  lms_assignment = course.get_assignment(assignment_id)
+  log.info(f"Testing with Assignment \"{lms_assignment.name}\" (ID: {assignment_id})")
+
+  # Pull submissions for this assignment
+  log.info("Fetching submissions...")
+  submissions = lms_assignment.get_submissions()
+
+  log.info(f"Found {len(submissions)} submissions")
+  for i, submission in enumerate(submissions[:args.limit or 10]):  # Limit to first 10 or specified limit
+    log.info(f"Submission {i+1}: User ID {submission.student} ({len(submission.submission_text.split())} words?)")
+    submission_contents = ' '.join(submission.submission_text)
+    log.debug(f"Submission contents ({len(submission_contents.split())} words): \n{submission_contents}")
+
+
 def main() -> None:
   """
   Main entry point for the grading script.
-  
+
   Coordinates the entire grading process using a clean, modular approach.
   """
   args = parse_args()
+
+  # Handle TEST command
+  if args.command == "TEST":
+    test(args)
+    return
+
   with ensure_single_instance():
     try:
       config = load_and_validate_config(args.yaml)
-      
+
       assignments_to_grade = collect_assignments_to_grade(config, args)
       results = execute_grading(assignments_to_grade, args)
-      
+
       print_results_summary(results)
     finally:
       # Always perform global Docker cleanup at the end

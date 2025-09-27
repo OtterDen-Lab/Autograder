@@ -1,0 +1,13 @@
+prod: False
+push: False
+
+courses:
+  - name: CST463
+    id: 29740
+    grader: template-grader
+    assignment_defaults:
+      kind: ProgrammingAssignment
+    assignments:
+      - repo_path: PA1
+        id: 520129
+        record_retention: true
