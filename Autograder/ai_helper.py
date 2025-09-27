@@ -72,7 +72,7 @@ class AI_Helper__Anthropic(AI_Helper):
     )
     
     message = cls._client.messages.create(
-      model="claude-3-5-sonnet-20241022",
+      model="claude-3-7-sonnet-latest",
       max_tokens=DEFAULT_MAX_TOKENS,
       messages=messages
     )
