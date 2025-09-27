@@ -206,8 +206,6 @@ class Assignment(abc.ABC):
       return raw_score
 
 
-
-
 @AssignmentRegistry.register("ProgrammingAssignment")
 class Assignment__ProgrammingAssignment(Assignment):
   """
