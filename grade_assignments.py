@@ -18,6 +18,7 @@ from lms_interface.canvas_interface import CanvasInterface, CanvasCourse, Canvas
 from Autograder.assignment import AssignmentRegistry
 from Autograder.grader import GraderRegistry
 from Autograder.docker_utils import DockerClient, DockerContainer
+from Autograder.ai_helper import AI_Helper__Anthropic
 
 import logging
 
@@ -32,6 +33,7 @@ def parse_args() -> argparse.Namespace:
 
   # TEST command - for testing text submission flow
   test_parser = subparsers.add_parser("TEST", help="Test text submission flow with learning-logs.yaml")
+  test_parser.add_argument("--limit", default=None, type=int)
 
   # Keep existing arguments for backward compatibility when no subcommand is used
   parser.add_argument("--yaml", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "example_files/programming_assignments.yaml"))
@@ -47,7 +49,6 @@ def parse_args() -> argparse.Namespace:
   if args.command == "TEST":
     args.yaml = os.path.join(os.path.dirname(os.path.abspath(__file__)), "example_files/learning-logs.yaml")
     args.regrade = True
-    args.limit = 3
     args.text = True
     args.max_workers = 1
 
@@ -405,6 +406,184 @@ def print_results_summary(results: List[Dict]) -> None:
         log.error(f"  Assignment {result['assignment_id']}: {result['error']}")
 
 
+def analyze_submissions_aggregate(all_submissions: List[str], assignment_name: str) -> Dict:
+  """
+  Perform aggregate analysis across all submissions to identify patterns and extract probable topics.
+
+  Args:
+    all_submissions: List of all submission text content
+    assignment_name: Name of the assignment for context
+
+  Returns:
+    Dictionary with analysis results and probable topics
+  """
+  log.info("Performing aggregate analysis of all submissions...")
+
+  # Combine all submissions for aggregate analysis
+  combined_text = "\n\n---SUBMISSION SEPARATOR---\n\n".join(all_submissions)
+
+  prompt = f"""
+You are analyzing student learning log submissions for an assignment called "{assignment_name}".
+
+Please analyze these {len(all_submissions)} student submissions and return a JSON response with:
+
+{{
+  "common_themes": "What concepts or topics are most students discussing?",
+  "key_insights": "What seems to be sticking with students vs. what they're struggling with?",
+  "learning_patterns": "Are there recurring learning patterns or misconceptions?",
+  "teaching_feedback": "Based on these submissions, what feedback would help the instructor improve their teaching?",
+  "core_topics": ["exactly", "5", "most", "important", "general", "topics"]
+}}
+
+For core_topics, identify the 5 most important and general topics that best summarize what was covered in class this week. These should be:
+- Broad enough to encompass multiple related concepts students discussed
+- The most fundamental/important topics from the class session
+- Topics that multiple students engaged with (directly or indirectly)
+- General categories rather than very specific technical terms
+
+Here are the submissions:
+
+{combined_text}
+
+Return only valid JSON.
+"""
+
+  try:
+    # Use OpenAI for JSON response since it has better JSON formatting
+    from Autograder.ai_helper import AI_Helper__OpenAI
+    ai_helper = AI_Helper__OpenAI()
+    result = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+    return result
+  except Exception as e:
+    log.error(f"Error in aggregate analysis: {e}")
+    log.error(f"Falling back to Anthropic...")
+    # Fallback to Anthropic if OpenAI fails
+    try:
+      ai_helper = AI_Helper__Anthropic()
+      analysis_text = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+      # Try to parse any JSON that might be in the response
+      import json
+      import re
+      json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
+      if json_match:
+        result = json.loads(json_match.group())
+        return result
+      else:
+        # If no JSON found, return the text analysis in a structured way
+        return {
+          "common_themes": analysis_text,
+          "key_insights": "",
+          "learning_patterns": "",
+          "teaching_feedback": "",
+          "probable_topics": []
+        }
+    except Exception as fallback_error:
+      log.error(f"Fallback also failed: {fallback_error}")
+      return {
+        "common_themes": f"Error performing analysis: {e}",
+        "key_insights": "",
+        "learning_patterns": "",
+        "teaching_feedback": "",
+        "probable_topics": []
+      }
+
+
+def check_individual_submission(submission_text: str, student_id: str, expected_topics: List[str]) -> Dict:
+  """
+  Check individual submission for topic coverage and engagement.
+
+  Args:
+    submission_text: The student's submission text
+    student_id: Student identifier
+    expected_topics: List of topics that should be covered
+
+  Returns:
+    Dictionary with analysis results
+  """
+  log.debug(f"Checking individual submission for student {student_id}...")
+
+  topics_str = ", ".join(expected_topics)
+  prompt = f"""
+You are analyzing a student's learning log submission for grading and support identification. Learning logs are study tools where students explain topics to their future selves. The instructor emphasizes: "the best way to make a study guide and are for you, because I know this material already -- write it for your future self."
+
+These GENERAL topics were covered in class: {topics_str}
+
+GRADING RUBRIC (Total: 10 points):
+- Completion (4 pts): Based on genuine effort and depth of reflection
+- Length (2 pts): ≥250 words gets 2/2, <250 words gets 0/2
+- Relevance (2 pts): Addresses class material (2=covers 3+ topics, 1=covers 1-2, 0=off-topic)
+- Explanation Effort (2 pts): Attempts to explain concepts for future self, even if confused
+
+Please analyze this submission and return a JSON response with:
+{{
+  "completion_score": "4, 3, 2, 1, or 0 based on depth of reflection and genuine effort",
+  "relevance_score": "2, 1, or 0 based on topic coverage",
+  "explanation_effort_score": "2, 1, or 0 based on attempt to explain vs. just list facts",
+  "topics_covered": ["list", "of", "general", "class", "topics", "that", "relate", "to", "student", "content"],
+  "topics_missing": ["list", "of", "general", "class", "topics", "not", "addressed"],
+  "word_count": approximate_word_count_number,
+  "needs_support": "true/false - student shows significant confusion or struggle that warrants office hours suggestion",
+  "support_reason": "brief explanation if needs_support is true, empty string if false",
+  "feedback": "supportive guidance to help the student write more reflectively for better studying"
+}}
+
+SCORING GUIDELINES:
+- Completion: Reward genuine engagement with learning, even if confused. Penalize only minimal effort.
+- Explanation Effort: Full points for trying to work through concepts in their own words, even if incorrect.
+- A confused student genuinely trying to understand should get high completion and explanation scores.
+
+For feedback, focus on study strategies and encouraging deeper reflection rather than corrections.
+
+Student submission:
+{submission_text}
+
+Return only valid JSON.
+"""
+
+  try:
+    # Use OpenAI for consistent JSON response
+    from Autograder.ai_helper import AI_Helper__OpenAI
+    ai_helper = AI_Helper__OpenAI()
+    result = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
+    result["student_id"] = student_id
+    return result
+  except Exception as e:
+    log.error(f"Error analyzing submission for student {student_id}: {e}")
+    log.error(f"Falling back to Anthropic for individual analysis...")
+    # Fallback to Anthropic if OpenAI fails
+    try:
+      ai_helper = AI_Helper__Anthropic()
+      analysis_text = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
+      # Try to parse any JSON that might be in the response
+      import json
+      import re
+      json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
+      if json_match:
+        result = json.loads(json_match.group())
+        result["student_id"] = student_id
+        return result
+      else:
+        # If no JSON found, create a structured response from the text
+        return {
+          "student_id": student_id,
+          "topics_covered": [],
+          "topics_missing": expected_topics,
+          "engagement_level": "medium",
+          "word_count": len(submission_text.split()),
+          "feedback": analysis_text[:200] + "..." if len(analysis_text) > 200 else analysis_text
+        }
+    except Exception as fallback_error:
+      log.error(f"Fallback also failed for student {student_id}: {fallback_error}")
+      return {
+        "student_id": student_id,
+        "topics_covered": [],
+        "topics_missing": expected_topics,
+        "engagement_level": "error",
+        "word_count": len(submission_text.split()),
+        "feedback": f"Error analyzing submission: {e}"
+      }
+
+
 def test(args: argparse.Namespace) -> None:
   """
   Test function for experimenting with text submission assignments.
@@ -447,11 +626,120 @@ def test(args: argparse.Namespace) -> None:
   log.info("Fetching submissions...")
   submissions = lms_assignment.get_submissions()
 
+  # Collect all submission data
+  all_submission_texts = []
+  submission_data = []
+
   log.info(f"Found {len(submissions)} submissions")
-  for i, submission in enumerate(submissions[:args.limit or 10]):  # Limit to first 10 or specified limit
-    log.info(f"Submission {i+1}: User ID {submission.student} ({len(submission.submission_text.split())} words?)")
+  for i, submission in enumerate(submissions[:args.limit] if args.limit else submissions):  # Limit to specified limit or all submissions
+    log.info(f"Processing submission {i+1}: User ID {submission.student} ({len(submission.submission_text.split())} words)")
     submission_contents = ' '.join(submission.submission_text)
-    log.debug(f"Submission contents ({len(submission_contents.split())} words): \n{submission_contents}")
+
+    all_submission_texts.append(submission_contents)
+    submission_data.append({
+      'student_id': submission.student,
+      'text': submission_contents,
+      'word_count': len(submission_contents.split())
+    })
+
+  # Phase 1: Aggregate Analysis
+  log.info("\n" + "="*50)
+  log.info("PHASE 1: AGGREGATE ANALYSIS")
+  log.info("="*50)
+
+  aggregate_analysis = analyze_submissions_aggregate(all_submission_texts, lms_assignment.name)
+
+  # Pretty print the structured analysis
+  log.info("\n📊 COMMON THEMES:")
+  log.info(aggregate_analysis.get("common_themes", "No themes identified"))
+
+  log.info("\n💡 KEY INSIGHTS:")
+  log.info(aggregate_analysis.get("key_insights", "No insights available"))
+
+  log.info("\n🔄 LEARNING PATTERNS:")
+  log.info(aggregate_analysis.get("learning_patterns", "No patterns identified"))
+
+  log.info("\n🎯 TEACHING FEEDBACK:")
+  log.info(aggregate_analysis.get("teaching_feedback", "No feedback available"))
+
+  core_topics = aggregate_analysis.get("core_topics", [])
+  log.info(f"\n📝 CORE TOPICS ({len(core_topics)} identified):")
+  for topic in core_topics:
+    log.info(f"  • {topic}")
+
+  # Phase 2: Individual Topic Coverage
+  log.info("\n" + "="*50)
+  log.info("PHASE 2: INDIVIDUAL TOPIC COVERAGE")
+  log.info("="*50)
+
+  # Use the 5 core topics identified by the AI
+  all_expected_topics = core_topics
+
+  log.info(f"Checking for coverage of {len(all_expected_topics)} topics:")
+  for topic in all_expected_topics:
+    log.info(f"  • {topic}")
+  log.info("")
+
+  for submission_info in submission_data:
+    individual_analysis = check_individual_submission(
+      submission_info['text'],
+      submission_info['student_id'],
+      all_expected_topics
+    )
+
+    # Calculate grade and format results
+    student_id = individual_analysis.get("student_id", "unknown")
+    completion_score = individual_analysis.get("completion_score", 0)
+    relevance_score = individual_analysis.get("relevance_score", 0)
+    explanation_effort_score = individual_analysis.get("explanation_effort_score", 0)
+    word_count = individual_analysis.get("word_count", 0)
+    topics_covered = individual_analysis.get("topics_covered", [])
+    topics_missing = individual_analysis.get("topics_missing", [])
+    needs_support = individual_analysis.get("needs_support", False)
+    support_reason = individual_analysis.get("support_reason", "")
+    feedback = individual_analysis.get("feedback", "No feedback available")
+
+    # Calculate length score based on word count
+    length_score = 2 if word_count >= 250 else 0
+
+    # Calculate total grade
+    total_grade = completion_score + length_score + relevance_score + explanation_effort_score
+
+    log.info(f"🧑‍🎓 STUDENT {student_id}:")
+    log.info(f"   📊 GRADE: {total_grade}/10 (Completion: {completion_score}/4, Length: {length_score}/2, Relevance: {relevance_score}/2, Explanation: {explanation_effort_score}/2)")
+    log.info(f"   📝 Words: {word_count} | Topics: {len(topics_covered)}/{len(all_expected_topics)}")
+    log.info(f"   ✅ Covered: {', '.join(topics_covered) if topics_covered else 'None'}")
+    if topics_missing:
+      log.info(f"   ❌ Missing: {', '.join(topics_missing)}")
+
+    if needs_support:
+      log.info(f"   🆘 NEEDS SUPPORT: {support_reason}")
+
+    log.info(f"   💬 Feedback: {feedback}")
+    log.info("")
+
+  # Summary of students needing support
+  support_needed = []
+  for submission_info in submission_data:
+    individual_analysis = check_individual_submission(
+      submission_info['text'],
+      submission_info['student_id'],
+      all_expected_topics
+    )
+    if individual_analysis.get("needs_support", False):
+      support_needed.append({
+        "student_id": individual_analysis.get("student_id"),
+        "reason": individual_analysis.get("support_reason", "")
+      })
+
+  if support_needed:
+    log.info("\n" + "="*50)
+    log.info("STUDENTS WHO MIGHT BENEFIT FROM OFFICE HOURS")
+    log.info("="*50)
+    for student in support_needed:
+      log.info(f"• {student['student_id']}: {student['reason']}")
+  else:
+    log.info("\n📈 All students appear to be engaging well with the material!")
 
 
 def main() -> None:
