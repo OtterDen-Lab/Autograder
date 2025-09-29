@@ -185,14 +185,18 @@ class Assignment(abc.ABC):
 
       # Convert to Canvas points or use raw score as fallback
       if canvas_points_possible is not None:
-        # If raw_score looks like a percentage (0-100), convert to Canvas points
-        if raw_score <= 100:
+        # If raw_score is already on the Canvas point scale, use directly
+        if raw_score <= canvas_points_possible:
+          log.info(f"Using raw score directly: {raw_score:.1f}/{canvas_points_possible} Canvas points")
+          return raw_score
+        # If raw_score looks like a percentage (typically 0-100), convert to Canvas points
+        elif raw_score <= 100:
           percentage = raw_score / 100.0
           scaled_score = percentage * canvas_points_possible
           log.info(f"Scaled score {raw_score:.1f}% to {scaled_score:.1f}/{canvas_points_possible} Canvas points")
           return scaled_score
         else:
-          # If raw_score is already in points, scale proportionally
+          # If raw_score is larger than 100, assume it's a point value and scale proportionally
           scaled_score = (raw_score / 100.0) * canvas_points_possible
           log.info(f"Scaled score {raw_score:.1f} points to {scaled_score:.1f}/{canvas_points_possible} Canvas points")
           return scaled_score

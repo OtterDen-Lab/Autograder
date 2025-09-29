@@ -91,7 +91,6 @@ Please analyze this submission and return a JSON response with:
   "explanation_effort_score": "2, 1, or 0 based on attempt to explain vs. just list facts",
   "topics_covered": ["list", "of", "general", "class", "topics", "that", "relate", "to", "student", "content"],
   "topics_missing": ["list", "of", "general", "class", "topics", "not", "addressed"],
-  "word_count": approximate_word_count_number,
   "needs_support": "true/false - student shows significant confusion or struggle that warrants office hours suggestion",
   "support_reason": "brief explanation if needs_support is true, empty string if false",
   "feedback": "supportive guidance to help the student write more reflectively for better studying"
@@ -331,15 +330,16 @@ class TextSubmissionGrader(Grader):
         # Grade the submission using AI
         result = self._grade_individual_submission(submission_text, core_topics, student_id)
 
-      # Calculate length score (separate from AI analysis)
+      # Calculate length score (separate from AI analysis) and store accurate word count
       result["length_score"] = 2 if word_count >= 250 else 0
+      result["accurate_word_count"] = word_count  # Store our accurate count
 
-      # Calculate total grade
+      # Calculate total grade (ensure all scores are integers)
       total_grade = (
-        result.get("completion_score", 0) +
-        result.get("length_score", 0) +
-        result.get("relevance_score", 0) +
-        result.get("explanation_effort_score", 0)
+        int(result.get("completion_score", 0)) +
+        int(result.get("length_score", 0)) +
+        int(result.get("relevance_score", 0)) +
+        int(result.get("explanation_effort_score", 0))
       )
       result["total_grade"] = total_grade
 
@@ -602,20 +602,56 @@ class TextSubmissionGrader(Grader):
     for submission in submissions:
       result = results_by_student.get(submission.student.user_id)
       if result:
-        # Calculate total grade (out of 10)
-        total_grade = (
-          result.get('completion_score', 0) +
-          result.get('length_score', 0) +
-          result.get('relevance_score', 0) +
-          result.get('explanation_effort_score', 0)
-        )
+        # Use pre-calculated total grade
+        total_grade = result.get('total_grade', 0)
 
-        # Create feedback
-        feedback_text = result.get('feedback', 'No feedback available')
+        # Create detailed rubric feedback
+        feedback_text = self._generate_rubric_feedback(result)
         submission.feedback = Feedback(total_grade, feedback_text)
       else:
         # Fallback for missing results
         submission.feedback = Feedback(0.0, "Error: Could not analyze submission")
+
+  def _generate_rubric_feedback(self, result: Dict) -> str:
+    """
+    Generate detailed rubric breakdown for student feedback.
+
+    Args:
+        result: Individual grading result dictionary
+
+    Returns:
+        Formatted feedback string with rubric breakdown
+    """
+    completion_score = result.get('completion_score', 0)
+    length_score = result.get('length_score', 0)
+    relevance_score = result.get('relevance_score', 0)
+    effort_score = result.get('explanation_effort_score', 0)
+    total_score = result.get('total_grade', 0)
+    # Always use our accurate word count
+    word_count = result.get('accurate_word_count', 0)
+    ai_feedback = result.get('feedback', '')
+
+    feedback_lines = [
+      "Learning Log Feedback",
+      "=" * 50,
+      "",
+      "GRADE BREAKDOWN:",
+      f"• Completion (4 pts): {completion_score}/4 - Depth of reflection and genuine effort",
+      f"• Length (2 pts): {length_score}/2 - {'✓ Met 250+ word requirement' if length_score == 2 else '✗ Under 250 words required'}",
+      f"• Relevance (2 pts): {relevance_score}/2 - Connection to class material",
+      f"• Explanation Effort (2 pts): {effort_score}/2 - Attempt to explain concepts clearly",
+      "",
+      f"TOTAL SCORE: {total_score}/10 ({(total_score/10)*100:.0f}%)",
+      f"Word Count: {word_count} words",
+      "",
+      "FEEDBACK:",
+      ai_feedback,
+      "",
+      "Remember: Learning logs are study tools for YOUR future self. Focus on explaining",
+      "concepts in your own words to help you remember and understand the material better."
+    ]
+
+    return "\n".join(feedback_lines)
 
   # Hook methods for customization
   def add_manual_topics_hook(self, ai_topics: List[str]) -> List[str]:
