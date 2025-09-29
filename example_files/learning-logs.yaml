@@ -4,10 +4,9 @@ push: False
 courses:
   - name: CST463
     id: 29740
-    grader: template-grader
+    grader: TextSubmissionGrader
     assignment_defaults:
-      kind: ProgrammingAssignment
+      kind: TextAssignment
     assignments:
-      - repo_path: PA1
-        id: 520129
-        record_retention: true
+      - id: 520129
+        record_retention: false

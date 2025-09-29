@@ -660,3 +660,97 @@ class Assignment__JoshExam(Assignment__Exam):
     "width": 350,
     "height": 100
   }
+
+
+@AssignmentRegistry.register("TextAssignment")
+class Assignment_TextAssignment(Assignment):
+  """
+  Assignment for text-based learning log submissions.
+  Handles Canvas text submissions where students submit reflective writing.
+  """
+
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.submission_data = []
+
+  def prepare(self,
+              limit=None,
+              do_regrade=False,
+              test=False,
+              **kwargs):
+    """
+    Prepare text submissions by fetching them from Canvas.
+
+    Args:
+        limit: Maximum number of submissions to process
+        do_regrade: Whether to regrade existing submissions
+        test: Whether to only include test student submissions
+        **kwargs: Additional arguments
+    """
+    log.info(f"Preparing text assignment with do_regrade={do_regrade}, limit={limit}, test={test}")
+
+    # Get submissions from Canvas
+    self.submissions = self.lms_assignment.get_submissions(
+      limit=(None if not do_regrade else limit),
+      test=test,
+      **kwargs
+    )
+    log.info(f"Retrieved {len(self.submissions)} total submissions from LMS")
+
+    # Filter for ungraded submissions if not regrading
+    if not do_regrade:
+      ungraded_before = len(self.submissions)
+      self.submissions = list(filter(
+        lambda s: s.status == Submission.Status.UNGRADED,
+        self.submissions
+      ))
+      log.info(f"Filtered to {len(self.submissions)} ungraded submissions (was {ungraded_before})")
+    else:
+      log.info("Regrade mode: processing all submissions regardless of status")
+
+    # Apply limit if specified
+    if limit is not None:
+      log.warning(f"Limiting to {limit} students")
+      self.submissions = self.submissions[:limit]
+
+    # Process and structure the submission data
+    self.submission_data = []
+    for i, submission in enumerate(self.submissions):
+      # Extract text content from submission
+      submission_text = ' '.join(submission.submission_text) if hasattr(submission, 'submission_text') else ""
+      word_count = len(submission_text.split()) if submission_text else 0
+
+      self.submission_data.append({
+        'student_id': submission.student.user_id,
+        'text': submission_text,
+        'word_count': word_count,
+        'submission_obj': submission  # Keep reference to original submission
+      })
+
+      log.debug(f"{i+1} : {submission.student.name} -> {word_count} words")
+
+    log.info(f"Prepared {len(self.submission_data)} text submissions for grading")
+
+  def get_submission_data(self) -> List[Dict]:
+    """
+    Return structured submission data for grading.
+
+    Returns:
+        List of dictionaries containing student_id, text, word_count, and submission_obj
+    """
+    return self.submission_data
+
+  def get_all_submission_texts(self) -> List[str]:
+    """
+    Return just the text content from all submissions for aggregate analysis.
+
+    Returns:
+        List of submission text strings
+    """
+    return [data['text'] for data in self.submission_data if data['text']]
+
+  def finalize(self, *args, **kwargs):
+    """
+    Finalize grading by pushing scores and feedback to Canvas.
+    """
+    super().finalize(*args, **kwargs)
