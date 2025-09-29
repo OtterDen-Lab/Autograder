@@ -721,7 +721,15 @@ class Assignment_TextAssignment(Assignment):
     self.submission_data = []
     for i, submission in enumerate(self.submissions):
       # Extract text content from submission
-      submission_text = ' '.join(submission.submission_text) if hasattr(submission, 'submission_text') else ""
+      if hasattr(submission, 'submission_text'):
+        # If it's a list, join without extra spaces (newlines preserve natural word boundaries)
+        if isinstance(submission.submission_text, list):
+          submission_text = '\n'.join(submission.submission_text)
+        else:
+          submission_text = str(submission.submission_text)
+      else:
+        submission_text = ""
+
       word_count = len(submission_text.split()) if submission_text else 0
 
       self.submission_data.append({

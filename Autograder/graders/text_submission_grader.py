@@ -107,12 +107,11 @@ IMPORTANT:
 - For topics_covered, use ONLY the general topic names from the class list, not the specific student subtopics
 
 For feedback, focus on:
-- Encouraging deeper reflection on concepts they mentioned
-- Suggesting how they could explain topics more clearly to their future self
-- Gently highlighting topics they might want to review and add to their study guide
-- Positive reinforcement for good explanations
+- Suggesting how concepts could be explained more clearly
+- Noting topics that might be worth reviewing
 - Study strategies rather than corrections
-- If they covered unrelated topics, gently redirect toward class material
+- If content is off-topic, redirect toward class material without excessive praise
+- Keep tone professional and direct, not overly enthusiastic
 
 Student submission:
 {submission_text}
@@ -404,7 +403,6 @@ class TextSubmissionGrader(Grader):
             "explanation_effort_score": 1,
             "topics_covered": [],
             "topics_missing": core_topics,
-            "word_count": len(submission_text.split()),
             "needs_support": False,
             "support_reason": "",
             "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
@@ -419,7 +417,6 @@ class TextSubmissionGrader(Grader):
           "explanation_effort_score": 0,
           "topics_covered": [],
           "topics_missing": core_topics,
-          "word_count": len(submission_text.split()),
           "needs_support": True,
           "support_reason": "Error analyzing submission",
           "feedback": f"Error analyzing submission: {e}"
@@ -645,10 +642,7 @@ class TextSubmissionGrader(Grader):
       f"Word Count: {word_count} words",
       "",
       "FEEDBACK:",
-      ai_feedback,
-      "",
-      "Remember: Learning logs are study tools for YOUR future self. Focus on explaining",
-      "concepts in your own words to help you remember and understand the material better."
+      ai_feedback
     ]
 
     return "\n".join(feedback_lines)
