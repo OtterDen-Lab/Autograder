@@ -734,6 +734,7 @@ class Assignment_TextAssignment(Assignment):
 
       self.submission_data.append({
         'student_id': submission.student.user_id,
+        'student_name': submission.student.name,
         'text': submission_text,
         'word_count': word_count,
         'submission_obj': submission  # Keep reference to original submission

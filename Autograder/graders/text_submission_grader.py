@@ -307,10 +307,11 @@ class TextSubmissionGrader(Grader):
 
     for i, submission_info in enumerate(submission_data, 1):
       student_id = submission_info.get('student_id')
+      student_name = submission_info.get('student_name', 'Unknown')
       submission_text = submission_info.get('text', '')
       word_count = submission_info.get('word_count', 0)
 
-      log.info(f"   Grading {i}/{len(submission_data)}: {student_id} ({word_count} words)")
+      log.info(f"   Grading {i}/{len(submission_data)}: {student_name} ({word_count} words)")
 
       if not submission_text.strip():
         # Handle empty submissions
@@ -347,6 +348,7 @@ class TextSubmissionGrader(Grader):
       if result.get("needs_support", False):
         self.support_needed_students.append({
           "student_id": student_id,
+          "student_name": student_name,
           "reason": result.get("support_reason", "Unknown reason")
         })
 
@@ -756,9 +758,9 @@ class TextSubmissionGrader(Grader):
     if support_count > 0:
       lines.append(f"\n*Office Hours Recommended ({support_count} students):*")
       for student_info in support.get("support_details", []):  # No limit - show all
-        student_id = student_info.get("student_id", "Unknown")
+        student_name = student_info.get("student_name", "Unknown Student")
         reason = student_info.get("reason", "")  # No truncation
-        lines.append(f"• {student_id}: {reason}")
+        lines.append(f"• {student_name}: {reason}")
     else:
       lines.append("\n*Status:* All students engaging well")
 
