@@ -1,0 +1,52 @@
+prod: False
+push: False
+
+courses:
+
+  - name: CST334
+    id: 29978
+    # Course-level defaults for journal assignments
+    grader: JournalGrader
+    assignment_defaults:
+      type: assignment  # These are regular assignments, not quizzes
+      kind: JournalAssignment
+      kwargs:
+        min_words: 200
+        min_paragraphs: 2
+        analysis_prompt: "Analyze if this journal entry demonstrates understanding of course concepts and engages thoughtfully with the material."
+    assignments:
+      - id: 234567
+        name: "Weekly Reflection Journal 1"
+
+      - id: 234568
+        name: "Chapter 3 Reflection"
+        kwargs:
+          min_words: 150  # Override for shorter assignment
+          analysis_prompt: "Check if the student understood key concepts from Chapter 3 on memory management."
+
+      - id: 234569
+        name: "Final Project Reflection"
+        kwargs:
+          min_words: 400  # Longer reflection for final project
+          min_paragraphs: 3
+
+  - name: CST463
+    id: 29740
+    grader: JournalGrader
+    assignment_defaults:
+      type: assignment
+      kind: JournalAssignment
+      kwargs:
+        min_words: 250
+        min_paragraphs: 2
+        length_weight: 0.2  # 20% length, 80% content for advanced course
+        content_weight: 0.8
+    assignments:
+      - id: 345678
+        name: "Research Paper Reflection"
+
+      - id: 345679
+        name: "Industry Experience Journal"
+        kwargs:
+          min_words: 500  # Longer for industry experience
+          analysis_prompt: "Evaluate how well the student connected their industry experience to course concepts."

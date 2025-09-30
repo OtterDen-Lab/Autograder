@@ -1,0 +1,12 @@
+prod: True
+push: False
+
+courses:
+  - name: CST463
+    id: 29978
+    grader: TextSubmissionGrader
+    assignment_defaults:
+      kind: TextAssignment
+    assignments:
+      - id: 506883
+        record_retention: true

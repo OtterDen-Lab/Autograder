@@ -1,0 +1,21 @@
+prod: False
+push: False
+
+courses:
+
+  - name: CST334
+    id: 29978
+    # Course-level defaults for quizzes
+    grader: QuizGrader
+    assignment_defaults:
+      type: quiz
+      kind: QuizAssignment  # This would need to be implemented
+    assignments:
+      - id: 123456
+        name: "Midterm Quiz"
+
+      - id: 123457
+        name: "Chapter 5 Quiz"
+
+      - id: 123458
+        name: "Final Quiz"
