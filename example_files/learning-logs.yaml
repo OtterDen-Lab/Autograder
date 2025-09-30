@@ -5,6 +5,7 @@ courses:
   - name: CST463
     id: 29978
     grader: TextSubmissionGrader
+    slack_channel: "C09HR2J5EBF"  # Your private channel ID
     assignment_defaults:
       kind: TextAssignment
     assignments:

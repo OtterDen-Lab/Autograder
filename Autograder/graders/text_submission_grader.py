@@ -149,6 +149,7 @@ class TextSubmissionGrader(Grader):
     self.aggregate_results = {}
     self.individual_results = []
     self.support_needed_students = []
+    self.slack_channel = kwargs.get('slack_channel')
 
   def can_grade_submission(self, submission: Submission) -> bool:
     """
@@ -669,8 +670,114 @@ class TextSubmissionGrader(Grader):
     Args:
         report_data: Compiled report data
     """
-    # Default implementation: print to console
+    # Send to Slack if configured
+    self._send_slack_notification(report_data)
+
+    # Also print to console
     self._print_report_to_console(report_data)
+
+  def _send_slack_notification(self, report_data: Dict) -> None:
+    """
+    Send summary notification to Slack if configured.
+
+    Args:
+        report_data: Report data to send
+    """
+    import os
+    import requests
+
+    # Check for Slack configuration
+    slack_token = os.getenv('SLACK_BOT_TOKEN')
+    slack_channel = self.slack_channel
+
+    if not slack_token or not slack_channel:
+      log.debug("Slack not configured (missing SLACK_BOT_TOKEN or course slack_channel)")
+      return
+
+    try:
+      # Create concise summary
+      message = self._create_slack_summary(report_data)
+
+      # Send to Slack
+      response = requests.post(
+        "https://slack.com/api/chat.postMessage",
+        headers={"Authorization": f"Bearer {slack_token}"},
+        json={
+          "channel": slack_channel,
+          "text": message,
+          "mrkdwn": True,
+          "unfurl_links": False,
+          "unfurl_media": False
+        },
+        timeout=10
+      )
+
+      if response.json().get('ok'):
+        log.info("Slack notification sent successfully")
+      else:
+        log.warning(f"Slack notification failed: {response.json().get('error')}")
+
+    except Exception as e:
+      log.warning(f"Failed to send Slack notification: {e}")
+
+  def _create_slack_summary(self, report_data: Dict) -> str:
+    """
+    Create concise summary for Slack notification.
+
+    Args:
+        report_data: Report data to summarize
+
+    Returns:
+        Formatted message string
+    """
+    stats = report_data.get("grade_statistics", {})
+    support = report_data.get("support_summary", {})
+    insights = report_data.get("aggregate_insights", {})
+    topics = report_data.get("core_topics", [])
+
+    # Build summary message with better Slack formatting
+    lines = [
+      "*Learning Log Grading Complete*",
+      "",
+      "*Summary:*",
+      f"• {stats.get('total_students', 0)} students graded",
+      f"• Average: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)",
+    ]
+
+    # Add grade distribution summary
+    distribution = stats.get("grade_distribution", {})
+    if distribution:
+      a_b_count = distribution.get("A", 0) + distribution.get("B", 0)
+      c_d_f_count = distribution.get("C", 0) + distribution.get("D", 0) + distribution.get("F", 0)
+      lines.append(f"• Grades: {a_b_count} A/B, {c_d_f_count} C/D/F")
+
+    # Add support needs - show ALL students
+    support_count = support.get("students_needing_support", 0)
+    if support_count > 0:
+      lines.append(f"\n*Office Hours Recommended ({support_count} students):*")
+      for student_info in support.get("support_details", []):  # No limit - show all
+        student_id = student_info.get("student_id", "Unknown")
+        reason = student_info.get("reason", "")  # No truncation
+        lines.append(f"• {student_id}: {reason}")
+    else:
+      lines.append("\n*Status:* All students engaging well")
+
+    # Add topic insights as a list - show ALL topics
+    if topics:
+      lines.append(f"\n*Key Topics Mentioned:*")
+      for topic in topics:
+        lines.append(f"• {topic}")
+
+    # Add teaching insights as a list
+    teaching_feedback = insights.get("teaching_feedback", "").strip()
+    if teaching_feedback:
+      lines.append(f"\n*Teaching Suggestions:*")
+      # Split into sentences and make each a bullet point
+      sentences = [s.strip() for s in teaching_feedback.split('.') if s.strip()]
+      for sentence in sentences:
+        lines.append(f"• {sentence}")  # Don't add period since we split on periods
+
+    return "\n".join(lines)
 
   def _print_report_to_console(self, report_data: Dict) -> None:
     """

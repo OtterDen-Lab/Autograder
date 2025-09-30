@@ -110,6 +110,7 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
 
     assignment_grading_kwargs = merged_assignment.get('kwargs', {})
     assignment_grading_kwargs["course_name"] = assignment_data.get("course_name")
+    assignment_grading_kwargs["slack_channel"] = assignment_data.get("slack_channel")
     do_regrade = args.do_regrade
 
     # Get the grader from the registry
@@ -226,7 +227,8 @@ def create_assignment_data(
     yaml_assignment: Dict,
     merged_assignment: Dict,
     args: argparse.Namespace,
-    push_grades: bool
+    push_grades: bool,
+    slack_channel: Optional[str] = None
 ) -> Dict:
   """
   Create assignment data structure for grading.
@@ -250,6 +252,7 @@ def create_assignment_data(
     'merged_assignment': merged_assignment,
     'args': args,
     'push_grades': push_grades,
+    'slack_channel': slack_channel,
   }
 
 
@@ -325,7 +328,8 @@ def collect_assignments_to_grade(config: Dict, args: argparse.Namespace) -> List
         yaml_assignment,
         merged_assignment,
         args,
-        push_grades
+        push_grades,
+        yaml_course.get("slack_channel")
       )
       assignments_to_grade.append(assignment_data)
 
