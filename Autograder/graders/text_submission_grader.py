@@ -520,19 +520,19 @@ class TextSubmissionGrader(Grader):
               "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
             }
 
-      except Exception as fallback_error:
-        log.error(f"Both AI providers failed for {student_id}: {fallback_error}")
-        return {
-          "student_id": student_id,
-          "completion_score": 0,
-          "relevance_score": 0,
-          "explanation_effort_score": 0,
-          "topics_covered": [],
-          "topics_missing": core_topics,
-          "needs_support": True,
-          "support_reason": "Error analyzing submission",
-          "feedback": f"Error analyzing submission: {e}"
-        }
+        except Exception as fallback_error:
+          log.error(f"Both AI providers failed for {student_id}: {fallback_error}")
+          return {
+            "student_id": student_id,
+            "completion_score": 0,
+            "relevance_score": 0,
+            "explanation_effort_score": 0,
+            "topics_covered": [],
+            "topics_missing": core_topics,
+            "needs_support": True,
+            "support_reason": "Error analyzing submission",
+            "feedback": f"Error analyzing submission: {e}"
+          }
 
   def phase_3_generate_report(self, aggregate_results: Dict, individual_results: List[Dict]) -> None:
     """
