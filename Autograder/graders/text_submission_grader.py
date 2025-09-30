@@ -171,6 +171,9 @@ class TextSubmissionGrader(Grader):
     self.assignment_name = assignment.lms_assignment.name
     self.course_name = kwargs.get('course_name', 'Unknown Course')
 
+    # Store AI provider preference
+    self.prefer_anthropic = kwargs.get('prefer_anthropic', False)
+
     # Initialize token tracking
     self.total_tokens = 0
     self.total_cost = 0.0
@@ -232,38 +235,15 @@ class TextSubmissionGrader(Grader):
     # Get the prompt
     prompt = get_aggregate_analysis_prompt(submission_texts, assignment_name)
 
-    try:
-      # Try OpenAI first for better JSON formatting
-      log.debug("Attempting aggregate analysis with OpenAI...")
-      ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
-
-      # Track token usage
-      self._track_token_usage(usage, "Phase 1 - Aggregate Analysis")
-
-      # Store core topics for use in Phase 2
-      self.core_topics = result.get("core_topics", [])
-
-      # Apply topic addition hook
-      self.core_topics = self.add_manual_topics_hook(self.core_topics)
-
-      log.info(f"✅ Aggregate analysis completed. Identified {len(self.core_topics)} core topics:")
-      for i, topic in enumerate(self.core_topics, 1):
-        log.info(f"   {i}. {topic}")
-
-      return result
-
-    except Exception as e:
-      log.error(f"OpenAI aggregate analysis failed: {e}")
-      log.info("Falling back to Anthropic...")
-
+    if self.prefer_anthropic:
+      # Try Anthropic first if preferred
       try:
-        # Fallback to Anthropic
+        log.debug("Attempting aggregate analysis with Anthropic (preferred)...")
         ai_helper = AI_Helper__Anthropic()
         analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
 
         # Track token usage
-        self._track_token_usage(usage, "Phase 1 - Aggregate Analysis (Anthropic fallback)")
+        self._track_token_usage(usage, "Phase 1 - Aggregate Analysis (Anthropic)")
 
         # Try to parse JSON from Anthropic response
         json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
@@ -291,15 +271,79 @@ class TextSubmissionGrader(Grader):
 
         return result
 
-      except Exception as fallback_error:
-        log.error(f"Anthropic fallback also failed: {fallback_error}")
-        return {
-          "common_themes": f"Error performing analysis: {e}",
-          "key_insights": "",
-          "learning_patterns": "",
-          "teaching_feedback": "",
-          "core_topics": []
-        }
+      except Exception as e:
+        log.error(f"Anthropic aggregate analysis failed: {e}")
+        log.info("Falling back to OpenAI...")
+
+    try:
+      # Try OpenAI (either first choice or fallback)
+      log.debug("Attempting aggregate analysis with OpenAI...")
+      ai_helper = AI_Helper__OpenAI()
+      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+
+      # Track token usage
+      self._track_token_usage(usage, "Phase 1 - Aggregate Analysis (OpenAI)")
+
+      # Store core topics for use in Phase 2
+      self.core_topics = result.get("core_topics", [])
+
+      # Apply topic addition hook
+      self.core_topics = self.add_manual_topics_hook(self.core_topics)
+
+      log.info(f"✅ Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics:")
+      for i, topic in enumerate(self.core_topics, 1):
+        log.info(f"   {i}. {topic}")
+
+      return result
+
+    except Exception as e:
+      log.error(f"OpenAI aggregate analysis failed: {e}")
+
+      if not self.prefer_anthropic:
+        log.info("Falling back to Anthropic...")
+        try:
+          # Fallback to Anthropic when OpenAI was first choice
+          ai_helper = AI_Helper__Anthropic()
+          analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+
+          # Track token usage
+          self._track_token_usage(usage, "Phase 1 - Aggregate Analysis (Anthropic fallback)")
+
+          # Try to parse JSON from Anthropic response
+          json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
+          if json_match:
+            result = json.loads(json_match.group())
+          else:
+            # If no JSON found, create structured response from text
+            result = {
+              "common_themes": analysis_text,
+              "key_insights": "",
+              "learning_patterns": "",
+              "teaching_feedback": "",
+              "core_topics": []
+            }
+
+          # Store core topics for use in Phase 2
+          self.core_topics = result.get("core_topics", [])
+
+          # Apply topic addition hook
+          self.core_topics = self.add_manual_topics_hook(self.core_topics)
+
+          log.info(f"✅ Aggregate analysis completed (Anthropic fallback). Identified {len(self.core_topics)} core topics:")
+          for i, topic in enumerate(self.core_topics, 1):
+            log.info(f"   {i}. {topic}")
+
+          return result
+
+        except Exception as fallback_error:
+          log.error(f"Anthropic fallback also failed: {fallback_error}")
+          return {
+            "common_themes": f"Error performing analysis: {e}",
+            "key_insights": "",
+            "learning_patterns": "",
+            "teaching_feedback": "",
+            "core_topics": []
+          }
 
   def phase_2_individual_grading(self, submission_data: List[Dict], core_topics: List[str]) -> List[Dict]:
     """
@@ -400,27 +444,14 @@ class TextSubmissionGrader(Grader):
 
     prompt = get_individual_grading_prompt(submission_text, core_topics)
 
-    try:
-      # Try OpenAI first
-      ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
-
-      # Track token usage
-      self._track_token_usage(usage, f"Phase 2 - Individual Grading ({student_id})")
-
-      result["student_id"] = student_id
-      return result
-
-    except Exception as e:
-      log.debug(f"OpenAI failed for {student_id}: {e}. Trying Anthropic...")
-
+    if self.prefer_anthropic:
+      # Try Anthropic first if preferred
       try:
-        # Fallback to Anthropic
         ai_helper = AI_Helper__Anthropic()
         analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
 
         # Track token usage
-        self._track_token_usage(usage, f"Phase 2 - Individual Grading ({student_id}) - Anthropic fallback")
+        self._track_token_usage(usage, f"Phase 2 - Individual Grading ({student_id}) - Anthropic")
 
         # Try to parse JSON from response
         json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
@@ -441,6 +472,53 @@ class TextSubmissionGrader(Grader):
             "support_reason": "",
             "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
           }
+
+      except Exception as e:
+        log.debug(f"Anthropic failed for {student_id}: {e}. Trying OpenAI...")
+
+    try:
+      # Try OpenAI (either first choice or fallback)
+      ai_helper = AI_Helper__OpenAI()
+      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
+
+      # Track token usage
+      self._track_token_usage(usage, f"Phase 2 - Individual Grading ({student_id}) - OpenAI")
+
+      result["student_id"] = student_id
+      return result
+
+    except Exception as e:
+      log.debug(f"OpenAI failed for {student_id}: {e}")
+
+      if not self.prefer_anthropic:
+        log.debug("Trying Anthropic...")
+        try:
+          # Fallback to Anthropic when OpenAI was first choice
+          ai_helper = AI_Helper__Anthropic()
+          analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
+
+          # Track token usage
+          self._track_token_usage(usage, f"Phase 2 - Individual Grading ({student_id}) - Anthropic fallback")
+
+          # Try to parse JSON from response
+          json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
+          if json_match:
+            result = json.loads(json_match.group())
+            result["student_id"] = student_id
+            return result
+          else:
+            # If no JSON, create structured response from text
+            return {
+              "student_id": student_id,
+              "completion_score": 3,  # Default to moderate score
+              "relevance_score": 1,
+              "explanation_effort_score": 1,
+              "topics_covered": [],
+              "topics_missing": core_topics,
+              "needs_support": False,
+              "support_reason": "",
+              "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
+            }
 
       except Exception as fallback_error:
         log.error(f"Both AI providers failed for {student_id}: {fallback_error}")
