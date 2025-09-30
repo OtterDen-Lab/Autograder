@@ -1,12 +1,12 @@
-prod: False
+prod: True
 push: False
 
 courses:
   - name: CST463
-    id: 29740
+    id: 29978
     grader: TextSubmissionGrader
     assignment_defaults:
       kind: TextAssignment
     assignments:
-      - id: 520129
-        record_retention: false
+      - id: 506883
+        record_retention: true
