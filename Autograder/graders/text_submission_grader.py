@@ -171,6 +171,11 @@ class TextSubmissionGrader(Grader):
     submission_data = assignment.get_submission_data()
     submission_texts = assignment.get_all_submission_texts()
 
+    # Check if assignment was skipped due to lock date
+    if not submission_data:
+      log.info(f"No submissions to grade for '{assignment_name}' - assignment may be unlocked")
+      return
+
     log.info(f"Starting 3-phase grading for '{assignment_name}' with {len(submission_data)} submissions")
 
     # Phase 1: Aggregate Analysis

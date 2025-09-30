@@ -689,9 +689,20 @@ class Assignment_TextAssignment(Assignment):
         limit: Maximum number of submissions to process
         do_regrade: Whether to regrade existing submissions
         test: Whether to only include test student submissions
-        **kwargs: Additional arguments
+        **kwargs: Additional arguments including:
+                  - grade_after_lock_date: If True, skip preparation if assignment is not locked
     """
     log.info(f"Preparing text assignment with do_regrade={do_regrade}, limit={limit}, test={test}")
+
+    # Check if we should wait for lock date before grading (BEFORE any Canvas API calls)
+    grade_after_lock_date = kwargs.get('grade_after_lock_date', False)
+    if grade_after_lock_date:
+      if not self._is_assignment_locked():
+        log.info("Assignment is not ready for grading - skipping preparation and all Canvas API calls")
+        # Set empty submissions list to skip grading
+        self.submissions = []
+        self.submission_data = []
+        return
 
     # Get submissions from Canvas
     self.submissions = self.lms_assignment.get_submissions(
@@ -743,6 +754,70 @@ class Assignment_TextAssignment(Assignment):
       log.debug(f"{i+1} : {submission.student.name} -> {word_count} words")
 
     log.info(f"Prepared {len(self.submission_data)} text submissions for grading")
+
+  def _is_assignment_locked(self) -> bool:
+    """
+    Check if the assignment is fully locked (past both due date and lock date).
+
+    For learning logs, we want to ensure:
+    1. Students have submitted their work (due_at passed)
+    2. No more submissions can be made (lock_at passed)
+
+    Returns:
+        True if assignment is fully locked (past both due_at and lock_at), False otherwise
+    """
+    from datetime import datetime, timezone
+    import dateutil.parser
+
+    try:
+      # Get current time in UTC
+      now = datetime.now(timezone.utc)
+
+      # Check due_at date
+      due_passed = True  # Default to True if no due date
+      if hasattr(self.lms_assignment, 'due_at') and self.lms_assignment.due_at:
+        if isinstance(self.lms_assignment.due_at, str):
+          due_date = dateutil.parser.parse(self.lms_assignment.due_at)
+        else:
+          due_date = self.lms_assignment.due_at
+
+        # Ensure due_date has timezone info
+        if due_date.tzinfo is None:
+          due_date = due_date.replace(tzinfo=timezone.utc)
+
+        due_passed = now >= due_date
+        log.debug(f"Due date check: now={now}, due_at={due_date}, due_passed={due_passed}")
+
+      # Check lock_at date
+      lock_passed = True  # Default to True if no lock date
+      if hasattr(self.lms_assignment, 'lock_at') and self.lms_assignment.lock_at:
+        if isinstance(self.lms_assignment.lock_at, str):
+          lock_date = dateutil.parser.parse(self.lms_assignment.lock_at)
+        else:
+          lock_date = self.lms_assignment.lock_at
+
+        # Ensure lock_date has timezone info
+        if lock_date.tzinfo is None:
+          lock_date = lock_date.replace(tzinfo=timezone.utc)
+
+        lock_passed = now >= lock_date
+        log.debug(f"Lock date check: now={now}, lock_at={lock_date}, lock_passed={lock_passed}")
+
+      # Assignment is fully locked when both dates have passed
+      is_fully_locked = due_passed and lock_passed
+
+      if not due_passed:
+        log.info(f"Assignment not ready for grading - due date has not passed (due: {self.lms_assignment.due_at})")
+      elif not lock_passed:
+        log.info(f"Assignment not ready for grading - lock date has not passed (locks: {self.lms_assignment.lock_at})")
+      else:
+        log.debug(f"Assignment is fully locked and ready for grading")
+
+      return is_fully_locked
+
+    except Exception as e:
+      log.warning(f"Error checking assignment dates: {e}. Defaulting to unlocked.")
+      return False
 
   def get_submission_data(self) -> List[Dict]:
     """

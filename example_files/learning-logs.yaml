@@ -8,6 +8,7 @@ courses:
     slack_channel: "C09HR2J5EBF"  # Your private channel ID
     assignment_defaults:
       kind: TextAssignment
+      grade_after_lock_date: true  # Only grade after assignment lock date
     assignments:
+      - id: 506884
       - id: 506883
-        record_retention: false
