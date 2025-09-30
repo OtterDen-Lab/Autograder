@@ -38,11 +38,11 @@ class AI_Helper__Anthropic(AI_Helper):
     self.__class__._client = Anthropic()
   
   @classmethod
-  def query_ai(cls, 
-               message: str, 
-               attachments: List[Tuple[str, str]], 
-               max_response_tokens: int = DEFAULT_MAX_TOKENS, 
-               max_retries: int = DEFAULT_MAX_RETRIES) -> str:
+  def query_ai(cls,
+               message: str,
+               attachments: List[Tuple[str, str]],
+               max_response_tokens: int = DEFAULT_MAX_TOKENS,
+               max_retries: int = DEFAULT_MAX_RETRIES) -> Tuple[str, Dict]:
     messages = []
     
     attachment_messages = []
@@ -71,13 +71,22 @@ class AI_Helper__Anthropic(AI_Helper):
       }
     )
     
-    message = cls._client.messages.create(
+    response = cls._client.messages.create(
       model="claude-3-7-sonnet-latest",
       max_tokens=DEFAULT_MAX_TOKENS,
       messages=messages
     )
-    log.debug(message.content)
-    return message.content[0].text
+    log.debug(response.content)
+
+    # Extract usage information
+    usage_info = {
+      "prompt_tokens": response.usage.input_tokens if response.usage else 0,
+      "completion_tokens": response.usage.output_tokens if response.usage else 0,
+      "total_tokens": (response.usage.input_tokens + response.usage.output_tokens) if response.usage else 0,
+      "provider": "anthropic"
+    }
+
+    return response.content[0].text, usage_info
 
 
 class AI_Helper__OpenAI(AI_Helper):
@@ -86,11 +95,11 @@ class AI_Helper__OpenAI(AI_Helper):
     self.__class__._client = OpenAI()
   
   @classmethod
-  def query_ai(cls, 
-               message: str, 
-               attachments: List[Tuple[str, str]], 
-               max_response_tokens: int = DEFAULT_MAX_TOKENS, 
-               max_retries: int = DEFAULT_MAX_RETRIES) -> Dict:
+  def query_ai(cls,
+               message: str,
+               attachments: List[Tuple[str, str]],
+               max_response_tokens: int = DEFAULT_MAX_TOKENS,
+               max_retries: int = DEFAULT_MAX_RETRIES) -> Tuple[Dict, Dict]:
     messages = []
     
     attachment_messages = []
@@ -128,10 +137,20 @@ class AI_Helper__OpenAI(AI_Helper):
       presence_penalty=0
     )
     log.debug(response.choices[0])
+
+    # Extract usage information
+    usage_info = {
+      "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+      "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+      "total_tokens": response.usage.total_tokens if response.usage else 0,
+      "provider": "openai"
+    }
+
     try:
-      return json.loads(response.choices[0].message.content)
+      content = json.loads(response.choices[0].message.content)
+      return content, usage_info
     except TypeError:
       if max_retries > 0:
         return cls.query_ai(message, attachments, max_response_tokens, max_retries-1)
       else:
-        return {}
+        return {}, usage_info

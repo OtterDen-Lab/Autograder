@@ -171,6 +171,11 @@ class TextSubmissionGrader(Grader):
     self.assignment_name = assignment.lms_assignment.name
     self.course_name = kwargs.get('course_name', 'Unknown Course')
 
+    # Initialize token tracking
+    self.total_tokens = 0
+    self.total_cost = 0.0
+    self.usage_details = []
+
     assignment_name = assignment.lms_assignment.name
     submission_data = assignment.get_submission_data()
     submission_texts = assignment.get_all_submission_texts()
@@ -231,7 +236,10 @@ class TextSubmissionGrader(Grader):
       # Try OpenAI first for better JSON formatting
       log.debug("Attempting aggregate analysis with OpenAI...")
       ai_helper = AI_Helper__OpenAI()
-      result = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+
+      # Track token usage
+      self._track_token_usage(usage, "Phase 1 - Aggregate Analysis")
 
       # Store core topics for use in Phase 2
       self.core_topics = result.get("core_topics", [])
@@ -252,7 +260,10 @@ class TextSubmissionGrader(Grader):
       try:
         # Fallback to Anthropic
         ai_helper = AI_Helper__Anthropic()
-        analysis_text = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+        analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+
+        # Track token usage
+        self._track_token_usage(usage, "Phase 1 - Aggregate Analysis (Anthropic fallback)")
 
         # Try to parse JSON from Anthropic response
         json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
@@ -353,8 +364,12 @@ class TextSubmissionGrader(Grader):
       )
       result["total_grade"] = total_grade
 
-      # Track students needing support
-      if result.get("needs_support", False):
+      # Track students needing support (handle string boolean from AI)
+      needs_support = result.get("needs_support", False)
+      if isinstance(needs_support, str):
+        needs_support = needs_support.lower() in ['true', '1', 'yes']
+
+      if needs_support:
         self.support_needed_students.append({
           "student_id": student_id,
           "student_name": student_name,
@@ -388,7 +403,11 @@ class TextSubmissionGrader(Grader):
     try:
       # Try OpenAI first
       ai_helper = AI_Helper__OpenAI()
-      result = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
+      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
+
+      # Track token usage
+      self._track_token_usage(usage, f"Phase 2 - Individual Grading ({student_id})")
+
       result["student_id"] = student_id
       return result
 
@@ -398,7 +417,10 @@ class TextSubmissionGrader(Grader):
       try:
         # Fallback to Anthropic
         ai_helper = AI_Helper__Anthropic()
-        analysis_text = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
+        analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
+
+        # Track token usage
+        self._track_token_usage(usage, f"Phase 2 - Individual Grading ({student_id}) - Anthropic fallback")
 
         # Try to parse JSON from response
         json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
@@ -750,10 +772,15 @@ class TextSubmissionGrader(Grader):
     course_name = getattr(self, 'course_name', 'Unknown Course')
     assignment_name = getattr(self, 'assignment_name', 'Unknown Assignment')
 
+    # Add cost information if available
+    cost_text = ""
+    if self.total_cost > 0:
+      cost_text = f" (${self.total_cost:.4f} - {self.total_tokens} tokens)"
+
     # Build summary message with header
     lines = [
       f"*{course_name} - {assignment_name}*",
-      "Grading Complete",
+      f"Grading Complete{cost_text}",
       "",
       "*Summary:*",
       f"• {stats.get('total_students', 0)} students graded",
@@ -767,14 +794,17 @@ class TextSubmissionGrader(Grader):
       c_d_f_count = distribution.get("C", 0) + distribution.get("D", 0) + distribution.get("F", 0)
       lines.append(f"• Grades: {a_b_count} A/B, {c_d_f_count} C/D/F")
 
-    # Add support needs - show ALL students
+    # Add support needs - show ALL students with better formatting
     support_count = support.get("students_needing_support", 0)
     if support_count > 0:
       lines.append(f"\n*Office Hours Recommended ({support_count} students):*")
-      for student_info in support.get("support_details", []):  # No limit - show all
+      for i, student_info in enumerate(support.get("support_details", []), 1):  # No limit - show all
         student_name = student_info.get("student_name", "Unknown Student")
         reason = student_info.get("reason", "")  # No truncation
-        lines.append(f"• {student_name}: {reason}")
+        if reason.strip():
+          lines.append(f"{i}. `{student_name}` - {reason}")
+        else:
+          lines.append(f"{i}. `{student_name}` - *(No specific reason provided)*")
     else:
       lines.append("\n*Status:* All students engaging well")
 
@@ -794,6 +824,65 @@ class TextSubmissionGrader(Grader):
         lines.append(f"• {sentence}")  # Don't add period since we split on periods
 
     return "\n".join(lines)
+
+  def _track_token_usage(self, usage_info: Dict, operation: str) -> None:
+    """
+    Track token usage and calculate costs.
+
+    Args:
+        usage_info: Usage information from AI provider
+        operation: Description of the operation
+    """
+    provider = usage_info.get("provider", "unknown")
+    total_tokens = usage_info.get("total_tokens", 0)
+    prompt_tokens = usage_info.get("prompt_tokens", 0)
+    completion_tokens = usage_info.get("completion_tokens", 0)
+
+    # Calculate cost based on provider
+    cost = self._calculate_cost(usage_info)
+
+    # Track totals
+    self.total_tokens += total_tokens
+    self.total_cost += cost
+
+    # Store detailed usage
+    self.usage_details.append({
+      "operation": operation,
+      "provider": provider,
+      "total_tokens": total_tokens,
+      "prompt_tokens": prompt_tokens,
+      "completion_tokens": completion_tokens,
+      "cost": cost
+    })
+
+    log.debug(f"{operation}: {total_tokens} tokens (${cost:.4f}) via {provider}")
+
+  def _calculate_cost(self, usage_info: Dict) -> float:
+    """
+    Calculate cost based on provider pricing.
+
+    Args:
+        usage_info: Usage information with provider and token counts
+
+    Returns:
+        Estimated cost in USD
+    """
+    provider = usage_info.get("provider", "unknown")
+    prompt_tokens = usage_info.get("prompt_tokens", 0)
+    completion_tokens = usage_info.get("completion_tokens", 0)
+
+    if provider == "openai":
+      # GPT-4o pricing (approximate)
+      prompt_cost = (prompt_tokens / 1000) * 0.03  # $0.03 per 1K input tokens
+      completion_cost = (completion_tokens / 1000) * 0.06  # $0.06 per 1K output tokens
+      return prompt_cost + completion_cost
+    elif provider == "anthropic":
+      # Claude pricing (approximate)
+      prompt_cost = (prompt_tokens / 1000) * 0.03  # $0.03 per 1K input tokens
+      completion_cost = (completion_tokens / 1000) * 0.015  # $0.015 per 1K output tokens
+      return prompt_cost + completion_cost
+    else:
+      return 0.0
 
   def _print_report_to_console(self, report_data: Dict) -> None:
     """
