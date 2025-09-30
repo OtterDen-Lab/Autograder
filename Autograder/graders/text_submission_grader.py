@@ -167,6 +167,10 @@ class TextSubmissionGrader(Grader):
       log.error(f"TextSubmissionGrader requires Assignment_TextAssignment, got {type(assignment)}")
       return
 
+    # Store assignment and course info for Slack reporting
+    self.assignment_name = assignment.lms_assignment.name
+    self.course_name = kwargs.get('course_name', 'Unknown Course')
+
     assignment_name = assignment.lms_assignment.name
     submission_data = assignment.get_submission_data()
     submission_texts = assignment.get_all_submission_texts()
@@ -742,9 +746,14 @@ class TextSubmissionGrader(Grader):
     insights = report_data.get("aggregate_insights", {})
     topics = report_data.get("core_topics", [])
 
-    # Build summary message with better Slack formatting
+    # Get course and assignment info from the grader instance
+    course_name = getattr(self, 'course_name', 'Unknown Course')
+    assignment_name = getattr(self, 'assignment_name', 'Unknown Assignment')
+
+    # Build summary message with header
     lines = [
-      "*Learning Log Grading Complete*",
+      f"*{course_name} - {assignment_name}*",
+      "Grading Complete",
       "",
       "*Summary:*",
       f"• {stats.get('total_students', 0)} students graded",
