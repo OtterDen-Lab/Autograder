@@ -2,7 +2,7 @@ prod: True
 push: False
 
 courses:
-  - name: CST463
+  - name: CST334
     id: 29978
     grader: TextSubmissionGrader
     slack_channel: "C09HR2J5EBF"  # Your private channel ID
@@ -10,4 +10,4 @@ courses:
       kind: TextAssignment
     assignments:
       - id: 506883
-        record_retention: true
+        record_retention: false
