@@ -106,7 +106,7 @@ class Assignment(abc.ABC):
       if kwargs.get("push", False):
         log.info(f"Pushing feedback for: {submission}")
         # Scale the score for Canvas submission
-        scaled_score = self.scale_score_for_canvas(submission.feedback.score)
+        scaled_score = self.scale_score_for_canvas(submission.feedback.percentage_score)
         self.lms_assignment.push_feedback(
           score=scaled_score,
           comments=submission.feedback.comments,
@@ -154,20 +154,23 @@ class Assignment(abc.ABC):
     except Exception as e:
       log.error(f"Failed to save feedback record for student {student.name}: {e}")
 
-  def scale_score_for_canvas(self, raw_score: float) -> float:
+  def scale_score_for_canvas(self, percentage_score: float) -> float:
     """
-    Scale a raw score to match Canvas assignment points.
+    Scale a percentage score to match Canvas assignment points.
+
+    This method assumes ALL scores coming from graders are percentages (0-100+).
+    It scales them to the Canvas assignment's point value.
 
     Prioritizes:
     1. Explicit canvas_points parameter from YAML config
     2. Canvas assignment's points_possible if available
-    3. Raw score as-is if no scaling info available
+    3. Percentage score as-is if no scaling info available (fallback)
 
     Args:
-        raw_score: The raw score from the grader
+        percentage_score: The percentage score from the grader (0-100+, where 100 = full credit)
 
     Returns:
-        Scaled score for Canvas submission
+        Scaled score for Canvas submission in Canvas points
     """
     try:
       # Determine Canvas points to use (in priority order)
@@ -183,31 +186,22 @@ class Assignment(abc.ABC):
         canvas_points_possible = float(self.lms_assignment.points_possible)
         log.info(f"Using Canvas assignment points_possible: {canvas_points_possible}")
 
-      # Convert to Canvas points or use raw score as fallback
+      # Scale percentage to Canvas points
       if canvas_points_possible is not None:
-        # If raw_score is already on the Canvas point scale, use directly
-        if raw_score <= canvas_points_possible:
-          log.info(f"Using raw score directly: {raw_score:.1f}/{canvas_points_possible} Canvas points")
-          return raw_score
-        # If raw_score looks like a percentage (typically 0-100), convert to Canvas points
-        elif raw_score <= 100:
-          percentage = raw_score / 100.0
-          scaled_score = percentage * canvas_points_possible
-          log.info(f"Scaled score {raw_score:.1f}% to {scaled_score:.1f}/{canvas_points_possible} Canvas points")
-          return scaled_score
-        else:
-          # If raw_score is larger than 100, assume it's a point value and scale proportionally
-          scaled_score = (raw_score / 100.0) * canvas_points_possible
-          log.info(f"Scaled score {raw_score:.1f} points to {scaled_score:.1f}/{canvas_points_possible} Canvas points")
-          return scaled_score
+        # Convert percentage to decimal and multiply by Canvas points
+        # Example: 101% on 80-point assignment = 1.01 * 80 = 80.8 points
+        percentage_decimal = percentage_score / 100.0
+        scaled_score = percentage_decimal * canvas_points_possible
+        log.info(f"Scaled score {percentage_score:.2f}% to {scaled_score:.2f}/{canvas_points_possible} Canvas points")
+        return scaled_score
       else:
-        # Fallback to raw score if no Canvas points info available
-        log.info(f"Using raw score: {raw_score:.1f} (no Canvas points info available)")
-        return raw_score
+        # Fallback: no Canvas points info available, pass through percentage as-is
+        log.info(f"Using percentage score as-is: {percentage_score:.2f} (no Canvas points info available)")
+        return percentage_score
 
     except Exception as e:
-      log.warning(f"Failed to scale score for Canvas: {e}. Using raw score: {raw_score}")
-      return raw_score
+      log.warning(f"Failed to scale score for Canvas: {e}. Using percentage score as-is: {percentage_score}")
+      return percentage_score
 
 
 @AssignmentRegistry.register("ProgrammingAssignment")

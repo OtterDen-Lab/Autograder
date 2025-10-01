@@ -307,26 +307,31 @@ class Grader__template_grader(Grader__docker):
   
   def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
     rc, stdout, stderr = execution_results
-    
+
     # Try to read the feedback.yaml file (note: different from results.yaml in parent)
+    # Expected format:
+    #   grade: <percentage 0-100+>  # Percentage score where 100 = full credit
+    #   comments: <feedback text>
+    #   logs: <optional execution logs>
     feedback_content = self.read_file_from_container("/tmp/feedback.yaml")
-    
+
     if feedback_content:
       try:
         feedback_data = yaml.safe_load(feedback_content)
         if isinstance(feedback_data, dict):
+          # Grade should be a percentage (0-100+)
           grade = float(feedback_data.get('grade', 0.0))
           comments = feedback_data.get('comments', 'No comments provided')
           logs = feedback_data.get('logs', '')
-          
+
           full_feedback = comments
           if logs and logs.strip():
             full_feedback += f"\n\n--- Execution Logs ---\n{logs}"
-          
-          return Feedback(score=grade, comments=full_feedback)
+
+          return Feedback(percentage_score=grade, comments=full_feedback)
       except Exception as e:
         log.error(f"Failed to parse feedback YAML: {e}")
-    
+
     # Fallback to parent class behavior
     return super().score_grading(execution_results, *args, **kwargs)
   
@@ -438,7 +443,7 @@ class Grader_stepbystep(Grader__docker):
       num_matches += 1
     
     return Feedback(
-      score=(100.0 * num_matches / len(golden_results["stdout"])),
+      percentage_score=(100.0 * num_matches / len(golden_results["stdout"])),
       comments=f"Matched {num_matches} out of {len(golden_results['stdout'])}"
     )
   

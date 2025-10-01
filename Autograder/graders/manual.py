@@ -24,11 +24,17 @@ log = logging.getLogger(__name__)
 class Grader__Manual(FileBasedGrader):
   """
   Grader for manual grading workflows.
-  
+
   Creates CSV files for human graders to fill out, then loads the results
   back into the grading system.
+
+  IMPORTANT: The "total" column in the CSV should contain percentage scores (0-100+),
+  where 100 = full credit. These will be automatically scaled to Canvas points.
+  For example, if an assignment is worth 80 points in Canvas:
+    - 100 in CSV = 80 Canvas points
+    - 101 in CSV = 80.8 Canvas points (extra credit)
   """
-  
+
   CSV_NAME = "grades.intermediate.csv"
   
   def is_grading_complete(self):
@@ -122,7 +128,7 @@ class Grader__Manual(FileBasedGrader):
         
       # todo: get PDFs and comments.
       submission.feedback = Feedback(
-        score=row["total"],
+        percentage_score=row["total"],
         comments="(Please see attached PDF)",
         attachments=[]
       )
