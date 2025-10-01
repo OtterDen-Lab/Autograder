@@ -711,12 +711,13 @@ class TextSubmissionGrader(Grader):
     for submission in submissions:
       result = results_by_student.get(submission.student.user_id)
       if result:
-        # Use pre-calculated total grade
+        # Use pre-calculated total grade (out of 10) and convert to percentage
         total_grade = result.get('total_grade', 0)
+        percentage_score = (total_grade / 10.0) * 100.0
 
         # Create detailed rubric feedback
         feedback_text = self._generate_rubric_feedback(result)
-        submission.feedback = Feedback(total_grade, feedback_text)
+        submission.feedback = Feedback(percentage_score, feedback_text)
       else:
         # Fallback for missing results
         submission.feedback = Feedback(0.0, "Error: Could not analyze submission")

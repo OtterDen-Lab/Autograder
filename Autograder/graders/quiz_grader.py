@@ -83,8 +83,7 @@ class QuizGrader(Grader):
         results['score_breakdown'] = {
             'points_earned': total_points_earned,
             'points_possible': total_points_possible,
-            'percentage': percentage,
-            'grade_score': total_points_earned  # Use points for Canvas grade
+            'percentage': percentage
         }
 
         log.debug(f"Quiz analysis completed: {results['responses_analyzed']} responses analyzed, "
@@ -102,7 +101,6 @@ class QuizGrader(Grader):
         score_breakdown = execution_results['score_breakdown']
         response_summary = execution_results['response_summary']
 
-        score = score_breakdown['grade_score']
         percentage = score_breakdown['percentage']
 
         # Generate detailed feedback comments
@@ -152,7 +150,7 @@ class QuizGrader(Grader):
         feedback_text = "\n".join(comments_lines)
 
         return Feedback(
-            score=score,
+            percentage_score=percentage,
             comments=feedback_text,
             attachments=[]  # Quiz grading typically doesn't include file attachments
         )
