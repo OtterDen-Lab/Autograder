@@ -330,11 +330,43 @@ class Grader__template_grader(Grader__docker):
 
           return Feedback(percentage_score=grade, comments=full_feedback)
       except Exception as e:
-        log.error(f"Failed to parse feedback YAML: {e}")
+        error_msg = f"Failed to parse feedback YAML: {e}"
+        log.error(error_msg)
+        self._report_grading_error(error_msg, execution_results, kwargs.get('submission'))
+        return Feedback(
+          percentage_score=0.0,
+          comments="Error during grading. If this persists, please let your professor know."
+        )
 
-    # Fallback to parent class behavior
-    return super().score_grading(execution_results, *args, **kwargs)
+    # Fallback: feedback.yaml not found or empty
+    error_msg = f"Feedback file not found or empty. RC: {rc}, stdout length: {len(stdout)}, stderr length: {len(stderr)}"
+    log.error(error_msg)
+    self._report_grading_error(error_msg, execution_results, kwargs.get('submission'))
+    return Feedback(
+      percentage_score=0.0,
+      comments="Error during grading. If this persists, please let your professor know."
+    )
   
+  def _report_grading_error(self, error_msg: str, execution_results: Tuple, submission=None) -> None:
+    """
+    Hook for reporting grading errors (e.g., via Slack, email, etc.).
+
+    Override this method to implement custom error reporting behavior.
+    Default implementation just logs the error.
+
+    Args:
+        error_msg: Description of the error
+        execution_results: Tuple of (rc, stdout, stderr) from execution
+        submission: The submission object being graded (if available)
+    """
+    log.error(f"Grading error hook called: {error_msg}")
+    if submission:
+      log.error(f"  Submission: {submission.student.name if hasattr(submission, 'student') else 'Unknown'}")
+    rc, stdout, stderr = execution_results
+    log.error(f"  Return code: {rc}")
+    log.error(f"  Stdout (first 500 chars): {stdout[:500]}")
+    log.error(f"  Stderr (first 500 chars): {stderr[:500]}")
+
   def execute_grading(self, *args, **kwargs) -> Tuple[int, str, str]:
     # Execute the grading script
     rc, stdout, stderr = self.execute_command_in_container(
