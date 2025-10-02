@@ -597,7 +597,7 @@ class Assignment__Exam(Assignment):
     output_bytes.seek(0)
     return output_bytes
   
-  def check_student_names(self, submissions: List[Submission__pdf], threshold=0.8):
+  def check_student_names(self, submissions: List[Submission__pdf], threshold=0.95):
     
     id_width = max(map(lambda s: len(str(s.student.user_id)), submissions))
     local_width = max(map(lambda s: len(s.student.name), submissions))
