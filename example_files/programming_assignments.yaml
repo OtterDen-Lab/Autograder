@@ -6,6 +6,7 @@ courses:
   - name: CST334
     id: 29978
     # Course-level defaults
+    slack_channel: C09HR2J5EBF
     grader: template-grader
     assignment_defaults:
       kind: ProgrammingAssignment
@@ -34,6 +35,7 @@ courses:
 
   - name: CST463
     id: 29740
+    slack_channel: C09HR2J5EBF
     grader: template-grader
     assignment_defaults:
       kind: ProgrammingAssignment

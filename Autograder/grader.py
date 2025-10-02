@@ -37,6 +37,12 @@ class Grader(abc.ABC):
                                  kwargs.get('assignment_name') or
                                  'unknown')
 
+    # Store Slack configuration from kwargs (for error reporting)
+    self.slack_channel = kwargs.get('slack_channel')
+    self.slack_webhook = kwargs.get('slack_webhook')
+    self.slack_token = kwargs.get('slack_token')
+    self.report_errors = kwargs.get('report_errors', True)
+
   def grade_assignment(self, assignment: Assignment, *args, **kwargs) -> None:
     """
     Takes an assignment and walks through its submissions and grades each.
