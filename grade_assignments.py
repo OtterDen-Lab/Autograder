@@ -111,6 +111,9 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     assignment_grading_kwargs = merged_assignment.get('kwargs', {})
     assignment_grading_kwargs["course_name"] = assignment_data.get("course_name")
     assignment_grading_kwargs["slack_channel"] = assignment_data.get("slack_channel")
+    # Pass prefer_anthropic if specified at assignment level
+    if 'prefer_anthropic' in merged_assignment:
+      assignment_grading_kwargs["prefer_anthropic"] = merged_assignment.get("prefer_anthropic")
     do_regrade = args.do_regrade
 
     # Get the grader from the registry
