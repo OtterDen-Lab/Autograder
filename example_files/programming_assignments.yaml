@@ -6,6 +6,7 @@ courses:
   - name: CST334
     id: 29978
     # Course-level defaults
+    slack_channel: C09HR2J5EBF
     grader: template-grader
     assignment_defaults:
       kind: ProgrammingAssignment
@@ -21,29 +22,29 @@ courses:
     assignments:
       - repo_path: PA1
         id: 506889
-      - repo_path: PA2
-        id: 506890
-      - repo_path: PA3
-        id: 506891
-      - repo_path: PA4
-        id: 506892
-      - repo_path: PA5
-        id: 506893
-      - repo_path: PA6
-        id: 506894
-
-  - name: CST463
-    id: 29740
-    grader: template-grader
-    assignment_defaults:
-      kind: ProgrammingAssignment
-      kwargs:
-        source_repo: "https://github.com/CSUMB-SCD-instructors/CST463"
-        golden_repo: "https://github.com/CSUMB-SCD-instructors/CST463-golden"
-    assignments:
-      - repo_path: PA1
-        id: 527876
-        record_retention: true
-      - repo_path: PA2
-        id: 529948
-        record_retention: true
+#      - repo_path: PA2
+#        id: 506890
+#      - repo_path: PA3
+#        id: 506891
+#      - repo_path: PA4
+#        id: 506892
+#      - repo_path: PA5
+#        id: 506893
+#      - repo_path: PA6
+#        id: 506894
+#
+#  - name: CST463
+#    id: 29740
+#    grader: template-grader
+#    assignment_defaults:
+#      kind: ProgrammingAssignment
+#      kwargs:
+#        source_repo: "https://github.com/CSUMB-SCD-instructors/CST463"
+#        golden_repo: "https://github.com/CSUMB-SCD-instructors/CST463-golden"
+#    assignments:
+#      - repo_path: PA1
+#        id: 527876
+#        record_retention: true
+#      - repo_path: PA2
+#        id: 529948
+#        record_retention: true
