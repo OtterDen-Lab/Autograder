@@ -1,5 +1,5 @@
 prod: True
-push: False
+push: True
 
 courses:
 
