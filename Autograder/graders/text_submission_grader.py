@@ -124,6 +124,8 @@ Return only valid JSON.
 DEFAULT_MAX_TOPICS = 5
 DEFAULT_WORD_THRESHOLD = 250
 DEFAULT_RUBRIC_TOTAL = 10
+DEFAULT_MAX_WORDS = 100
+DEFAULT_MAX_CHARACTERS = 7500
 
 # Rubric component defaults
 COMPLETION_POINTS = 4
@@ -157,6 +159,41 @@ class TextSubmissionGrader(Grader):
     """
     return isinstance(submission, TextSubmission)
 
+  def _truncate_submission_text(self, text: str, max_words: int = DEFAULT_MAX_WORDS,
+                                max_chars: int = DEFAULT_MAX_CHARACTERS) -> tuple[str, bool]:
+    """
+    Truncate submission text to max words or max characters, whichever is shorter.
+
+    Args:
+        text: The submission text to truncate
+        max_words: Maximum number of words (default: 1000)
+        max_chars: Maximum number of characters (default: 7500)
+
+    Returns:
+        Tuple of (truncated_text, was_truncated)
+    """
+    if not text:
+      return text, False
+
+    # Split into words
+    words = text.split()
+
+    # Check word limit
+    if len(words) > max_words:
+      truncated = ' '.join(words[:max_words])
+      return truncated, True
+
+    # Check character limit
+    if len(text) > max_chars:
+      truncated = text[:max_chars]
+      # Try to truncate at word boundary
+      last_space = truncated.rfind(' ')
+      if last_space > max_chars * 0.9:  # Only if we're not losing too much
+        truncated = truncated[:last_space]
+      return truncated, True
+
+    return text, False
+
   def grade_assignment(self, assignment: Assignment, *args, **kwargs) -> None:
     """
     Override the main grading flow to implement 3-phase approach.
@@ -188,13 +225,33 @@ class TextSubmissionGrader(Grader):
       log.info(f"No submissions to grade for '{assignment_name}' - assignment may be unlocked")
       return
 
+    # Truncate all submission texts before processing
+    truncated_texts = []
+    truncation_count = 0
+    for text in submission_texts:
+      truncated, was_truncated = self._truncate_submission_text(text)
+      truncated_texts.append(truncated)
+      if was_truncated:
+        truncation_count += 1
+
+    if truncation_count > 0:
+      log.info(f"Truncated {truncation_count} submission(s) exceeding {DEFAULT_MAX_WORDS} words or {DEFAULT_MAX_CHARACTERS} characters")
+
+    # Also truncate in submission_data for phase 2
+    for submission_info in submission_data:
+      original_text = submission_info.get('text', '')
+      truncated, was_truncated = self._truncate_submission_text(original_text)
+      if was_truncated:
+        submission_info['text'] = truncated
+        submission_info['was_truncated'] = True
+
     log.info(f"Starting 3-phase grading for '{assignment_name}' with {len(submission_data)} submissions")
 
     # Phase 1: Aggregate Analysis
     log.info("="*60)
     log.info("PHASE 1: AGGREGATE ANALYSIS")
     log.info("="*60)
-    self.aggregate_results = self.phase_1_aggregate_analysis(submission_texts, assignment_name)
+    self.aggregate_results = self.phase_1_aggregate_analysis(truncated_texts, assignment_name)
 
     # Phase 2: Individual Grading
     log.info("="*60)
