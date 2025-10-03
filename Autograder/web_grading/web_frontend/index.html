@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Grading Interface</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Web Grading Interface</h1>
+            <div id="session-info"></div>
+        </header>
+
+        <main>
+            <!-- Session Selection/Creation -->
+            <section id="session-section" class="section active">
+                <h2>Start Grading Session</h2>
+
+                <!-- Existing Sessions -->
+                <div id="existing-sessions">
+                    <h3>Recent Sessions</h3>
+                    <div id="session-list"></div>
+                </div>
+
+                <!-- New Session Form -->
+                <div id="new-session-form" style="display: none;">
+                    <h3>Create New Session</h3>
+                    <form id="session-form">
+                        <label>
+                            Course ID:
+                            <input type="number" id="course-id-input" required>
+                            <button type="button" id="fetch-course-btn" class="btn btn-small">Fetch Info</button>
+                        </label>
+                        <div id="course-info" class="info-box"></div>
+
+                        <label>
+                            Assignment ID:
+                            <input type="number" id="assignment-id-input" required>
+                            <button type="button" id="fetch-assignment-btn" class="btn btn-small">Fetch Info</button>
+                        </label>
+                        <div id="assignment-info" class="info-box"></div>
+
+                        <label>
+                            Assignment Name:
+                            <input type="text" id="assignment-name-input" required>
+                        </label>
+
+                        <label>
+                            Course Name (optional):
+                            <input type="text" id="course-name-input">
+                        </label>
+
+                        <label>
+                            Canvas Points Override (optional):
+                            <input type="number" id="canvas-points-input" step="0.5" min="0">
+                        </label>
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">Create Session</button>
+                            <button type="button" id="cancel-session-btn" class="btn">Cancel</button>
+                        </div>
+                    </form>
+                </div>
+
+                <button id="new-session-btn" class="btn btn-primary">+ Create New Session</button>
+            </section>
+
+            <!-- Upload Section -->
+            <section id="upload-section" class="section">
+                <h2>Upload Exams</h2>
+                <div id="upload-area" class="upload-area">
+                    <p>Drag and drop exam files here, or click to select</p>
+                    <input type="file" id="file-input" multiple accept=".pdf,.zip">
+                </div>
+                <div id="upload-progress" class="progress-bar"></div>
+                <div id="upload-status"></div>
+            </section>
+
+            <!-- Name Matching Section -->
+            <section id="matching-section" class="section">
+                <h2>Name Matching</h2>
+                <div id="unmatched-list"></div>
+            </section>
+
+            <!-- Grading Section -->
+            <section id="grading-section" class="section">
+                <h2>Grade Problems</h2>
+
+                <div class="grading-controls">
+                    <label>
+                        Problem:
+                        <select id="problem-select"></select>
+                    </label>
+                    <div class="progress-info">
+                        <span id="grading-progress">0 / 0</span>
+                    </div>
+                </div>
+
+                <div class="problem-container">
+                    <img id="problem-image" alt="Problem to grade">
+                </div>
+
+                <div class="grading-form">
+                    <label>
+                        Score:
+                        <input type="number" id="score-input" min="0" step="0.5">
+                    </label>
+                    <label>
+                        Feedback:
+                        <textarea id="feedback-input" rows="4"></textarea>
+                    </label>
+                    <button id="submit-grade-btn" class="btn btn-primary">Submit Grade</button>
+                    <button id="next-problem-btn" class="btn">Next Problem</button>
+                </div>
+            </section>
+
+            <!-- Statistics Section -->
+            <section id="stats-section" class="section">
+                <h2>Grading Statistics</h2>
+                <div id="stats-container"></div>
+                <button id="finalize-btn" class="btn btn-success">Finalize & Upload to Canvas</button>
+            </section>
+        </main>
+    </div>
+
+    <script src="/js/app.js"></script>
+    <script src="/js/grading.js"></script>
+</body>
+</html>
