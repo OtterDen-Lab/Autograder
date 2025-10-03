@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 4
 
 
 def get_db_path() -> Path:
@@ -107,6 +107,8 @@ def create_schema(cursor):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id INTEGER NOT NULL,
             document_id INTEGER NOT NULL,
+            approximate_name TEXT,
+            name_image_data TEXT,
             student_name TEXT,
             display_name TEXT,
             canvas_user_id INTEGER,
@@ -179,6 +181,14 @@ def run_migrations(cursor, from_version: int):
         migrate_to_v2(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (2)")
 
+    if from_version < 3:
+        migrate_to_v3(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (3)")
+
+    if from_version < 4:
+        migrate_to_v4(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (4)")
+
 
 def migrate_to_v2(cursor):
     """Add progress tracking columns to grading_sessions"""
@@ -188,6 +198,20 @@ def migrate_to_v2(cursor):
     cursor.execute("ALTER TABLE grading_sessions ADD COLUMN processed_exams INTEGER DEFAULT 0")
     cursor.execute("ALTER TABLE grading_sessions ADD COLUMN matched_exams INTEGER DEFAULT 0")
     cursor.execute("ALTER TABLE grading_sessions ADD COLUMN processing_message TEXT")
+
+
+def migrate_to_v3(cursor):
+    """Add approximate_name column to submissions"""
+    log.info("Migrating to schema version 3: adding approximate_name to submissions")
+
+    cursor.execute("ALTER TABLE submissions ADD COLUMN approximate_name TEXT")
+
+
+def migrate_to_v4(cursor):
+    """Add name_image_data column to submissions"""
+    log.info("Migrating to schema version 4: adding name_image_data to submissions")
+
+    cursor.execute("ALTER TABLE submissions ADD COLUMN name_image_data TEXT")
 
 
 def update_problem_stats(session_id: int):

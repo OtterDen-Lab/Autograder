@@ -150,11 +150,13 @@ async def process_exam_files(session_id: int, file_paths: List[Path]):
                 # Insert submission
                 cursor.execute("""
                     INSERT INTO submissions
-                    (session_id, document_id, student_name, canvas_user_id, page_mappings)
-                    VALUES (?, ?, ?, ?, ?)
+                    (session_id, document_id, approximate_name, name_image_data, student_name, canvas_user_id, page_mappings)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (
                     session_id,
                     submission["document_id"],
+                    submission.get("approximate_name"),
+                    submission.get("name_image_data"),
                     submission["student_name"],
                     submission["canvas_user_id"],
                     json.dumps(submission["page_mappings"])

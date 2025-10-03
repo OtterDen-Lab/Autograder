@@ -59,6 +59,8 @@ class SubmissionResponse(BaseModel):
     id: int
     session_id: int
     document_id: int
+    approximate_name: Optional[str]
+    name_image_data: Optional[str]
     student_name: Optional[str]
     display_name: Optional[str]
     canvas_user_id: Optional[int]

@@ -114,7 +114,7 @@ class ExamProcessor:
             log.info(f"Processing exam {document_id + 1}/{len(input_files)}: {pdf_path.name}")
 
             # Extract name
-            approximate_name = self.extract_name(
+            approximate_name, name_image = self.extract_name(
                 pdf_path,
                 use_ai=use_ai,
                 student_names=[s["name"] for s in unmatched_students]
@@ -163,6 +163,7 @@ class ExamProcessor:
             submission = {
                 "document_id": document_id,
                 "approximate_name": approximate_name,
+                "name_image_data": name_image,
                 "student_name": matched_student["name"] if matched_student else None,
                 "canvas_user_id": matched_student["user_id"] if matched_student else None,
                 "page_mappings": page_mappings_by_submission[document_id],
@@ -190,10 +191,14 @@ class ExamProcessor:
         pdf_path: Path,
         use_ai: bool = True,
         student_names: Optional[List[str]] = None
-    ) -> str:
-        """Extract student name from PDF using AI."""
+    ) -> tuple[str, str]:
+        """Extract student name from PDF using AI.
+
+        Returns:
+            Tuple of (extracted_name, name_image_base64)
+        """
         if not use_ai:
-            return ""
+            return "", ""
 
         try:
             document = fitz.open(str(pdf_path))
@@ -208,10 +213,10 @@ class ExamProcessor:
                 query += "\n\nPossible names (use as guide):\n - " + "\n - ".join(sorted(student_names))
 
             response, _ = ai_helper.AI_Helper__Anthropic().query_ai(query, attachments=[("png", base64_str)])
-            return response.strip()
+            return response.strip(), base64_str
         except Exception as e:
             log.error(f"Name extraction failed: {e}")
-            return ""
+            return "", ""
 
     def redact_and_split(
         self,
