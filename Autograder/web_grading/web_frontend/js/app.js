@@ -153,7 +153,7 @@ async function fetchCourseInfo() {
         if (response.ok) {
             const course = await response.json();
             document.getElementById('course-name-input').value = course.name;
-            const env = course.canvas_url.includes('test') ? ' (DEV)' : ' (PROD)';
+            const env = course.environment ? ` (${course.environment})` : '';
             infoBox.textContent = `✓ Found: ${course.name}${env}`;
             infoBox.className = 'info-box success';
         } else {
@@ -190,7 +190,7 @@ async function fetchAssignmentInfo() {
             if (assignment.points_possible) {
                 document.getElementById('canvas-points-input').value = assignment.points_possible;
             }
-            const env = assignment.canvas_url.includes('test') ? ' (DEV)' : ' (PROD)';
+            const env = assignment.environment ? ` (${assignment.environment})` : '';
             infoBox.textContent = `✓ Found: ${assignment.name} (${assignment.points_possible} points)${env}`;
             infoBox.className = 'info-box success';
         } else {
