@@ -80,8 +80,34 @@ function navigateToSection(sectionId) {
 
 // Setup event listeners
 function setupEventListeners() {
-    // New session button
-    document.getElementById('new-session-btn').onclick = createNewSession;
+    // New session button - toggle form
+    document.getElementById('new-session-btn').onclick = () => {
+        const form = document.getElementById('new-session-form');
+        const btn = document.getElementById('new-session-btn');
+        if (form.style.display === 'none') {
+            form.style.display = 'block';
+            btn.textContent = '− Hide Form';
+        } else {
+            form.style.display = 'none';
+            btn.textContent = '+ Create New Session';
+        }
+    };
+
+    // Session form submission
+    document.getElementById('session-form').onsubmit = createNewSession;
+
+    // Cancel button
+    document.getElementById('cancel-session-btn').onclick = () => {
+        document.getElementById('new-session-form').style.display = 'none';
+        document.getElementById('new-session-btn').textContent = '+ Create New Session';
+        document.getElementById('session-form').reset();
+    };
+
+    // Fetch course info button
+    document.getElementById('fetch-course-btn').onclick = fetchCourseInfo;
+
+    // Fetch assignment info button
+    document.getElementById('fetch-assignment-btn').onclick = fetchAssignmentInfo;
 
     // Upload area
     const uploadArea = document.getElementById('upload-area');
@@ -108,26 +134,106 @@ function setupEventListeners() {
     fileInput.onchange = uploadFiles;
 }
 
-// Create new session
-async function createNewSession() {
-    const courseId = prompt('Enter Course ID:');
-    const assignmentId = prompt('Enter Assignment ID:');
-    const assignmentName = prompt('Enter Assignment Name:');
+// Fetch course info from Canvas
+async function fetchCourseInfo() {
+    const courseId = document.getElementById('course-id-input').value;
+    const infoBox = document.getElementById('course-info');
 
-    if (!courseId || !assignmentId || !assignmentName) return;
+    if (!courseId) {
+        infoBox.textContent = 'Please enter a course ID';
+        infoBox.className = 'info-box error';
+        return;
+    }
+
+    infoBox.textContent = 'Fetching course info...';
+    infoBox.className = 'info-box';
+
+    try {
+        const response = await fetch(`${API_BASE}/canvas/courses/${courseId}`);
+        if (response.ok) {
+            const course = await response.json();
+            document.getElementById('course-name-input').value = course.name;
+            const env = course.canvas_url.includes('test') ? ' (DEV)' : ' (PROD)';
+            infoBox.textContent = `✓ Found: ${course.name}${env}`;
+            infoBox.className = 'info-box success';
+        } else {
+            infoBox.textContent = 'Course not found';
+            infoBox.className = 'info-box error';
+        }
+    } catch (error) {
+        console.error('Failed to fetch course:', error);
+        infoBox.textContent = 'Failed to fetch course info (API not implemented yet)';
+        infoBox.className = 'info-box error';
+    }
+}
+
+// Fetch assignment info from Canvas
+async function fetchAssignmentInfo() {
+    const courseId = document.getElementById('course-id-input').value;
+    const assignmentId = document.getElementById('assignment-id-input').value;
+    const infoBox = document.getElementById('assignment-info');
+
+    if (!courseId || !assignmentId) {
+        infoBox.textContent = 'Please enter both course ID and assignment ID';
+        infoBox.className = 'info-box error';
+        return;
+    }
+
+    infoBox.textContent = 'Fetching assignment info...';
+    infoBox.className = 'info-box';
+
+    try {
+        const response = await fetch(`${API_BASE}/canvas/courses/${courseId}/assignments/${assignmentId}`);
+        if (response.ok) {
+            const assignment = await response.json();
+            document.getElementById('assignment-name-input').value = assignment.name;
+            if (assignment.points_possible) {
+                document.getElementById('canvas-points-input').value = assignment.points_possible;
+            }
+            const env = assignment.canvas_url.includes('test') ? ' (DEV)' : ' (PROD)';
+            infoBox.textContent = `✓ Found: ${assignment.name} (${assignment.points_possible} points)${env}`;
+            infoBox.className = 'info-box success';
+        } else {
+            infoBox.textContent = 'Assignment not found';
+            infoBox.className = 'info-box error';
+        }
+    } catch (error) {
+        console.error('Failed to fetch assignment:', error);
+        infoBox.textContent = 'Failed to fetch assignment info (API not implemented yet)';
+        infoBox.className = 'info-box error';
+    }
+}
+
+// Create new session
+async function createNewSession(e) {
+    e.preventDefault();
+
+    const courseId = parseInt(document.getElementById('course-id-input').value);
+    const assignmentId = parseInt(document.getElementById('assignment-id-input').value);
+    const assignmentName = document.getElementById('assignment-name-input').value;
+    const courseName = document.getElementById('course-name-input').value;
+    const canvasPoints = parseFloat(document.getElementById('canvas-points-input').value) || null;
 
     try {
         const response = await fetch(`${API_BASE}/sessions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                course_id: parseInt(courseId),
-                assignment_id: parseInt(assignmentId),
-                assignment_name: assignmentName
+                course_id: courseId,
+                assignment_id: assignmentId,
+                assignment_name: assignmentName,
+                course_name: courseName || null,
+                canvas_points: canvasPoints
             })
         });
 
         currentSession = await response.json();
+
+        // Hide form and reset
+        document.getElementById('new-session-form').style.display = 'none';
+        document.getElementById('new-session-btn').textContent = '+ Create New Session';
+        document.getElementById('session-form').reset();
+
         updateSessionInfo();
         navigateToSection('upload-section');
     } catch (error) {

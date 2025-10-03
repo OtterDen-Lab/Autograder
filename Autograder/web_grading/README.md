@@ -48,12 +48,24 @@ python -m web_api.main
 http://localhost:8000
 ```
 
+**Note:** The web interface uses the same `~/.env` file as the main grading flow. It defaults to non-prod Canvas credentials (`CANVAS_API_KEY` and `CANVAS_API_URL`) for safety during development.
+
+**Switching to Production Canvas:**
+To use production Canvas, add this to your `~/.env`:
+```bash
+USE_PROD_CANVAS=true
+CANVAS_API_KEY_PROD=your_prod_key
+CANVAS_API_URL_PROD=https://csumb.instructure.com
+```
+
 ## Usage
 
 ### 1. Create Session
 
+- Click "+ Create New Session"
 - Enter Canvas course ID and assignment ID
-- Provide assignment name
+- **Optional**: Click "Fetch Info" buttons to auto-fill course/assignment details from Canvas (uses dev/test Canvas by default)
+- Or manually enter assignment name and course name
 
 ### 2. Upload Exams
 

@@ -247,6 +247,92 @@ header h1 {
     background-color: var(--gray-200);
 }
 
+/* Session Form */
+#new-session-form {
+    background-color: var(--gray-100);
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+#new-session-form h3 {
+    margin-bottom: 15px;
+}
+
+#session-form label {
+    display: block;
+    margin-bottom: 15px;
+    font-weight: 500;
+}
+
+#session-form label input {
+    display: block;
+    width: 100%;
+    margin-top: 5px;
+    padding: 10px;
+    border: 1px solid var(--gray-200);
+    border-radius: 6px;
+    font-size: 16px;
+}
+
+#session-form label input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+#session-form label {
+    position: relative;
+}
+
+#session-form .btn-small {
+    position: absolute;
+    right: 10px;
+    top: 35px;
+    padding: 6px 12px;
+    font-size: 14px;
+    background-color: var(--gray-700);
+    color: white;
+}
+
+#session-form .btn-small:hover {
+    background-color: var(--gray-900);
+}
+
+.info-box {
+    margin-top: 5px;
+    margin-bottom: 10px;
+    padding: 10px;
+    background-color: white;
+    border-radius: 4px;
+    font-size: 14px;
+    color: var(--gray-700);
+    min-height: 20px;
+}
+
+.info-box.success {
+    background-color: #d1fae5;
+    color: #065f46;
+}
+
+.info-box.error {
+    background-color: #fee2e2;
+    color: #991b1b;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+#existing-sessions h3 {
+    font-size: 16px;
+    margin-bottom: 10px;
+    color: var(--gray-700);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .container {

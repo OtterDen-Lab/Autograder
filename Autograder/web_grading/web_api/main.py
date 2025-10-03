@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import __version__
 from .database import init_database
-from .routes import sessions, problems, uploads
+from .routes import sessions, problems, uploads, canvas
 
 
 @asynccontextmanager
@@ -45,6 +45,7 @@ app.add_middleware(
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(problems.router, prefix="/api/problems", tags=["problems"])
 app.include_router(uploads.router, prefix="/api/uploads", tags=["uploads"])
+app.include_router(canvas.router, prefix="/api/canvas", tags=["canvas"])
 
 # Mount static files (frontend)
 frontend_path = Path(__file__).parent.parent / "web_frontend"
