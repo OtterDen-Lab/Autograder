@@ -55,11 +55,17 @@ async function selectSession(sessionId) {
 // Update session info in header
 function updateSessionInfo() {
     const info = document.getElementById('session-info');
+    const homeBtn = document.getElementById('home-btn');
+
     if (currentSession) {
         info.innerHTML = `
             ${currentSession.assignment_name} - ${currentSession.course_name || `Course ${currentSession.course_id}`}
             <span style="margin-left: 20px;">Status: ${currentSession.status}</span>
         `;
+        homeBtn.style.display = 'block';  // Show home button when session is active
+    } else {
+        info.innerHTML = '';
+        homeBtn.style.display = 'none';
     }
 }
 
@@ -85,6 +91,15 @@ function navigateToSection(sectionId) {
 
 // Setup event listeners
 function setupEventListeners() {
+    // Home button - go back to session selection
+    document.getElementById('home-btn').onclick = () => {
+        currentSession = null;
+        document.getElementById('session-info').innerHTML = '';
+        document.getElementById('home-btn').style.display = 'none';
+        navigateToSection('session-section');
+        loadSessions();
+    };
+
     // New session button - toggle form
     document.getElementById('new-session-btn').onclick = () => {
         const form = document.getElementById('new-session-form');

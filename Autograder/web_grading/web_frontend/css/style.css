@@ -37,6 +37,16 @@ header {
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header-main {
+    flex: 1;
+}
+
 header h1 {
     color: var(--primary-color);
     margin-bottom: 10px;
@@ -45,6 +55,15 @@ header h1 {
 #session-info {
     color: var(--gray-700);
     font-size: 14px;
+}
+
+.btn-secondary {
+    background-color: var(--gray-700);
+    color: white;
+}
+
+.btn-secondary:hover {
+    background-color: var(--gray-900);
 }
 
 .section {
