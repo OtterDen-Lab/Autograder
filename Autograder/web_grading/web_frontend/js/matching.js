@@ -160,13 +160,17 @@ async function matchSubmission(submissionId) {
     }
 }
 
-// Auto-load matching data when navigating to matching section
+// Auto-load data when navigating to sections
 document.addEventListener('DOMContentLoaded', () => {
     const originalNavigate = window.navigateToSection;
     window.navigateToSection = function(sectionId) {
         originalNavigate(sectionId);
         if (sectionId === 'matching-section') {
             loadNameMatching();
+        } else if (sectionId === 'grading-section') {
+            initializeGrading();
+        } else if (sectionId === 'stats-section') {
+            loadStatistics();
         }
     };
 });

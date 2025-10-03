@@ -13,31 +13,73 @@ function initializeGrading() {
 
 // Load available problem numbers
 async function loadProblemNumbers() {
-    // TODO: Get problem numbers from session
-    // For now, hardcode 1-10
-    const select = document.getElementById('problem-select');
-    select.innerHTML = '';
+    try {
+        const response = await fetch(`${API_BASE}/sessions/${currentSession.id}/problem-numbers`);
+        const data = await response.json();
+        const problemNumbers = data.problem_numbers;
 
-    for (let i = 1; i <= 10; i++) {
-        const option = document.createElement('option');
-        option.value = i;
-        option.textContent = `Problem ${i}`;
-        select.appendChild(option);
-    }
+        const select = document.getElementById('problem-select');
+        select.innerHTML = '';
 
-    select.value = currentProblemNumber;
-    select.onchange = () => {
-        currentProblemNumber = parseInt(select.value);
+        problemNumbers.forEach(num => {
+            const option = document.createElement('option');
+            option.value = num;
+            option.textContent = `Problem ${num}`;
+            select.appendChild(option);
+        });
+
+        currentProblemNumber = problemNumbers[0] || 1;
+        select.value = currentProblemNumber;
+        select.onchange = () => {
+            currentProblemNumber = parseInt(select.value);
+            loadNextProblem();
+        };
+
         loadNextProblem();
-    };
-
-    loadNextProblem();
+    } catch (error) {
+        console.error('Failed to load problem numbers:', error);
+    }
 }
 
 // Setup grading controls
 function setupGradingControls() {
     document.getElementById('submit-grade-btn').onclick = submitGrade;
     document.getElementById('next-problem-btn').onclick = loadNextProblem;
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', handleGradingKeyboard);
+}
+
+// Handle keyboard shortcuts for grading
+function handleGradingKeyboard(e) {
+    // Only handle when grading section is active
+    if (!document.getElementById('grading-section').classList.contains('active')) {
+        return;
+    }
+
+    // Don't handle if typing in textarea
+    if (e.target.tagName === 'TEXTAREA') {
+        return;
+    }
+
+    // Enter key - submit and move to next
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        submitGrade();
+    }
+
+    // Shift+Tab - skip to next without grading
+    if (e.key === 'Tab' && e.shiftKey) {
+        e.preventDefault();
+        loadNextProblem();
+    }
+
+    // Number keys 0-9 - quick score entry
+    if (/^[0-9]$/.test(e.key) && e.target.id !== 'score-input' && e.target.id !== 'feedback-input') {
+        e.preventDefault();
+        document.getElementById('score-input').value = e.key;
+        document.getElementById('score-input').focus();
+    }
 }
 
 // Load next ungraded problem
@@ -96,18 +138,36 @@ async function submitGrade() {
         return;
     }
 
+    // Show loading state
+    const submitBtn = document.getElementById('submit-grade-btn');
+    const originalText = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitting...';
+
     try {
-        await fetch(`${API_BASE}/problems/${currentProblem.id}/grade`, {
+        const response = await fetch(`${API_BASE}/problems/${currentProblem.id}/grade`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ score, feedback })
         });
 
+        if (!response.ok) {
+            throw new Error(`Failed to submit grade: ${response.statusText}`);
+        }
+
         // Load next problem
-        loadNextProblem();
+        await loadNextProblem();
+
+        // Restore button state after loading next problem
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalText;
     } catch (error) {
         console.error('Failed to submit grade:', error);
-        alert('Failed to submit grade');
+        alert('Failed to submit grade: ' + error.message);
+
+        // Restore button state on error
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalText;
     }
 }
 

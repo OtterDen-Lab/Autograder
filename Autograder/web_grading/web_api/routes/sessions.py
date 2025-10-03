@@ -174,6 +174,24 @@ async def get_session_stats(session_id: int):
         )
 
 
+@router.get("/{session_id}/problem-numbers")
+async def get_problem_numbers(session_id: int):
+    """Get list of distinct problem numbers for a session"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT DISTINCT problem_number
+            FROM problems
+            WHERE session_id = ?
+            ORDER BY problem_number
+        """, (session_id,))
+
+        problem_numbers = [row["problem_number"] for row in cursor.fetchall()]
+
+        return {"problem_numbers": problem_numbers}
+
+
 @router.delete("/{session_id}")
 async def delete_session(session_id: int):
     """Delete a grading session and all associated data"""

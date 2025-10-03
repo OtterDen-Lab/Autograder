@@ -103,6 +103,10 @@
                     </div>
                 </div>
 
+                <div class="keyboard-hints">
+                    <small>Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit | <strong>Shift+Tab</strong> to skip</small>
+                </div>
+
                 <div class="problem-container">
                     <img id="problem-image" alt="Problem to grade">
                 </div>
@@ -110,14 +114,16 @@
                 <div class="grading-form">
                     <label>
                         Score:
-                        <input type="number" id="score-input" min="0" step="0.5">
+                        <input type="number" id="score-input" min="0" step="0.5" placeholder="Enter score">
                     </label>
                     <label>
-                        Feedback:
-                        <textarea id="feedback-input" rows="4"></textarea>
+                        Feedback (optional):
+                        <textarea id="feedback-input" rows="4" placeholder="Optional feedback for student"></textarea>
                     </label>
-                    <button id="submit-grade-btn" class="btn btn-primary">Submit Grade</button>
-                    <button id="next-problem-btn" class="btn">Next Problem</button>
+                    <div style="display: flex; gap: 10px;">
+                        <button id="submit-grade-btn" class="btn btn-primary">Submit & Next (Enter)</button>
+                        <button id="next-problem-btn" class="btn">Skip (Shift+Tab)</button>
+                    </div>
                 </div>
             </section>
 

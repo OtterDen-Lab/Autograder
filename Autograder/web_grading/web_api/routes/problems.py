@@ -62,6 +62,7 @@ async def get_next_problem(session_id: int, problem_number: int):
 @router.post("/{problem_id}/grade")
 async def grade_problem(problem_id: int, grade: GradeSubmission):
     """Submit a grade for a problem"""
+    # Get session_id first
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
@@ -80,10 +81,10 @@ async def grade_problem(problem_id: int, grade: GradeSubmission):
         row = cursor.fetchone()
         session_id = row["session_id"]
 
-        # Update statistics
-        update_problem_stats(session_id)
+    # Update statistics after connection is closed to avoid database lock
+    update_problem_stats(session_id)
 
-        return {"status": "graded", "problem_id": problem_id}
+    return {"status": "graded", "problem_id": problem_id}
 
 
 @router.get("/{problem_id}", response_model=ProblemResponse)
