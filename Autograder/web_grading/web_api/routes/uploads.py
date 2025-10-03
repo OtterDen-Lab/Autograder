@@ -77,32 +77,108 @@ async def upload_exams(
 async def process_exam_files(session_id: int, file_paths: List[Path]):
     """
     Background task to process uploaded exam files.
-    This will eventually call the exam processor service.
     """
-    # TODO: Implement exam processing
-    # 1. Extract student names
-    # 2. Match to Canvas students
-    # 3. Shuffle and redact pages
-    # 4. Split into problems
-    # 5. Store in database
-
-    # Placeholder for now
-    import time
     import logging
+    import json
+    from ..services.exam_processor import ExamProcessor
+    from lms_interface.canvas_interface import CanvasInterface
 
     log = logging.getLogger(__name__)
     log.info(f"Processing {len(file_paths)} files for session {session_id}")
 
-    # Simulate processing
-    time.sleep(2)
+    try:
+        # Get session info
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM grading_sessions WHERE id = ?", (session_id,))
+            session = cursor.fetchone()
 
-    # Update session status
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE grading_sessions
-            SET status = 'ready', updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (session_id,))
+            if not session:
+                log.error(f"Session {session_id} not found")
+                return
 
-    log.info(f"Completed processing for session {session_id}")
+            course_id = session["course_id"]
+            assignment_id = session["assignment_id"]
+
+        # Get Canvas students
+        canvas_interface = CanvasInterface(prod=False)  # Use dev by default
+        course = canvas_interface.get_course(course_id)
+        assignment = course.get_assignment(assignment_id)
+        students = assignment.get_students()
+
+        # Convert to simple dicts for processor
+        canvas_students = [
+            {"name": s.name, "user_id": s.user_id}
+            for s in students
+        ]
+
+        # Process exams
+        processor = ExamProcessor()
+        matched, unmatched = processor.process_exams(
+            input_files=file_paths,
+            canvas_students=canvas_students,
+            page_ranges=None,  # TODO: Get from session config
+            use_ai=True
+        )
+
+        # Store in database
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            all_submissions = matched + unmatched
+
+            for submission in all_submissions:
+                # Insert submission
+                cursor.execute("""
+                    INSERT INTO submissions
+                    (session_id, document_id, student_name, canvas_user_id, page_mappings)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    session_id,
+                    submission["document_id"],
+                    submission["student_name"],
+                    submission["canvas_user_id"],
+                    json.dumps(submission["page_mappings"])
+                ))
+
+                submission_id = cursor.lastrowid
+
+                # Insert problems
+                for problem in submission["problems"]:
+                    cursor.execute("""
+                        INSERT INTO problems
+                        (session_id, submission_id, problem_number, image_data, graded)
+                        VALUES (?, ?, ?, ?, 0)
+                    """, (
+                        session_id,
+                        submission_id,
+                        problem["problem_number"],
+                        problem["image_base64"]
+                    ))
+
+            # Update session status
+            if unmatched:
+                cursor.execute("""
+                    UPDATE grading_sessions
+                    SET status = 'name_matching_needed', updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (session_id,))
+            else:
+                cursor.execute("""
+                    UPDATE grading_sessions
+                    SET status = 'ready', updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (session_id,))
+
+        log.info(f"Completed processing for session {session_id}: {len(matched)} matched, {len(unmatched)} unmatched")
+
+    except Exception as e:
+        log.error(f"Error processing exams: {e}", exc_info=True)
+        # Update session to error state
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE grading_sessions
+                SET status = 'preprocessing', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (session_id,))
