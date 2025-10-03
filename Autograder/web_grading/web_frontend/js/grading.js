@@ -333,13 +333,99 @@ async function loadStatistics() {
 
 // Finalize and upload to Canvas
 document.getElementById('finalize-btn').onclick = async () => {
-    if (!confirm('Ready to finalize and upload to Canvas?')) return;
+    if (!currentSession) return;
 
+    // Check if all grading is complete
     try {
-        // TODO: Implement finalization endpoint
-        alert('Finalization not yet implemented');
+        const [statsResponse, canvasInfoResponse] = await Promise.all([
+            fetch(`${API_BASE}/sessions/${currentSession.id}/stats`),
+            fetch(`${API_BASE}/sessions/${currentSession.id}/canvas-info`)
+        ]);
+
+        const stats = await statsResponse.json();
+        const canvasInfo = await canvasInfoResponse.json();
+
+        if (stats.problems_graded < stats.total_problems) {
+            showNotification(
+                `Cannot finalize: ${stats.total_problems - stats.problems_graded} problems still ungraded. Please complete all grading first.`
+            );
+            return;
+        }
+
+        // Confirm finalization with Canvas details
+        const confirmMessage = `Ready to finalize and upload ${stats.total_submissions} submissions to Canvas?\n\n` +
+            `Canvas Details:\n` +
+            `- Environment: ${canvasInfo.environment.toUpperCase()}\n` +
+            `- Course: ${canvasInfo.course_name}\n` +
+            `- Assignment: ${canvasInfo.assignment_name}\n` +
+            `- URL: ${canvasInfo.canvas_url}\n\n` +
+            `This will:\n` +
+            `- Generate annotated PDFs with scores\n` +
+            `- Upload to Canvas with detailed comments\n` +
+            `- Mark this session as complete`;
+
+        if (!confirm(confirmMessage)) {
+            return;
+        }
+
+        // Start finalization
+        const response = await fetch(`${API_BASE}/finalize/${currentSession.id}/finalize`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Finalization failed');
+        }
+
+        // Show progress area and start polling
+        document.getElementById('finalization-progress').style.display = 'block';
+        document.getElementById('finalize-btn').disabled = true;
+        startFinalizationPolling();
+
     } catch (error) {
         console.error('Finalization failed:', error);
-        alert('Finalization failed');
+        alert('Failed to start finalization: ' + error.message);
     }
 };
+
+// Poll for finalization status
+function startFinalizationPolling() {
+    const interval = setInterval(async () => {
+        try {
+            const response = await fetch(`${API_BASE}/finalize/${currentSession.id}/finalization-status`);
+            const status = await response.json();
+
+            // Update UI with progress message
+            if (status.message) {
+                document.getElementById('finalization-message').textContent = status.message;
+
+                // Try to parse progress from message (format: "Processing X/Y: ...")
+                const progressMatch = status.message.match(/Processing (\d+)\/(\d+)/);
+                if (progressMatch) {
+                    const current = parseInt(progressMatch[1]);
+                    const total = parseInt(progressMatch[2]);
+                    const percentage = (current / total) * 100;
+                    document.getElementById('finalization-progress-bar').style.width = `${percentage}%`;
+                }
+            }
+
+            // Check if complete
+            if (status.status === 'complete') {
+                clearInterval(interval);
+                document.getElementById('finalization-progress-bar').style.width = '100%';
+                showNotification('Finalization complete! All grades have been uploaded to Canvas. 🎉', () => {
+                    // Reload session to update status
+                    location.reload();
+                });
+            } else if (status.status === 'error') {
+                clearInterval(interval);
+                document.getElementById('finalization-progress').style.backgroundColor = '#fee2e2';
+                showNotification('Finalization failed: ' + status.message);
+            }
+
+        } catch (error) {
+            console.error('Failed to check finalization status:', error);
+        }
+    }, 2000);
+}

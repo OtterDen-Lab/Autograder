@@ -13,7 +13,9 @@ class SessionStatus(str, Enum):
     NAME_MATCHING_NEEDED = "name_matching_needed"
     READY = "ready"
     GRADING = "grading"
+    FINALIZING = "finalizing"
     COMPLETE = "complete"
+    ERROR = "error"
 
 
 class SessionCreate(BaseModel):

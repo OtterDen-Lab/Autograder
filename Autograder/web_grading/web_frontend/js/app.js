@@ -9,6 +9,22 @@ document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
 });
 
+// Get status badge HTML with color coding
+function getStatusBadge(status) {
+    const statusConfig = {
+        'preprocessing': { label: 'Processing', color: '#3b82f6' },  // blue
+        'name_matching_needed': { label: 'Needs Matching', color: '#f59e0b' },  // amber
+        'ready': { label: 'Ready to Grade', color: '#10b981' },  // green
+        'grading': { label: 'Grading', color: '#8b5cf6' },  // purple
+        'finalizing': { label: 'Finalizing', color: '#ec4899' },  // pink
+        'complete': { label: 'Complete', color: '#059669' },  // dark green
+        'error': { label: 'Error', color: '#ef4444' }  // red
+    };
+
+    const config = statusConfig[status] || { label: status, color: '#6b7280' };
+    return `<span class="status-badge" style="background-color: ${config.color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600;">${config.label}</span>`;
+}
+
 // Load existing sessions
 async function loadSessions() {
     try {
@@ -21,12 +37,20 @@ async function loadSessions() {
         sessions.forEach(session => {
             const item = document.createElement('div');
             item.className = 'session-item';
+
+            // Get status badge HTML
+            const statusBadge = getStatusBadge(session.status);
+            const statusMessage = session.processing_message ? `<div class="session-status-message">${session.processing_message}</div>` : '';
+
             item.innerHTML = `
                 <div class="session-item-content">
                     <div class="session-item-main">
-                        <strong>${session.assignment_name}</strong>
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
+                            <strong>${session.assignment_name}</strong>
+                            ${statusBadge}
+                        </div>
                         <div>${session.course_name || `Course ${session.course_id}`}</div>
-                        <div>Status: ${session.status}</div>
+                        ${statusMessage}
                     </div>
                     <button class="btn btn-danger btn-small" onclick="event.stopPropagation(); deleteSession(${session.id})">Delete</button>
                 </div>
@@ -76,7 +100,9 @@ function getNextSectionForStatus(status) {
         'name_matching_needed': 'matching-section',
         'ready': 'grading-section',
         'grading': 'grading-section',
-        'complete': 'stats-section'
+        'finalizing': 'stats-section',
+        'complete': 'stats-section',
+        'error': 'stats-section'
     };
     return sectionMap[status] || 'upload-section';
 }

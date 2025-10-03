@@ -13,6 +13,7 @@ from ..models import (
     ProblemStatsResponse,
 )
 from ..database import get_db_connection
+from lms_interface.canvas_interface import CanvasInterface
 
 router = APIRouter()
 
@@ -225,6 +226,49 @@ async def get_student_scores(session_id: int):
             })
 
         return {"students": students}
+
+
+@router.get("/{session_id}/canvas-info")
+async def get_canvas_info(session_id: int):
+    """Get Canvas course and assignment information for verification before finalization"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT course_id, assignment_id, course_name, assignment_name
+            FROM grading_sessions
+            WHERE id = ?
+        """, (session_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+    # Initialize Canvas interface (hardcoded to dev for now)
+    use_prod = False
+    canvas = CanvasInterface(prod=use_prod)
+
+    # Get course and assignment to construct URL
+    course = canvas.get_course(row["course_id"])
+    assignment = course.get_assignment(row["assignment_id"])
+
+    # Get base URL from Canvas interface
+    # Remove trailing slash and /api/v1 if present
+    base_url = str(canvas.canvas._Canvas__requester.base_url)
+    if base_url.endswith('/api/v1'):
+        base_url = base_url[:-7]
+    base_url = base_url.rstrip('/')
+
+    # Construct Canvas URL
+    canvas_url = f"{base_url}/courses/{row['course_id']}/assignments/{row['assignment_id']}"
+
+    return {
+        "course_id": row["course_id"],
+        "course_name": row["course_name"],
+        "assignment_id": row["assignment_id"],
+        "assignment_name": row["assignment_name"],
+        "canvas_url": canvas_url,
+        "environment": "production" if use_prod else "development"
+    }
 
 
 @router.delete("/{session_id}")

@@ -420,6 +420,13 @@ header h1 {
     flex: 1;
 }
 
+.session-status-message {
+    margin-top: 5px;
+    font-size: 13px;
+    color: var(--gray-700);
+    font-style: italic;
+}
+
 .btn-danger {
     background-color: var(--danger-color);
     color: white;

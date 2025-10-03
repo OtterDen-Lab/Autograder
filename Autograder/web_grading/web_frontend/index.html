@@ -149,7 +149,16 @@
             <section id="stats-section" class="section">
                 <h2>Grading Statistics</h2>
                 <div id="stats-container"></div>
-                <button id="finalize-btn" class="btn btn-success">Finalize & Upload to Canvas</button>
+
+                <div id="finalization-progress" style="display: none; margin-top: 20px; padding: 20px; background: #eff6ff; border-radius: 8px;">
+                    <h3 style="margin-top: 0;">Finalization Progress</h3>
+                    <div id="finalization-message" style="margin: 10px 0; font-size: 16px; font-weight: 500;"></div>
+                    <div class="progress-bar" style="height: 20px;">
+                        <div id="finalization-progress-bar" class="progress-bar-fill"></div>
+                    </div>
+                </div>
+
+                <button id="finalize-btn" class="btn btn-success" style="margin-top: 20px;">Finalize & Upload to Canvas</button>
             </section>
         </main>
     </div>
