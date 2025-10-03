@@ -166,9 +166,40 @@ header h1 {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 10px;
+    margin-bottom: 15px;
     padding-bottom: 15px;
     border-bottom: 1px solid var(--gray-200);
+}
+
+.grading-overall-progress {
+    margin-bottom: 15px;
+    padding: 15px;
+    background-color: #eff6ff;
+    border-radius: 6px;
+}
+
+.overall-progress-bar {
+    width: 100%;
+    height: 12px;
+    background-color: var(--gray-200);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.overall-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), #3b82f6);
+    transition: width 0.5s ease;
+}
+
+.overall-progress-text {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--gray-900);
 }
 
 .grading-controls label {
@@ -256,21 +287,39 @@ header h1 {
 
 /* Statistics */
 #stats-container {
+    margin-bottom: 20px;
+}
+
+#stats-container > h3 {
+    margin-bottom: 15px;
+    color: var(--gray-900);
+    font-size: 20px;
+}
+
+.overall-stats {
     display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
     gap: 20px;
     margin-bottom: 20px;
+}
+
+.problem-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
 }
 
 .stat-card {
     background-color: var(--gray-100);
     padding: 20px;
     border-radius: 8px;
+    text-align: center;
 }
 
 .stat-card h3 {
-    margin-bottom: 10px;
-    color: var(--gray-700);
+    margin: 0 0 10px 0;
     font-size: 14px;
+    color: var(--gray-700);
     text-transform: uppercase;
 }
 
@@ -278,6 +327,68 @@ header h1 {
     font-size: 32px;
     font-weight: bold;
     color: var(--primary-color);
+}
+
+.stat-card div {
+    color: var(--gray-700);
+    margin-top: 5px;
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 10px;
+    background-color: var(--gray-200);
+    border-radius: 5px;
+    margin-top: 10px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background-color: var(--primary-color);
+    transition: width 0.3s ease;
+}
+
+/* Student Scores Table */
+.student-scores-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+    background-color: white;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.student-scores-table thead {
+    background-color: var(--gray-100);
+}
+
+.student-scores-table th {
+    text-align: left;
+    padding: 12px 15px;
+    font-weight: 600;
+    color: var(--gray-700);
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+}
+
+.student-scores-table td {
+    padding: 12px 15px;
+    border-top: 1px solid var(--gray-200);
+}
+
+.student-scores-table tr.complete {
+    background-color: #f0fdf4;
+}
+
+.student-scores-table tr.incomplete {
+    background-color: #fef2f2;
+}
+
+.student-scores-table tbody tr:hover {
+    background-color: var(--gray-50);
 }
 
 /* Session List */
@@ -471,6 +582,39 @@ header h1 {
 .btn-small {
     padding: 6px 12px;
     font-size: 14px;
+}
+
+/* Notification Overlay */
+.notification-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+.notification-content {
+    background-color: white;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    max-width: 500px;
+    text-align: center;
+}
+
+.notification-content p {
+    margin: 0 0 20px 0;
+    font-size: 16px;
+    color: var(--gray-900);
+}
+
+.notification-content .btn {
+    min-width: 100px;
 }
 
 /* Responsive */

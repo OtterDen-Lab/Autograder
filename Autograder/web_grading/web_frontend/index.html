@@ -7,6 +7,14 @@
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+    <!-- Overlay notification -->
+    <div id="notification-overlay" class="notification-overlay" style="display: none;">
+        <div class="notification-content">
+            <p id="notification-message"></p>
+            <button id="notification-ok" class="btn btn-primary">OK</button>
+        </div>
+    </div>
+
     <div class="container">
         <header>
             <div class="header-content">
@@ -100,6 +108,16 @@
                     </label>
                     <div class="progress-info">
                         <span id="grading-progress">0 / 0</span>
+                    </div>
+                </div>
+
+                <div class="grading-overall-progress">
+                    <div class="overall-progress-bar">
+                        <div id="overall-progress-fill" class="overall-progress-fill" style="width: 0%"></div>
+                    </div>
+                    <div class="overall-progress-text">
+                        <span id="overall-progress-label">Overall: 0 / 0 (0%)</span>
+                        <button id="view-stats-btn" class="btn btn-secondary btn-small">View Statistics</button>
                     </div>
                 </div>
 

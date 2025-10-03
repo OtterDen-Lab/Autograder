@@ -2,6 +2,8 @@
 
 let currentProblem = null;
 let currentProblemNumber = 1;
+let availableProblemNumbers = [];
+let lastGradedProblemNumber = null; // Track if we just graded something
 
 // Initialize grading interface when section becomes active
 function initializeGrading() {
@@ -9,6 +11,36 @@ function initializeGrading() {
 
     loadProblemNumbers();
     setupGradingControls();
+    updateOverallProgress();
+}
+
+// Show notification overlay
+function showNotification(message, callback) {
+    const overlay = document.getElementById('notification-overlay');
+    const messageEl = document.getElementById('notification-message');
+    const okBtn = document.getElementById('notification-ok');
+
+    messageEl.textContent = message;
+    overlay.style.display = 'flex';
+
+    const dismiss = () => {
+        overlay.style.display = 'none';
+        document.removeEventListener('keydown', handleNotificationKey);
+        if (callback) callback();
+    };
+
+    const handleNotificationKey = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            dismiss();
+        }
+    };
+
+    okBtn.onclick = dismiss;
+    document.addEventListener('keydown', handleNotificationKey);
+
+    // Focus the button for accessibility
+    okBtn.focus();
 }
 
 // Load available problem numbers
@@ -16,19 +48,19 @@ async function loadProblemNumbers() {
     try {
         const response = await fetch(`${API_BASE}/sessions/${currentSession.id}/problem-numbers`);
         const data = await response.json();
-        const problemNumbers = data.problem_numbers;
+        availableProblemNumbers = data.problem_numbers;
 
         const select = document.getElementById('problem-select');
         select.innerHTML = '';
 
-        problemNumbers.forEach(num => {
+        availableProblemNumbers.forEach(num => {
             const option = document.createElement('option');
             option.value = num;
             option.textContent = `Problem ${num}`;
             select.appendChild(option);
         });
 
-        currentProblemNumber = problemNumbers[0] || 1;
+        currentProblemNumber = availableProblemNumbers[0] || 1;
         select.value = currentProblemNumber;
         select.onchange = () => {
             currentProblemNumber = parseInt(select.value);
@@ -41,10 +73,29 @@ async function loadProblemNumbers() {
     }
 }
 
+// Update overall progress display
+async function updateOverallProgress() {
+    try {
+        const response = await fetch(`${API_BASE}/sessions/${currentSession.id}/stats`);
+        const stats = await response.json();
+
+        const percentage = stats.progress_percentage || 0;
+        document.getElementById('overall-progress-fill').style.width = `${percentage}%`;
+        document.getElementById('overall-progress-label').textContent =
+            `Overall: ${stats.problems_graded} / ${stats.total_problems} (${percentage.toFixed(1)}%)`;
+    } catch (error) {
+        console.error('Failed to update overall progress:', error);
+    }
+}
+
 // Setup grading controls
 function setupGradingControls() {
     document.getElementById('submit-grade-btn').onclick = submitGrade;
     document.getElementById('next-problem-btn').onclick = loadNextProblem;
+    document.getElementById('view-stats-btn').onclick = () => {
+        navigateToSection('stats-section');
+        loadStatistics();
+    };
 
     // Keyboard shortcuts
     document.addEventListener('keydown', handleGradingKeyboard);
@@ -91,17 +142,41 @@ async function loadNextProblem() {
 
         if (response.status === 404) {
             // No more problems for this number
-            alert(`All problems for Problem ${currentProblemNumber} are graded!`);
+            // Only show notification if we just graded something from this problem
+            if (lastGradedProblemNumber === currentProblemNumber) {
+                lastGradedProblemNumber = null; // Reset
 
-            // Try to advance to next problem number
-            if (currentProblemNumber < 10) {
-                currentProblemNumber++;
-                document.getElementById('problem-select').value = currentProblemNumber;
-                loadNextProblem();
+                // Find next ungraded problem number
+                const currentIndex = availableProblemNumbers.indexOf(currentProblemNumber);
+                const nextProblemNumber = availableProblemNumbers[currentIndex + 1];
+
+                if (nextProblemNumber) {
+                    showNotification(`All submissions for Problem ${currentProblemNumber} are graded! Moving to Problem ${nextProblemNumber}...`, () => {
+                        currentProblemNumber = nextProblemNumber;
+                        document.getElementById('problem-select').value = currentProblemNumber;
+                        loadNextProblem();
+                    });
+                } else {
+                    // All done!
+                    showNotification('All problems are graded! 🎉', () => {
+                        navigateToSection('stats-section');
+                        loadStatistics();
+                    });
+                }
             } else {
-                // All done!
-                navigateToSection('stats-section');
-                loadStatistics();
+                // Already complete, just silently move to next or stats
+                const currentIndex = availableProblemNumbers.indexOf(currentProblemNumber);
+                const nextProblemNumber = availableProblemNumbers[currentIndex + 1];
+
+                if (nextProblemNumber) {
+                    currentProblemNumber = nextProblemNumber;
+                    document.getElementById('problem-select').value = currentProblemNumber;
+                    loadNextProblem();
+                } else {
+                    // Show stats if everything is done
+                    navigateToSection('stats-section');
+                    loadStatistics();
+                }
             }
             return;
         }
@@ -155,6 +230,12 @@ async function submitGrade() {
             throw new Error(`Failed to submit grade: ${response.statusText}`);
         }
 
+        // Mark that we just graded this problem number
+        lastGradedProblemNumber = currentProblemNumber;
+
+        // Update overall progress
+        await updateOverallProgress();
+
         // Load next problem
         await loadNextProblem();
 
@@ -174,35 +255,76 @@ async function submitGrade() {
 // Load statistics
 async function loadStatistics() {
     try {
-        const response = await fetch(`${API_BASE}/sessions/${currentSession.id}/stats`);
-        const stats = await response.json();
+        const [statsResponse, scoresResponse] = await Promise.all([
+            fetch(`${API_BASE}/sessions/${currentSession.id}/stats`),
+            fetch(`${API_BASE}/sessions/${currentSession.id}/student-scores`)
+        ]);
+
+        const stats = await statsResponse.json();
+        const scoresData = await scoresResponse.json();
 
         const container = document.getElementById('stats-container');
         container.innerHTML = `
-            <div class="stat-card">
-                <h3>Total Submissions</h3>
-                <div class="value">${stats.total_submissions}</div>
-            </div>
-            <div class="stat-card">
-                <h3>Problems Graded</h3>
-                <div class="value">${stats.problems_graded} / ${stats.total_problems}</div>
-            </div>
-            <div class="stat-card">
-                <h3>Progress</h3>
-                <div class="value">${stats.progress_percentage.toFixed(1)}%</div>
+            <h3>Overall Progress</h3>
+            <div class="overall-stats">
+                <div class="stat-card">
+                    <h3>Total Submissions</h3>
+                    <div class="value">${stats.total_submissions}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Problems Graded</h3>
+                    <div class="value">${stats.problems_graded} / ${stats.total_problems}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Overall Progress</h3>
+                    <div class="value">${stats.progress_percentage.toFixed(1)}%</div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" style="width: ${stats.progress_percentage}%"></div>
+                    </div>
+                </div>
             </div>
         `;
 
         // Add per-problem stats
         if (stats.problem_stats.length > 0) {
-            const problemStatsHtml = stats.problem_stats.map(ps => `
-                <div class="stat-card">
-                    <h3>Problem ${ps.problem_number}</h3>
-                    <div>Average: ${ps.avg_score ? ps.avg_score.toFixed(2) : 'N/A'}</div>
-                    <div>Graded: ${ps.num_graded} / ${ps.num_total}</div>
-                </div>
-            `).join('');
-            container.innerHTML += problemStatsHtml;
+            container.innerHTML += '<h3 style="margin-top: 30px;">Per-Problem Statistics</h3>';
+            const problemStatsHtml = stats.problem_stats.map(ps => {
+                const problemProgress = ps.num_total > 0 ? (ps.num_graded / ps.num_total * 100) : 0;
+                return `
+                    <div class="stat-card">
+                        <h3>Problem ${ps.problem_number}</h3>
+                        <div>Average: ${ps.avg_score ? ps.avg_score.toFixed(2) : 'N/A'}</div>
+                        <div>Graded: ${ps.num_graded} / ${ps.num_total} (${problemProgress.toFixed(0)}%)</div>
+                    </div>
+                `;
+            }).join('');
+            container.innerHTML += '<div class="problem-stats-grid">' + problemStatsHtml + '</div>';
+        }
+
+        // Add student scores table
+        if (scoresData.students.length > 0) {
+            container.innerHTML += '<h3 style="margin-top: 30px;">Student Scores</h3>';
+            const studentScoresHtml = `
+                <table class="student-scores-table">
+                    <thead>
+                        <tr>
+                            <th>Student Name</th>
+                            <th>Progress</th>
+                            <th>Total Score</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${scoresData.students.map(s => `
+                            <tr class="${s.is_complete ? 'complete' : 'incomplete'}">
+                                <td>${s.student_name || 'Unmatched'}</td>
+                                <td>${s.graded_problems} / ${s.total_problems}</td>
+                                <td>${s.total_score ? s.total_score.toFixed(2) : '0.00'}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+            container.innerHTML += studentScoresHtml;
         }
     } catch (error) {
         console.error('Failed to load statistics:', error);

@@ -192,6 +192,41 @@ async def get_problem_numbers(session_id: int):
         return {"problem_numbers": problem_numbers}
 
 
+@router.get("/{session_id}/student-scores")
+async def get_student_scores(session_id: int):
+    """Get aggregated scores for all students in a session"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                s.id,
+                s.student_name,
+                s.canvas_user_id,
+                COUNT(p.id) as total_problems,
+                SUM(CASE WHEN p.graded = 1 THEN 1 ELSE 0 END) as graded_problems,
+                SUM(CASE WHEN p.graded = 1 THEN p.score ELSE 0 END) as total_score
+            FROM submissions s
+            LEFT JOIN problems p ON p.submission_id = s.id
+            WHERE s.session_id = ?
+            GROUP BY s.id
+            ORDER BY s.student_name
+        """, (session_id,))
+
+        students = []
+        for row in cursor.fetchall():
+            students.append({
+                "student_name": row["student_name"],
+                "canvas_user_id": row["canvas_user_id"],
+                "total_problems": row["total_problems"],
+                "graded_problems": row["graded_problems"],
+                "total_score": row["total_score"],
+                "is_complete": row["graded_problems"] == row["total_problems"]
+            })
+
+        return {"students": students}
+
+
 @router.delete("/{session_id}")
 async def delete_session(session_id: int):
     """Delete a grading session and all associated data"""
