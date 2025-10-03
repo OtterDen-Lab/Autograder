@@ -58,7 +58,8 @@ class ExamProcessor:
         input_files: List[Path],
         canvas_students: List[dict],
         page_ranges: Optional[List[Tuple[int, int]]] = None,
-        use_ai: bool = True
+        use_ai: bool = True,
+        progress_callback: Optional[callable] = None
     ) -> Tuple[List[Dict], List[Dict]]:
         """
         Process exam PDFs.
@@ -68,6 +69,7 @@ class ExamProcessor:
             canvas_students: List of student dicts with name and user_id
             page_ranges: Optional list of (start, end) page ranges to merge
             use_ai: Whether to use AI for name extraction
+            progress_callback: Optional callback function(processed, matched, message) for progress updates
 
         Returns:
             Tuple of (matched_submissions, unmatched_submissions)
@@ -171,6 +173,14 @@ class ExamProcessor:
                 matched_submissions.append(submission)
             else:
                 unmatched_submissions.append(submission)
+
+            # Report progress
+            if progress_callback:
+                progress_callback(
+                    processed=document_id + 1,
+                    matched=len(matched_submissions),
+                    message=f"Processed {document_id + 1} of {len(input_files)} exams ({len(matched_submissions)} matched)"
+                )
 
         log.info(f"Matched: {len(matched_submissions)}, Unmatched: {len(unmatched_submissions)}")
         return matched_submissions, unmatched_submissions

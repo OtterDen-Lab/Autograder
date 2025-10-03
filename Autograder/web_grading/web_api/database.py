@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 def get_db_path() -> Path:
@@ -93,7 +93,11 @@ def create_schema(cursor):
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             status TEXT NOT NULL,
             canvas_points REAL,
-            metadata TEXT
+            metadata TEXT,
+            total_exams INTEGER DEFAULT 0,
+            processed_exams INTEGER DEFAULT 0,
+            matched_exams INTEGER DEFAULT 0,
+            processing_message TEXT
         )
     """)
 
@@ -171,13 +175,19 @@ def run_migrations(cursor, from_version: int):
     """Run database migrations from current version to latest"""
     log.info(f"Running migrations from version {from_version} to {CURRENT_SCHEMA_VERSION}")
 
-    # Future migrations will be added here
-    # Example:
-    # if from_version < 2:
-    #     migrate_to_v2(cursor)
-    #     cursor.execute("INSERT INTO _schema_version (version) VALUES (2)")
+    if from_version < 2:
+        migrate_to_v2(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (2)")
 
-    pass
+
+def migrate_to_v2(cursor):
+    """Add progress tracking columns to grading_sessions"""
+    log.info("Migrating to schema version 2: adding progress tracking")
+
+    cursor.execute("ALTER TABLE grading_sessions ADD COLUMN total_exams INTEGER DEFAULT 0")
+    cursor.execute("ALTER TABLE grading_sessions ADD COLUMN processed_exams INTEGER DEFAULT 0")
+    cursor.execute("ALTER TABLE grading_sessions ADD COLUMN matched_exams INTEGER DEFAULT 0")
+    cursor.execute("ALTER TABLE grading_sessions ADD COLUMN processing_message TEXT")
 
 
 def update_problem_stats(session_id: int):

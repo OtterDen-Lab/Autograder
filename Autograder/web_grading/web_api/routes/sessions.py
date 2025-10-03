@@ -41,6 +41,7 @@ async def create_session(session: SessionCreate):
         # Fetch created session
         cursor.execute("SELECT * FROM grading_sessions WHERE id = ?", (session_id,))
         row = cursor.fetchone()
+        row_dict = dict(row)
 
         return SessionResponse(
             id=row["id"],
@@ -52,6 +53,10 @@ async def create_session(session: SessionCreate):
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             canvas_points=row["canvas_points"],
+            total_exams=row_dict.get("total_exams", 0),
+            processed_exams=row_dict.get("processed_exams", 0),
+            matched_exams=row_dict.get("matched_exams", 0),
+            processing_message=row_dict.get("processing_message"),
         )
 
 
@@ -66,6 +71,7 @@ async def get_session(session_id: int):
         if not row:
             raise HTTPException(status_code=404, detail="Session not found")
 
+        row_dict = dict(row)
         return SessionResponse(
             id=row["id"],
             assignment_id=row["assignment_id"],
@@ -76,6 +82,10 @@ async def get_session(session_id: int):
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             canvas_points=row["canvas_points"],
+            total_exams=row_dict.get("total_exams", 0),
+            processed_exams=row_dict.get("processed_exams", 0),
+            matched_exams=row_dict.get("matched_exams", 0),
+            processing_message=row_dict.get("processing_message"),
         )
 
 
@@ -91,6 +101,7 @@ async def list_sessions():
 
         sessions = []
         for row in cursor.fetchall():
+            row_dict = dict(row)
             sessions.append(SessionResponse(
                 id=row["id"],
                 assignment_id=row["assignment_id"],
@@ -101,6 +112,10 @@ async def list_sessions():
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
                 canvas_points=row["canvas_points"],
+                total_exams=row_dict.get("total_exams", 0),
+                processed_exams=row_dict.get("processed_exams", 0),
+                matched_exams=row_dict.get("matched_exams", 0),
+                processing_message=row_dict.get("processing_message"),
             ))
 
         return sessions

@@ -57,14 +57,19 @@ async def upload_exams(
     # Start background processing
     background_tasks.add_task(process_exam_files, session_id, saved_files)
 
-    # Update session status
+    # Update session status with initial count
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE grading_sessions
-            SET status = 'preprocessing', updated_at = CURRENT_TIMESTAMP
+            SET status = 'preprocessing',
+                total_exams = ?,
+                processed_exams = 0,
+                matched_exams = 0,
+                processing_message = ?,
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (session_id,))
+        """, (len(saved_files), f"Uploaded {len(saved_files)} exam(s), starting processing...", session_id))
 
     return UploadResponse(
         session_id=session_id,
@@ -112,13 +117,27 @@ async def process_exam_files(session_id: int, file_paths: List[Path]):
             for s in students
         ]
 
+        # Progress callback to update database
+        def update_progress(processed, matched, message):
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE grading_sessions
+                    SET processed_exams = ?,
+                        matched_exams = ?,
+                        processing_message = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (processed, matched, message, session_id))
+
         # Process exams
         processor = ExamProcessor()
         matched, unmatched = processor.process_exams(
             input_files=file_paths,
             canvas_students=canvas_students,
             page_ranges=None,  # TODO: Get from session config
-            use_ai=True
+            use_ai=True,
+            progress_callback=update_progress
         )
 
         # Store in database

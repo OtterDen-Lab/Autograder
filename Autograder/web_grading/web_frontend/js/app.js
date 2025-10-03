@@ -319,17 +319,26 @@ function listenForStatusUpdates() {
             const response = await fetch(`${API_BASE}/sessions/${currentSession.id}`);
             const session = await response.json();
 
+            // Update progress display
+            if (session.processing_message) {
+                document.getElementById('upload-status').textContent = session.processing_message;
+            }
+
             if (session.status !== currentSession.status) {
                 currentSession = session;
                 updateSessionInfo();
 
                 if (session.status === 'ready' || session.status === 'name_matching_needed') {
                     clearInterval(interval);
-                    navigateToSection(getNextSectionForStatus(session.status));
+
+                    // Show final message for 2 seconds before navigating
+                    setTimeout(() => {
+                        navigateToSection(getNextSectionForStatus(session.status));
+                    }, 2000);
                 }
             }
         } catch (error) {
             console.error('Status check failed:', error);
         }
-    }, 2000);
+    }, 500);  // Poll every 500ms instead of 2000ms
 }

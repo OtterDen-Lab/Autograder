@@ -36,6 +36,10 @@ class SessionResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     canvas_points: Optional[float]
+    total_exams: int = 0
+    processed_exams: int = 0
+    matched_exams: int = 0
+    processing_message: Optional[str] = None
 
     class Config:
         from_attributes = True
