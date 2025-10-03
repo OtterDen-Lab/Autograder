@@ -127,7 +127,7 @@ class AI_Helper__OpenAI(AI_Helper):
     )
     
     response = cls._client.chat.completions.create(
-      model="gpt-4o",
+      model="gpt-4.1-nano",
       response_format={"type": "json_object"},
       messages=messages,
       temperature=1,
