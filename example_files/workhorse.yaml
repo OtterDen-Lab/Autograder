@@ -1,101 +1,94 @@
 prod: False
 push: True
 
-courses:
-
-  - name: CST334-PAs
-    id: 29978
-    # Course-level defaults
-    slack_channel: C09HR2J5EBF
+# Define assignment types with default graders and settings
+assignment_types:
+  programming:
+    kind: ProgrammingAssignment
     grader: template-grader
-    assignment_defaults:
-      kind: ProgrammingAssignment
+    settings:
       record_retention: true
-      kwargs:
-        base_image_name: "samogden/cst334"
-        source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
-        golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
-        files_from_golden:
-          - "tests/unittests_reserved.c"
-        student_code_path: "src"
-        num_repeats: 10
-    assignments:
-      - repo_path: PA1
-        id: 506889
-      - repo_path: PA2
-        id: 506890
-      - repo_path: PA3
-        id: 506891
-      - repo_path: PA4
-        id: 506892
-      - repo_path: PA5
-        id: 506893
-      - repo_path: PA6
-        id: 506894
 
-  - name: CST463-PAs
+  text:
+    kind: TextAssignment
+    grader: TextSubmissionGrader
+    settings:
+      grade_after_lock_date: true
+      prefer_anthropic: true
+
+courses:
+  - name: CST334
+    id: 29978
+    slack_channel: C09HR2J5EBF
+
+    assignment_groups:
+      - name: Programming Assignments
+        type: programming
+        settings:
+          base_image_name: "samogden/cst334"
+          source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
+          golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
+          files_from_golden:
+            - "tests/unittests_reserved.c"
+          student_code_path: "src"
+          num_repeats: 10
+        assignments:
+          - {id: 506889, repo_path: PA1}
+          - {id: 506890, repo_path: PA2}
+          - {id: 506891, repo_path: PA3}
+          - {id: 506892, repo_path: PA4}
+          - {id: 506893, repo_path: PA5}
+          - {id: 506894, repo_path: PA6}
+
+      - name: Learning Logs
+        type: text
+        settings:
+          prefer_anthropic: false  # Override type default
+        assignments:
+          - 506881  # LL3
+          - 506882  # LL4
+          - 506883  # LL5
+          - 506884  # LL6
+          - 506885  # LL7
+          - 506886  # LL8
+          - 506887  # LL9
+          - 506875  # LL10
+          - 506876  # LL11
+          - 506877  # LL12
+          - 506879  # LL13
+          - 506884  # LL14
+
+  - name: CST463
     id: 29740
     slack_channel: C09HR2J5EBF
-    grader: template-grader
-    assignment_defaults:
-      kind: ProgrammingAssignment
-      kwargs:
-        source_repo: "https://github.com/CSUMB-SCD-instructors/CST463"
-        golden_repo: "https://github.com/CSUMB-SCD-instructors/CST463-golden"
-    assignments:
-      - repo_path: PA1
-        id: 527876
-        record_retention: true
-      - repo_path: PA2
-        id: 529948
-        record_retention: true
 
+    assignment_groups:
+      - name: Programming Assignments
+        type: programming
+        settings:
+          source_repo: "https://github.com/CSUMB-SCD-instructors/CST463"
+          golden_repo: "https://github.com/CSUMB-SCD-instructors/CST463-golden"
+          record_retention: false  # Default to false for this group
+        assignments:
+          - {id: 527876, repo_path: PA1, record_retention: true}  # Override for this assignment
+          - {id: 529948, repo_path: PA2, record_retention: true}  # Override for this assignment
 
-  - name: CST334-LLs
-    id: 29978
-    grader: TextSubmissionGrader
-    slack_channel: "C09HR2J5EBF"  # Your private channel ID
-    assignment_defaults:
-      kind: TextAssignment
-      prefer_anthropic: false  # Try Claude first (cheaper, some prefer it)
-      kwargs:
-        grade_after_lock_date: true  # Only grade after assignment lock date
-    assignments:
-      - id: 506881 # LL3
-      - id: 506882 # LL4
-      - id: 506883 # LL5
-      - id: 506884 # LL6
-      - id: 506885 # LL7
-      - id: 506886 # LL8
-      - id: 506887 # LL9
-      - id: 506875 # LL10
-      - id: 506876 # LL11
-      - id: 506877 # LL12
-      - id: 506879 # LL13
-      - id: 506884 # LL14
-
-  - name: CST463-LLs
-    id: 29740
-    grader: TextSubmissionGrader
-    slack_channel: "C09HR2J5EBF"  # Your private channel ID
-    assignment_defaults:
-      kind: TextAssignment
-      grade_after_lock_date: true  # Only grade after assignment lock date
-      prefer_anthropic: false  # Try Claude first (cheaper, some prefer it)
-      kwargs:
-        grade_after_lock_date: true  # Only grade after assignment lock date
-    assignments:
-      - id: 520123 # LL1
-      - id: 520129 # LL2
-      - id: 520130 # LL3
-      - id: 520131 # LL4
-      - id: 520132 # LL5
-      - id: 520133 # LL6
-      - id: 520134 # LL7
-      - id: 520135 # LL8
-      - id: 520136 # LL9
-      - id: 520124 # LL10
-      - id: 520125 # LL11
-      - id: 520126 # LL12
-      - id: 520127 # LL13
-      - id: 520128 # LL14
+      - name: Learning Logs
+        type: text
+        settings:
+          prefer_anthropic: false
+        assignments:
+          - 520123  # LL1
+          - 520129  # LL2
+          - 520130  # LL3
+          - 520131  # LL4
+          - 520132  # LL5
+          - 520133  # LL6
+          - 520134  # LL7
+          - 520135  # LL8
+          - 520136  # LL9
+          - 520124  # LL10
+          - 520125  # LL11
+          - 520126  # LL12
+          - 520127  # LL13
+          - 520128  # LL14

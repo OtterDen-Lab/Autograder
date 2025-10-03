@@ -8,8 +8,9 @@ courses:
     slack_channel: "C09HR2J5EBF"  # Your private channel ID
     assignment_defaults:
       kind: TextAssignment
-      grade_after_lock_date: true  # Only grade after assignment lock date
       prefer_anthropic: true  # Try Claude first (cheaper, some prefer it)
+      kwargs:
+        grade_after_lock_date: true  # Only grade after assignment lock date
     assignments:
       - id: 506883 # LL5
       - id: 506884 # LL6
@@ -27,8 +28,9 @@ courses:
     slack_channel: "C09HR2J5EBF"  # Your private channel ID
     assignment_defaults:
       kind: TextAssignment
-      grade_after_lock_date: true  # Only grade after assignment lock date
       prefer_anthropic: true  # Try Claude first (cheaper, some prefer it)
+      kwargs:
+        grade_after_lock_date: true  # Only grade after assignment lock date
     assignments:
       - id: 520123 # LL1
       - id: 520129 # LL2

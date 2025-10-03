@@ -17,6 +17,7 @@ import yaml
 from lms_interface.canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment, CanvasQuiz
 from Autograder.assignment import AssignmentRegistry
 from Autograder.grader import GraderRegistry
+from Autograder.registry import TypeRegistry
 from Autograder.docker_utils import DockerClient, DockerContainer
 
 import logging
@@ -108,12 +109,18 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
       lms_assignment = course.get_assignment(assignment_id)
       log.info(f"[Thread {thread_id}] Grading assignment \"{lms_assignment.name}\"")
 
-    assignment_grading_kwargs = merged_assignment.get('kwargs', {})
-    assignment_grading_kwargs["course_name"] = assignment_data.get("course_name")
-    assignment_grading_kwargs["slack_channel"] = assignment_data.get("slack_channel")
-    # Pass prefer_anthropic if specified at assignment level
-    if 'prefer_anthropic' in merged_assignment:
-      assignment_grading_kwargs["prefer_anthropic"] = merged_assignment.get("prefer_anthropic")
+    # Get unified settings (new format uses 'settings', legacy uses 'kwargs')
+    settings = merged_assignment.get('settings') or merged_assignment.get('kwargs', {})
+
+    # Add runtime context to settings
+    settings = settings.copy()  # Don't modify the original
+    settings["course_name"] = assignment_data.get("course_name")
+    settings["slack_channel"] = assignment_data.get("slack_channel")
+
+    # Handle prefer_anthropic from both new and legacy formats
+    if 'prefer_anthropic' in merged_assignment and 'prefer_anthropic' not in settings:
+      settings["prefer_anthropic"] = merged_assignment.get("prefer_anthropic")
+
     do_regrade = args.do_regrade
 
     # Get the grader from the registry
@@ -126,16 +133,19 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
       grader_name,
       assignment_path=repo_path,
       assignment_name=assignment_name,
-      **assignment_grading_kwargs
+      **settings
     )
 
     with tempfile.TemporaryDirectory() as working_dir:
       # Focus on the given assignment
+      # For new format, settings are already complete; for legacy, use assignment_kwargs
+      assignment_creation_kwargs = merged_assignment.get('assignment_kwargs', {})
+
       with AssignmentRegistry.create(
           merged_assignment['kind'],
           lms_assignment=lms_assignment,
           grading_root_dir=working_dir,
-          **merged_assignment.get('assignment_kwargs', {})
+          **assignment_creation_kwargs
       ) as grading_assignment:
 
         # If the grader doesn't need preparation, skip the prep step
@@ -149,10 +159,10 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
             do_regrade=do_regrade,
             merge_only=args.merge_only,
             test=args.test,
-            **merged_assignment.get("kwargs", {})
+            **settings
           )
 
-        grader.grade_assignment(grading_assignment, **assignment_grading_kwargs, merge_only=args.merge_only, do_regrade=do_regrade)
+        grader.grade_assignment(grading_assignment, **settings, merge_only=args.merge_only, do_regrade=do_regrade)
 
         for submission in grading_assignment.submissions:
           log.info(f"{submission}")
@@ -160,11 +170,11 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
         if grader.ready_to_finalize:
           if grader_name.lower() in ["manual"]:
             log.warning(f"[Thread {thread_id}] Manual grading finalization for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode")
-          # Check for record retention setting and determine records directory
-          record_retention = merged_assignment.get('record_retention', False)
+          # Check for record retention setting (check both settings and top-level)
+          record_retention = settings.get('record_retention') or merged_assignment.get('record_retention', False)
           if record_retention:
             # Determine where to save records
-            records_dir = merged_assignment.get('records_dir')
+            records_dir = settings.get('records_dir') or merged_assignment.get('records_dir')
             if records_dir is None:
               # Default to 'records' directory in the main project directory
               records_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "records")
@@ -224,6 +234,30 @@ def load_and_validate_config(yaml_path: str) -> Dict:
   return grader_info
 
 
+def normalize_assignment(assignment) -> Dict:
+  """
+  Normalize assignment format to dict with 'id' key.
+
+  Supports:
+  - Simple ID: 506883
+  - Dict format: {id: 506883, repo_path: PA1, ...}
+
+  Args:
+    assignment: Either an int/string ID or a dict
+
+  Returns:
+    Dict with 'id' key and any additional fields
+  """
+  if isinstance(assignment, (int, str)):
+    return {'id': int(assignment)}
+  elif isinstance(assignment, dict):
+    if 'id' not in assignment:
+      raise ValueError(f"Assignment dict must have 'id' key: {assignment}")
+    return assignment
+  else:
+    raise ValueError(f"Invalid assignment format: {assignment}")
+
+
 def create_assignment_data(
     course,
     course_name,
@@ -263,6 +297,9 @@ def collect_assignments_to_grade(config: Dict, args: argparse.Namespace) -> List
   """
   Process courses and collect all assignments that need grading.
 
+  Supports both legacy format (assignment_defaults + assignments) and
+  new format (assignment_types + assignment_groups).
+
   Args:
     config: Loaded YAML configuration
     args: Command line arguments
@@ -274,12 +311,17 @@ def collect_assignments_to_grade(config: Dict, args: argparse.Namespace) -> List
   use_prod = config.get('prod', False)
   push_grades = config.get('push', False)
 
+  # Load assignment types if present (new format)
+  if 'assignment_types' in config:
+    TypeRegistry.load_from_yaml(config)
+    log.info("Using new configuration format with assignment_types")
+
   # Create the LMS interface
   lms_interface = CanvasInterface(prod=use_prod)
 
   assignments_to_grade = []
 
-  # Walk through all defined courses, error if we don't have required information
+  # Walk through all defined courses
   for yaml_course in config.get('courses', []):
     try:
       course_id = int(yaml_course['id'])
@@ -293,50 +335,174 @@ def collect_assignments_to_grade(config: Dict, args: argparse.Namespace) -> List
     course = lms_interface.get_course(course_id)
     log.info(f"Preparing to grade Course \"{course.name}\"")
 
-    # Get course-level defaults
-    course_defaults = yaml_course.get('assignment_defaults', {})
-    course_grader = yaml_course.get('grader')
+    # Check if using new format (assignment_groups) or legacy format (assignments)
+    if 'assignment_groups' in yaml_course:
+      # NEW FORMAT: Process assignment groups
+      assignments_to_grade.extend(
+        _process_assignment_groups(
+          course, yaml_course, args, push_grades
+        )
+      )
+    else:
+      # LEGACY FORMAT: Process assignments directly
+      assignments_to_grade.extend(
+        _process_legacy_assignments(
+          course, yaml_course, args, push_grades
+        )
+      )
 
-    # Walk through assignments in course to grade, error if we don't have required information
-    for yaml_assignment in yaml_course.get('assignments', []):
-      if yaml_assignment.get('disabled', False):
-        continue
-      try:
-        assignment_id = yaml_assignment['id']
-      except KeyError as e:
-        log.error("No assignment ID specified. Please update.")
-        log.error(f"{pprint.pformat(yaml_course)}")
-        log.error(e)
-        raise SystemExit(1)
+  return assignments_to_grade
 
-      # Merge course defaults with assignment-specific settings
-      merged_assignment = {}
-      merged_assignment.update(course_defaults)
-      merged_assignment.update(yaml_assignment)
 
-      # Merge kwargs specifically (deep merge)
-      merged_kwargs = {}
-      merged_kwargs.update(course_defaults.get('kwargs', {}))
-      merged_kwargs.update(yaml_assignment.get('kwargs', {}))
-      merged_assignment['kwargs'] = merged_kwargs
+def _process_assignment_groups(
+    course, yaml_course: Dict, args: argparse.Namespace, push_grades: bool
+) -> List[Dict]:
+  """
+  Process assignment_groups from new config format.
 
-      # Use course default grader if not specified at assignment level
-      if 'grader' not in merged_assignment:
-        merged_assignment['grader'] = course_grader or "Dummy"
+  Args:
+    course: Canvas course object
+    yaml_course: Course configuration from YAML
+    args: Command line arguments
+    push_grades: Whether to push grades
 
-      # Add this assignment to our list to be graded
+  Returns:
+    List of assignment data dicts
+  """
+  assignments = []
+  course_name = yaml_course.get('name')
+  course_slack_channel = yaml_course.get('slack_channel')
+
+  # Extract course-level settings (anything that's not a reserved key)
+  reserved_keys = {'name', 'id', 'assignment_groups', 'assignment_defaults', 'assignments', 'grader'}
+  course_settings = {k: v for k, v in yaml_course.items() if k not in reserved_keys}
+
+  for group in yaml_course.get('assignment_groups', []):
+    group_type = group.get('type')
+    if not group_type:
+      log.error(f"Assignment group missing 'type': {group}")
+      continue
+
+    # Get type configuration
+    try:
+      type_config = TypeRegistry.get_type_config(group_type)
+    except ValueError as e:
+      log.error(f"Error getting type config: {e}")
+      continue
+
+    # Extract group-level settings (anything that's not a reserved key)
+    group_reserved_keys = {'name', 'type', 'assignments', 'settings'}
+    group_settings = {k: v for k, v in group.items() if k not in group_reserved_keys}
+
+    # Also merge in explicit 'settings' dict if present
+    if 'settings' in group:
+      group_settings.update(group['settings'])
+
+    # Process each assignment in the group
+    for assignment in group.get('assignments', []):
+      # Normalize assignment format
+      normalized_assignment = normalize_assignment(assignment)
+
+      # Extract assignment-level settings (anything except 'id')
+      assignment_settings = {k: v for k, v in normalized_assignment.items() if k != 'id'}
+
+      # Merge settings: type defaults -> course -> group -> assignment
+      merged_settings = TypeRegistry.merge_settings(
+        group_type,
+        course_settings,
+        group_settings,
+        assignment_settings
+      )
+
+      # Build merged_assignment dict with all info needed for grading
+      merged_assignment = {
+        'kind': type_config['kind'],
+        'grader': type_config.get('grader', 'Dummy'),
+        'settings': merged_settings,
+        # Legacy compatibility - pass settings as kwargs too
+        'kwargs': merged_settings.copy()
+      }
+
+      # Add any fields from normalized_assignment (like repo_path)
+      for key in normalized_assignment:
+        if key != 'id':
+          merged_assignment[key] = normalized_assignment[key]
+
       assignment_data = create_assignment_data(
         course,
-        yaml_course.get("name"),
-        yaml_assignment,
+        course_name,
+        normalized_assignment,
         merged_assignment,
         args,
         push_grades,
-        yaml_course.get("slack_channel")
+        course_slack_channel
       )
-      assignments_to_grade.append(assignment_data)
+      assignments.append(assignment_data)
 
-  return assignments_to_grade
+  return assignments
+
+
+def _process_legacy_assignments(
+    course, yaml_course: Dict, args: argparse.Namespace, push_grades: bool
+) -> List[Dict]:
+  """
+  Process assignments from legacy config format.
+
+  Args:
+    course: Canvas course object
+    yaml_course: Course configuration from YAML
+    args: Command line arguments
+    push_grades: Whether to push grades
+
+  Returns:
+    List of assignment data dicts
+  """
+  assignments = []
+
+  # Get course-level defaults
+  course_defaults = yaml_course.get('assignment_defaults', {})
+  course_grader = yaml_course.get('grader')
+
+  # Walk through assignments in course to grade
+  for yaml_assignment in yaml_course.get('assignments', []):
+    if yaml_assignment.get('disabled', False):
+      continue
+    try:
+      assignment_id = yaml_assignment['id']
+    except KeyError as e:
+      log.error("No assignment ID specified. Please update.")
+      log.error(f"{pprint.pformat(yaml_course)}")
+      log.error(e)
+      raise SystemExit(1)
+
+    # Merge course defaults with assignment-specific settings
+    merged_assignment = {}
+    merged_assignment.update(course_defaults)
+    merged_assignment.update(yaml_assignment)
+
+    # Merge kwargs specifically (deep merge)
+    merged_kwargs = {}
+    merged_kwargs.update(course_defaults.get('kwargs', {}))
+    merged_kwargs.update(yaml_assignment.get('kwargs', {}))
+    merged_assignment['kwargs'] = merged_kwargs
+
+    # Use course default grader if not specified at assignment level
+    if 'grader' not in merged_assignment:
+      merged_assignment['grader'] = course_grader or "Dummy"
+
+    # Add this assignment to our list to be graded
+    assignment_data = create_assignment_data(
+      course,
+      yaml_course.get("name"),
+      yaml_assignment,
+      merged_assignment,
+      args,
+      push_grades,
+      yaml_course.get("slack_channel")
+    )
+    assignments.append(assignment_data)
+
+  return assignments
 
 
 def execute_grading(assignments_to_grade: List[Dict], args: argparse.Namespace) -> List[Dict]:
