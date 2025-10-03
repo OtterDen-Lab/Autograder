@@ -60,6 +60,8 @@ courses:
       grade_after_lock_date: true  # Only grade after assignment lock date
       prefer_anthropic: true  # Try Claude first (cheaper, some prefer it)
     assignments:
+      - id: 506881 # LL3
+      - id: 506882 # LL4
       - id: 506883 # LL5
       - id: 506884 # LL6
       - id: 506885 # LL7
