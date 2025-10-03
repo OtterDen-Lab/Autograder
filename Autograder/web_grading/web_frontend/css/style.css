@@ -247,6 +247,25 @@ header h1 {
     background-color: var(--gray-200);
 }
 
+.session-item-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.session-item-main {
+    flex: 1;
+}
+
+.btn-danger {
+    background-color: var(--danger-color);
+    color: white;
+}
+
+.btn-danger:hover {
+    background-color: #dc2626;
+}
+
 /* Session Form */
 #new-session-form {
     background-color: var(--gray-100);

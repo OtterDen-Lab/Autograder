@@ -22,9 +22,14 @@ async function loadSessions() {
             const item = document.createElement('div');
             item.className = 'session-item';
             item.innerHTML = `
-                <strong>${session.assignment_name}</strong>
-                <div>${session.course_name || `Course ${session.course_id}`}</div>
-                <div>Status: ${session.status}</div>
+                <div class="session-item-content">
+                    <div class="session-item-main">
+                        <strong>${session.assignment_name}</strong>
+                        <div>${session.course_name || `Course ${session.course_id}`}</div>
+                        <div>Status: ${session.status}</div>
+                    </div>
+                    <button class="btn btn-danger btn-small" onclick="event.stopPropagation(); deleteSession(${session.id})">Delete</button>
+                </div>
             `;
             item.onclick = () => selectSession(session.id);
             sessionList.appendChild(item);
@@ -266,6 +271,29 @@ async function uploadFiles() {
     } catch (error) {
         console.error('Upload failed:', error);
         alert('Upload failed');
+    }
+}
+
+// Delete a session
+async function deleteSession(sessionId) {
+    if (!confirm('Are you sure you want to delete this session? This cannot be undone.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+            method: 'DELETE'
+        });
+
+        if (response.ok) {
+            // Reload sessions list
+            loadSessions();
+        } else {
+            alert('Failed to delete session');
+        }
+    } catch (error) {
+        console.error('Failed to delete session:', error);
+        alert('Failed to delete session');
     }
 }
 
