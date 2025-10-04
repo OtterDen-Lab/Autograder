@@ -427,23 +427,31 @@ function listenForStatusUpdates() {
                 }
             }
 
-            if (session.status !== currentSession.status) {
+            // Check if processing is complete (not in preprocessing state)
+            const isProcessingComplete = session.status !== 'preprocessing';
+            const statusChanged = session.status !== currentSession.status;
+
+            if (statusChanged) {
+                currentSession = session;
+                updateSessionInfo();
+            }
+
+            if (isProcessingComplete && (session.status === 'ready' || session.status === 'name_matching_needed' || session.status === 'grading')) {
+                clearInterval(interval);
+
+                // Complete the progress bar
+                progressFill.style.width = '100%';
+                progressFill.textContent = '100%';
+                statusDiv.textContent = 'Processing complete!';
+
+                // Update currentSession one more time
                 currentSession = session;
                 updateSessionInfo();
 
-                if (session.status === 'ready' || session.status === 'name_matching_needed') {
-                    clearInterval(interval);
-
-                    // Complete the progress bar
-                    progressFill.style.width = '100%';
-                    progressFill.textContent = '100%';
-                    statusDiv.textContent = 'Processing complete!';
-
-                    // Show final message for 2 seconds before navigating
-                    setTimeout(() => {
-                        navigateToSection(getNextSectionForStatus(session.status));
-                    }, 2000);
-                }
+                // Show final message for 2 seconds before navigating
+                setTimeout(() => {
+                    navigateToSection(getNextSectionForStatus(session.status));
+                }, 2000);
             }
         } catch (error) {
             console.error('Status check failed:', error);
