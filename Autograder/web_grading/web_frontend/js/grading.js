@@ -379,8 +379,15 @@ document.getElementById('finalize-btn').onclick = async () => {
         }
 
         // Show progress area and start polling
-        document.getElementById('finalization-progress').style.display = 'block';
+        const progressDiv = document.getElementById('finalization-progress');
+        const messageDiv = document.getElementById('finalization-message');
+        const progressBar = document.getElementById('finalization-progress-bar');
+
+        progressDiv.style.display = 'block';
+        messageDiv.textContent = 'Starting finalization...';
+        progressBar.style.width = '0%';
         document.getElementById('finalize-btn').disabled = true;
+
         startFinalizationPolling();
 
     } catch (error) {
@@ -427,5 +434,5 @@ function startFinalizationPolling() {
         } catch (error) {
             console.error('Failed to check finalization status:', error);
         }
-    }, 2000);
+    }, 500);  // Poll every 500ms for responsive updates
 }

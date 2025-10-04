@@ -87,13 +87,23 @@
                     <p>Drag and drop exam files here, or click to select</p>
                     <input type="file" id="file-input" multiple accept=".pdf,.zip">
                 </div>
-                <div id="upload-progress" class="progress-bar"></div>
-                <div id="upload-status"></div>
+                <div id="upload-progress-container" style="display: none; margin: 20px 0;">
+                    <div id="upload-status" style="margin-bottom: 10px; font-weight: 500; color: var(--gray-700);"></div>
+                    <div id="upload-progress" class="progress-bar" style="height: 24px;">
+                        <div id="upload-progress-fill" class="progress-bar-fill" style="width: 0%; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: 600;"></div>
+                    </div>
+                </div>
             </section>
 
             <!-- Name Matching Section -->
             <section id="matching-section" class="section">
                 <h2>Name Matching</h2>
+                <div id="matching-progress" style="margin-bottom: 20px;">
+                    <div class="progress-bar" style="height: 20px; margin-bottom: 10px;">
+                        <div id="matching-progress-fill" class="progress-bar-fill" style="width: 0%"></div>
+                    </div>
+                    <div id="matching-progress-text" style="text-align: center; font-weight: 500; color: var(--gray-700);"></div>
+                </div>
                 <div id="unmatched-list"></div>
             </section>
 

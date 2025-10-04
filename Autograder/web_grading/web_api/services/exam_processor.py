@@ -113,6 +113,14 @@ class ExamProcessor:
         for document_id, pdf_path in enumerate(input_files):
             log.info(f"Processing exam {document_id + 1}/{len(input_files)}: {pdf_path.name}")
 
+            # Report progress: starting exam
+            if progress_callback:
+                progress_callback(
+                    processed=document_id,
+                    matched=len(matched_submissions),
+                    message=f"Processing exam {document_id + 1}/{len(input_files)}: {pdf_path.name}"
+                )
+
             # Extract name
             approximate_name, name_image = self.extract_name(
                 pdf_path,
@@ -120,6 +128,14 @@ class ExamProcessor:
                 student_names=[s["name"] for s in unmatched_students]
             )
             log.info(f"  Extracted name: {approximate_name}")
+
+            # Report progress: extracted name
+            if progress_callback:
+                progress_callback(
+                    processed=document_id,
+                    matched=len(matched_submissions),
+                    message=f"Processing exam {document_id + 1}/{len(input_files)}: Extracted name: {approximate_name}"
+                )
 
             # Try to match to Canvas student
             matched_student = None
@@ -140,8 +156,25 @@ class ExamProcessor:
                 else:
                     log.warning(f"  No good match found (best: {best_match['name']} at {best_score}%)")
 
+            # Report progress: matched student
+            if progress_callback:
+                match_msg = f"Matched to: {matched_student['name']}" if matched_student else "No match found"
+                progress_callback(
+                    processed=document_id,
+                    matched=len(matched_submissions) + (1 if matched_student else 0),
+                    message=f"Processing exam {document_id + 1}/{len(input_files)}: {match_msg}"
+                )
+
             # Redact and split into problems
             problem_images = self.redact_and_split(pdf_path, page_ranges)
+
+            # Report progress: generating images
+            if progress_callback:
+                progress_callback(
+                    processed=document_id,
+                    matched=len(matched_submissions) + (1 if matched_student else 0),
+                    message=f"Processing exam {document_id + 1}/{len(input_files)}: Generating problem images..."
+                )
 
             # Convert problem images to base64
             problems = []
@@ -175,12 +208,12 @@ class ExamProcessor:
             else:
                 unmatched_submissions.append(submission)
 
-            # Report progress
+            # Report progress: completed exam
             if progress_callback:
                 progress_callback(
                     processed=document_id + 1,
                     matched=len(matched_submissions),
-                    message=f"Processed {document_id + 1} of {len(input_files)} exams ({len(matched_submissions)} matched)"
+                    message=f"Completed exam {document_id + 1}/{len(input_files)} ({len(matched_submissions)} matched, {len(unmatched_submissions)} need matching)"
                 )
 
         log.info(f"Matched: {len(matched_submissions)}, Unmatched: {len(unmatched_submissions)}")

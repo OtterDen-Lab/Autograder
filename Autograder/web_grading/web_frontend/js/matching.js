@@ -31,6 +31,13 @@ function renderMatchingList() {
     const container = document.getElementById('unmatched-list');
 
     const unmatchedCount = allSubmissions.filter(s => !s.is_matched).length;
+    const matchedCount = allSubmissions.length - unmatchedCount;
+    const percentage = allSubmissions.length > 0 ? (matchedCount / allSubmissions.length * 100) : 0;
+
+    // Update progress bar
+    document.getElementById('matching-progress-fill').style.width = `${percentage}%`;
+    document.getElementById('matching-progress-text').textContent =
+        `${matchedCount} of ${allSubmissions.length} matched (${unmatchedCount} remaining)`;
 
     let html = `
         <p style="margin-bottom: 20px;">
@@ -171,6 +178,12 @@ document.addEventListener('DOMContentLoaded', () => {
             initializeGrading();
         } else if (sectionId === 'stats-section') {
             loadStatistics();
+            // Check if finalization is in progress
+            if (currentSession && currentSession.status === 'finalizing') {
+                document.getElementById('finalization-progress').style.display = 'block';
+                document.getElementById('finalize-btn').disabled = true;
+                startFinalizationPolling();
+            }
         }
     };
 });

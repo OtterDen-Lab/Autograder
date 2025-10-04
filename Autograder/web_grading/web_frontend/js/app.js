@@ -340,14 +340,37 @@ async function deleteSession(sessionId) {
 
 // Listen for status updates via polling (SSE to be implemented)
 function listenForStatusUpdates() {
+    const container = document.getElementById('upload-progress-container');
+    const progressFill = document.getElementById('upload-progress-fill');
+    const statusDiv = document.getElementById('upload-status');
+
+    // Show progress container
+    container.style.display = 'block';
+    statusDiv.textContent = 'Starting upload processing...';
+    progressFill.style.width = '0%';
+
+    console.log('Started listening for status updates');
+
     const interval = setInterval(async () => {
         try {
             const response = await fetch(`${API_BASE}/sessions/${currentSession.id}`);
             const session = await response.json();
 
+            console.log('Status update:', session.processing_message, session.status);
+
             // Update progress display
             if (session.processing_message) {
-                document.getElementById('upload-status').textContent = session.processing_message;
+                statusDiv.textContent = session.processing_message;
+
+                // Try to parse progress from message (e.g., "Processing exam 3/27")
+                const progressMatch = session.processing_message.match(/(\d+)\/(\d+)/);
+                if (progressMatch) {
+                    const current = parseInt(progressMatch[1]);
+                    const total = parseInt(progressMatch[2]);
+                    const percentage = Math.round((current / total) * 100);
+                    progressFill.style.width = `${percentage}%`;
+                    progressFill.textContent = `${percentage}%`;
+                }
             }
 
             if (session.status !== currentSession.status) {
@@ -356,6 +379,11 @@ function listenForStatusUpdates() {
 
                 if (session.status === 'ready' || session.status === 'name_matching_needed') {
                     clearInterval(interval);
+
+                    // Complete the progress bar
+                    progressFill.style.width = '100%';
+                    progressFill.textContent = '100%';
+                    statusDiv.textContent = 'Processing complete!';
 
                     // Show final message for 2 seconds before navigating
                     setTimeout(() => {
@@ -366,5 +394,5 @@ function listenForStatusUpdates() {
         } catch (error) {
             console.error('Status check failed:', error);
         }
-    }, 500);  // Poll every 500ms instead of 2000ms
+    }, 500);  // Poll every 500ms
 }
