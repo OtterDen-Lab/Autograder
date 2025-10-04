@@ -143,6 +143,7 @@
                     <div style="display: flex; gap: 10px;">
                         <button id="submit-grade-btn" class="btn btn-primary">Submit & Next (Enter)</button>
                         <button id="next-problem-btn" class="btn">Skip (Shift+Tab)</button>
+                        <button id="decipher-btn" class="btn btn-secondary">Decipher Handwriting</button>
                     </div>
                 </div>
             </section>
@@ -163,6 +164,18 @@
                 <button id="finalize-btn" class="btn btn-success" style="margin-top: 20px;">Finalize & Upload to Canvas</button>
             </section>
         </main>
+    </div>
+
+    <!-- Handwriting Transcription Dialog -->
+    <div id="transcription-dialog" class="transcription-dialog" style="display: none;">
+        <div class="transcription-header">
+            <span class="transcription-title">Handwriting Transcription</span>
+            <button id="close-transcription" class="transcription-close">&times;</button>
+        </div>
+        <div class="transcription-content">
+            <div id="transcription-text"></div>
+        </div>
+        <div class="transcription-resize-handle"></div>
     </div>
 
     <script src="/js/app.js"></script>

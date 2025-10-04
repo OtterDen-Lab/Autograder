@@ -672,3 +672,94 @@ header h1 {
     font-size: 16px;
     margin-bottom: 5px;
 }
+
+/* Handwriting Transcription Dialog */
+.transcription-dialog {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 500px;
+    min-width: 300px;
+    min-height: 200px;
+    max-width: 90vw;
+    max-height: 80vh;
+    background: white;
+    border: 2px solid var(--gray-700);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    resize: both;
+    overflow: auto;
+}
+
+.transcription-header {
+    background: var(--gray-700);
+    color: white;
+    padding: 12px 15px;
+    border-radius: 6px 6px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: move;
+    user-select: none;
+}
+
+.transcription-title {
+    font-weight: 600;
+    font-size: 16px;
+}
+
+.transcription-close {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+}
+
+.transcription-close:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.transcription-content {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    line-height: 1.6;
+}
+
+#transcription-text {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: var(--gray-900);
+}
+
+.transcription-loading {
+    text-align: center;
+    color: var(--gray-700);
+    font-style: italic;
+}
+
+.transcription-resize-handle {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 20px;
+    height: 20px;
+    cursor: nwse-resize;
+    background: linear-gradient(135deg, transparent 50%, var(--gray-700) 50%);
+    border-bottom-right-radius: 8px;
+}

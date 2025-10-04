@@ -467,3 +467,66 @@ function startFinalizationPolling() {
         }
     }, 500);  // Poll every 500ms for responsive updates
 }
+
+// Handwriting Transcription Dialog
+const transcriptionDialog = document.getElementById('transcription-dialog');
+const transcriptionText = document.getElementById('transcription-text');
+const closeTranscription = document.getElementById('close-transcription');
+const decipherBtn = document.getElementById('decipher-btn');
+
+// Make dialog draggable
+let isDragging = false;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+
+document.querySelector('.transcription-header').addEventListener('mousedown', (e) => {
+    if (e.target.classList.contains('transcription-close')) return;
+    isDragging = true;
+    const rect = transcriptionDialog.getBoundingClientRect();
+    dragOffsetX = e.clientX - rect.left;
+    dragOffsetY = e.clientY - rect.top;
+    transcriptionDialog.style.transform = 'none';
+});
+
+document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    transcriptionDialog.style.left = (e.clientX - dragOffsetX) + 'px';
+    transcriptionDialog.style.top = (e.clientY - dragOffsetY) + 'px';
+});
+
+document.addEventListener('mouseup', () => {
+    isDragging = false;
+});
+
+// Close dialog
+closeTranscription.addEventListener('click', () => {
+    transcriptionDialog.style.display = 'none';
+});
+
+// Decipher handwriting button
+decipherBtn.addEventListener('click', async () => {
+    if (!currentProblem) {
+        alert('No problem loaded');
+        return;
+    }
+
+    // Show dialog with loading state
+    transcriptionText.innerHTML = '<div class="transcription-loading">Transcribing handwriting...</div>';
+    transcriptionDialog.style.display = 'flex';
+
+    try {
+        const response = await fetch(`${API_BASE}/problems/${currentProblem.id}/decipher`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error('Transcription failed');
+        }
+
+        const data = await response.json();
+        transcriptionText.textContent = data.transcription;
+    } catch (error) {
+        console.error('Failed to decipher handwriting:', error);
+        transcriptionText.innerHTML = '<div style="color: var(--danger-color);">Failed to transcribe handwriting. Please try again.</div>';
+    }
+});

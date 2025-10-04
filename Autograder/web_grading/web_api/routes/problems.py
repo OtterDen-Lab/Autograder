@@ -4,9 +4,15 @@ Problem grading endpoints.
 from fastapi import APIRouter, HTTPException
 from datetime import datetime
 from typing import Optional
+import sys
+from pathlib import Path
 
 from ..models import ProblemResponse, GradeSubmission
 from ..database import get_db_connection, update_problem_stats
+
+# Add parent to path for AI helper import
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+import Autograder.ai_helper as ai_helper
 
 router = APIRouter()
 
@@ -129,3 +135,43 @@ async def get_problem(problem_id: int):
             blank_method=row["blank_method"],
             blank_reasoning=row["blank_reasoning"]
         )
+
+
+@router.post("/{problem_id}/decipher")
+async def decipher_handwriting(problem_id: int):
+    """Use AI to transcribe handwritten text from a problem image"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT image_data FROM problems WHERE id = ?", (problem_id,))
+        row = cursor.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Problem not found")
+
+        image_base64 = row["image_data"]
+
+    # Query AI to transcribe handwriting
+    query = """Please transcribe all handwritten text from this exam answer.
+
+Instructions:
+- Transcribe ONLY handwritten text (ignore printed questions/instructions)
+- Preserve the structure and organization of the answer
+- If text is unclear, use [unclear] notation
+- If there are diagrams or drawings, describe them briefly in [brackets]
+- Maintain mathematical notation as best as possible
+
+Respond with just the transcribed text."""
+
+    try:
+        response, _ = ai_helper.AI_Helper__Anthropic().query_ai(
+            query,
+            attachments=[("png", image_base64)]
+        )
+
+        return {
+            "problem_id": problem_id,
+            "transcription": response.strip()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
