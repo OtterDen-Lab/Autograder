@@ -73,11 +73,18 @@ class FinalizationService:
             """, (self.session_id,))
 
             row = cursor.fetchone()
+
+            # Handle older sessions without use_prod_canvas column
+            try:
+                use_prod = row["use_prod_canvas"] if row["use_prod_canvas"] is not None else 0
+            except (KeyError, IndexError):
+                use_prod = 0
+
             return {
                 "course_id": row["course_id"],
                 "assignment_id": row["assignment_id"],
                 "canvas_points": row["canvas_points"],
-                "use_prod_canvas": row.get("use_prod_canvas", 0)
+                "use_prod_canvas": use_prod
             }
 
     def _init_canvas(self, session_info: Dict):

@@ -245,8 +245,11 @@ async def get_canvas_info(session_id: int):
         if not row:
             raise HTTPException(status_code=404, detail="Session not found")
 
-    # Get Canvas environment from session
-    use_prod = bool(row.get("use_prod_canvas", 0))
+    # Get Canvas environment from session (default to False for older sessions)
+    try:
+        use_prod = bool(row["use_prod_canvas"] if row["use_prod_canvas"] is not None else 0)
+    except (KeyError, IndexError):
+        use_prod = False
     canvas = CanvasInterface(prod=use_prod)
 
     # Get course and assignment to construct URL
