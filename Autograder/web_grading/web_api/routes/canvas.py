@@ -18,22 +18,48 @@ async def list_courses():
     try:
         canvas_interface = get_canvas_interface()
 
-        # Get all courses
-        courses = canvas_interface.canvas.get_courses(enrollment_state='active')
+        # Get all active courses, include additional fields for sorting
+        courses = canvas_interface.canvas.get_courses(
+            enrollment_state='active',
+            enrollment_type='teacher',  # Only courses where user is a teacher
+            include=['term', 'favorites']  # Include term and favorites information
+        )
 
         # Determine environment label
         is_dev = "beta" in canvas_interface.canvas_url or "test" in canvas_interface.canvas_url
         env_label = "DEV" if is_dev else "PROD"
 
-        # Convert to simple list
+        # Convert to list with metadata for sorting
         course_list = []
         for course in courses:
-            # Only include courses with a name (skip concluded/hidden courses)
+            # Only include courses with a name and workflow_state = 'available'
             if hasattr(course, 'name'):
-                course_list.append({
-                    "id": course.id,
-                    "name": course.name,
-                })
+                # Extract start_at and enrollment_term_id if available
+                start_at = getattr(course, 'start_at', None)
+                term_id = getattr(course, 'enrollment_term_id', None)
+                workflow_state = getattr(course, 'workflow_state', None)
+                is_favorite = getattr(course, 'is_favorite', False)
+
+                # Only include available (not deleted/completed) courses
+                if workflow_state == 'available':
+                    course_list.append({
+                        "id": course.id,
+                        "name": course.name,
+                        "start_at": start_at,
+                        "enrollment_term_id": term_id,
+                        "is_favorite": is_favorite,
+                    })
+
+        # Sort by: favorites first, then by term ID (highest first), then by start date (newest first)
+        # Courses without start_at go to the end
+        course_list.sort(
+            key=lambda c: (
+                c['is_favorite'],  # Favorites first (True > False)
+                c['enrollment_term_id'] or 0,  # Higher term IDs first
+                c['start_at'] or ''  # Then by start date (newer first)
+            ),
+            reverse=True
+        )
 
         return {
             "courses": course_list,
@@ -50,12 +76,17 @@ async def list_courses():
 @router.get("/courses/{course_id}/assignments")
 async def list_assignments(course_id: int):
     """List all assignments for a course"""
+    import logging
+    log = logging.getLogger(__name__)
+
     try:
         canvas_interface = get_canvas_interface()
-        course = canvas_interface.get_course(course_id)
+
+        # Get the raw Canvas course object directly from the canvasapi library
+        canvas_course = canvas_interface.canvas.get_course(course_id)
 
         # Get all assignments
-        assignments = course.canvas_course.get_assignments()
+        assignments = canvas_course.get_assignments()
 
         # Convert to simple list
         assignment_list = []
@@ -66,9 +97,11 @@ async def list_assignments(course_id: int):
                 "points_possible": assignment.points_possible if hasattr(assignment, 'points_possible') else None,
             })
 
+        log.info(f"Found {len(assignment_list)} assignments for course {course_id}")
         return {"assignments": assignment_list}
 
     except Exception as e:
+        log.error(f"Failed to fetch assignments: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch assignments: {str(e)}"

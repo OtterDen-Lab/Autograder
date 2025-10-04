@@ -240,7 +240,9 @@ async function loadCourses() {
         data.courses.forEach(course => {
             const option = document.createElement('option');
             option.value = course.id;
-            option.textContent = course.name;
+            // Add star indicator for favorite courses
+            const prefix = course.is_favorite ? '⭐ ' : '';
+            option.textContent = prefix + course.name;
             courseSelect.appendChild(option);
         });
 
