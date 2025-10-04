@@ -88,6 +88,17 @@ async function updateOverallProgress() {
     }
 }
 
+// Upload more exams button
+document.getElementById('upload-more-btn').addEventListener('click', () => {
+    if (!currentSession) return;
+    // Navigate back to upload section with currentSession still set
+    navigateToSection('upload-section');
+    // Show a message that we're adding to existing session
+    document.getElementById('initial-upload-message').style.display = 'block';
+    document.getElementById('initial-upload-message').innerHTML =
+        `<strong>Adding exams to:</strong> ${currentSession.assignment_name} - ${currentSession.course_name || `Course ${currentSession.course_id}`}`;
+});
+
 // Setup grading controls
 function setupGradingControls() {
     document.getElementById('submit-grade-btn').onclick = submitGrade;

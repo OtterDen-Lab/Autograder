@@ -64,7 +64,9 @@ class ExamProcessor:
         detect_blank: bool = False,
         blank_confidence_threshold: float = 0.8,
         use_ai_for_borderline: bool = False,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        document_id_offset: int = 0,
+        file_metadata: Optional[Dict[Path, Dict]] = None
     ) -> Tuple[List[Dict], List[Dict]]:
         """
         Process exam PDFs.
@@ -78,11 +80,14 @@ class ExamProcessor:
             blank_confidence_threshold: Confidence threshold for using AI verification on blanks
             use_ai_for_borderline: Whether to use AI for low-confidence blank detections
             progress_callback: Optional callback function(processed, matched, message) for progress updates
+            document_id_offset: Starting document_id (useful when adding more exams to existing session)
+            file_metadata: Optional dict mapping file_path -> {hash, original_filename}
 
         Returns:
             Tuple of (matched_submissions, unmatched_submissions)
             Each submission dict contains: document_id, student_name, canvas_user_id,
-            page_mappings, problems (list of {problem_number, image_base64, is_blank, blank_confidence})
+            page_mappings, problems (list of {problem_number, image_base64, is_blank, blank_confidence}),
+            file_hash, original_filename
         """
         log.info(f"Processing {len(input_files)} exams")
 
@@ -122,15 +127,16 @@ class ExamProcessor:
         unmatched_submissions = []
         unmatched_students = canvas_students.copy()
 
-        for document_id, pdf_path in enumerate(input_files):
-            log.info(f"Processing exam {document_id + 1}/{len(input_files)}: {pdf_path.name}")
+        for index, pdf_path in enumerate(input_files):
+            document_id = index + document_id_offset
+            log.info(f"Processing exam {index + 1}/{len(input_files)} (document_id={document_id}): {pdf_path.name}")
 
             # Report progress: starting exam
             if progress_callback:
                 progress_callback(
-                    processed=document_id,
+                    processed=index,
                     matched=len(matched_submissions),
-                    message=f"Processing exam {document_id + 1}/{len(input_files)}: {pdf_path.name}"
+                    message=f"Processing exam {index + 1}/{len(input_files)}: {pdf_path.name}"
                 )
 
             # Extract name
@@ -144,9 +150,9 @@ class ExamProcessor:
             # Report progress: extracted name
             if progress_callback:
                 progress_callback(
-                    processed=document_id,
+                    processed=index,
                     matched=len(matched_submissions),
-                    message=f"Processing exam {document_id + 1}/{len(input_files)}: Extracted name: {approximate_name}"
+                    message=f"Processing exam {index + 1}/{len(input_files)}: Extracted name: {approximate_name}"
                 )
 
             # Try to match to Canvas student
@@ -172,17 +178,17 @@ class ExamProcessor:
             if progress_callback:
                 match_msg = f"Matched to: {matched_student['name']}" if matched_student else "No match found"
                 progress_callback(
-                    processed=document_id,
+                    processed=index,
                     matched=len(matched_submissions) + (1 if matched_student else 0),
-                    message=f"Processing exam {document_id + 1}/{len(input_files)}: {match_msg}"
+                    message=f"Processing exam {index + 1}/{len(input_files)}: {match_msg}"
                 )
 
             # Report progress: splitting into problems
             if progress_callback:
                 progress_callback(
-                    processed=document_id,
+                    processed=index,
                     matched=len(matched_submissions) + (1 if matched_student else 0),
-                    message=f"Processing exam {document_id + 1}/{len(input_files)}: Splitting into problems..."
+                    message=f"Processing exam {index + 1}/{len(input_files)}: Splitting into problems..."
                 )
 
             # Redact and split into problems (use auto-detection if no page_ranges specified)
@@ -222,7 +228,9 @@ class ExamProcessor:
                 "student_name": matched_student["name"] if matched_student else None,
                 "canvas_user_id": matched_student["user_id"] if matched_student else None,
                 "page_mappings": page_mappings_by_submission[document_id] if page_mappings_by_submission else [],
-                "problems": problems
+                "problems": problems,
+                "file_hash": file_metadata[pdf_path]["hash"] if file_metadata and pdf_path in file_metadata else None,
+                "original_filename": file_metadata[pdf_path]["original_filename"] if file_metadata and pdf_path in file_metadata else pdf_path.name
             }
 
             if matched_student:
@@ -233,9 +241,9 @@ class ExamProcessor:
             # Report progress: completed exam
             if progress_callback:
                 progress_callback(
-                    processed=document_id + 1,
+                    processed=index + 1,
                     matched=len(matched_submissions),
-                    message=f"Completed exam {document_id + 1}/{len(input_files)} ({len(matched_submissions)} matched, {len(unmatched_submissions)} need matching)"
+                    message=f"Completed exam {index + 1}/{len(input_files)} ({len(matched_submissions)} matched, {len(unmatched_submissions)} need matching)"
                 )
 
         log.info(f"Matched: {len(matched_submissions)}, Unmatched: {len(unmatched_submissions)}")

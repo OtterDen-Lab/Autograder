@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 
 def get_db_path() -> Path:
@@ -115,6 +115,8 @@ def create_schema(cursor):
             page_mappings TEXT NOT NULL,
             total_score REAL,
             graded_at TIMESTAMP,
+            file_hash TEXT,
+            original_filename TEXT,
             FOREIGN KEY (session_id) REFERENCES grading_sessions(id)
         )
     """)
@@ -154,6 +156,11 @@ def create_schema(cursor):
     cursor.execute("""
         CREATE INDEX idx_submissions_session
         ON submissions(session_id)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX idx_submissions_file_hash
+        ON submissions(session_id, file_hash)
     """)
 
     # Problem statistics (computed view)
@@ -197,6 +204,10 @@ def run_migrations(cursor, from_version: int):
         migrate_to_v5(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (5)")
 
+    if from_version < 6:
+        migrate_to_v6(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (6)")
+
 
 def migrate_to_v2(cursor):
     """Add progress tracking columns to grading_sessions"""
@@ -230,6 +241,17 @@ def migrate_to_v5(cursor):
     cursor.execute("ALTER TABLE problems ADD COLUMN blank_confidence REAL DEFAULT 0.0")
     cursor.execute("ALTER TABLE problems ADD COLUMN blank_method TEXT")
     cursor.execute("ALTER TABLE problems ADD COLUMN blank_reasoning TEXT")
+
+
+def migrate_to_v6(cursor):
+    """Add file hash tracking to submissions"""
+    log.info("Migrating to schema version 6: adding file_hash and original_filename to submissions")
+
+    cursor.execute("ALTER TABLE submissions ADD COLUMN file_hash TEXT")
+    cursor.execute("ALTER TABLE submissions ADD COLUMN original_filename TEXT")
+
+    # Create index for fast duplicate detection
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_submissions_file_hash ON submissions(session_id, file_hash)")
 
 
 def update_problem_stats(session_id: int):

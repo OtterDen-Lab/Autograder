@@ -2,15 +2,25 @@
 File upload and processing endpoints.
 """
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
-from typing import List
+from typing import List, Dict
 import tempfile
 import zipfile
+import hashlib
 from pathlib import Path
 
 from ..models import UploadResponse
 from ..database import get_db_connection
 
 router = APIRouter()
+
+
+def compute_file_hash(file_path: Path) -> str:
+    """Compute SHA256 hash of a file"""
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
 
 
 @router.post("/{session_id}/upload", response_model=UploadResponse)
@@ -31,15 +41,24 @@ async def upload_exams(
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Session not found")
 
-    # Save uploaded files temporarily
+    # Save uploaded files temporarily and compute hashes
     temp_dir = Path(tempfile.mkdtemp())
     saved_files = []
+    file_metadata = {}  # Map: file_path -> {hash, original_filename}
 
     for file in files:
         file_path = temp_dir / file.filename
         with open(file_path, "wb") as f:
             content = await file.read()
             f.write(content)
+
+        # Compute hash for duplicate detection
+        file_hash = compute_file_hash(file_path)
+        file_metadata[file_path] = {
+            "hash": file_hash,
+            "original_filename": file.filename
+        }
+
         saved_files.append(file_path)
 
     # If it's a zip file, extract it
@@ -51,11 +70,18 @@ async def upload_exams(
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(extract_dir)
 
-        # Find all PDFs in extracted directory
+        # Find all PDFs in extracted directory and compute their hashes
         saved_files = list(extract_dir.rglob("*.pdf"))
+        file_metadata = {}
+        for pdf_path in saved_files:
+            file_hash = compute_file_hash(pdf_path)
+            file_metadata[pdf_path] = {
+                "hash": file_hash,
+                "original_filename": pdf_path.name
+            }
 
     # Start background processing
-    background_tasks.add_task(process_exam_files, session_id, saved_files)
+    background_tasks.add_task(process_exam_files, session_id, saved_files, file_metadata)
 
     # Update session status with initial count
     with get_db_connection() as conn:
@@ -79,9 +105,14 @@ async def upload_exams(
     )
 
 
-async def process_exam_files(session_id: int, file_paths: List[Path]):
+async def process_exam_files(session_id: int, file_paths: List[Path], file_metadata: Dict[Path, Dict]):
     """
     Background task to process uploaded exam files.
+
+    Args:
+        session_id: Session ID to process for
+        file_paths: List of PDF file paths
+        file_metadata: Dict mapping file_path -> {hash, original_filename}
     """
     import logging
     import json
@@ -111,24 +142,102 @@ async def process_exam_files(session_id: int, file_paths: List[Path]):
         assignment = course.get_assignment(assignment_id)
         students = assignment.get_students()
 
-        # Convert to simple dicts for processor
+        # Get students who already have submissions in this session
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT canvas_user_id
+                FROM submissions
+                WHERE session_id = ? AND canvas_user_id IS NOT NULL
+            """, (session_id,))
+            existing_user_ids = set(row[0] for row in cursor.fetchall())
+
+        # Convert to simple dicts for processor, excluding students who already have submissions
         canvas_students = [
             {"name": s.name, "user_id": s.user_id}
             for s in students
+            if s.user_id not in existing_user_ids
         ]
 
-        # Progress callback to update database
+        log.info(f"Found {len(students)} total students, {len(existing_user_ids)} already have submissions, {len(canvas_students)} available for matching")
+
+        # Check for duplicate files (same hash already processed)
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT file_hash, original_filename
+                FROM submissions
+                WHERE session_id = ? AND file_hash IS NOT NULL
+            """, (session_id,))
+            existing_hashes = {row[0]: row[1] for row in cursor.fetchall()}
+
+        # Filter out duplicate files
+        new_file_paths = []
+        duplicate_files = []
+        for file_path in file_paths:
+            file_hash = file_metadata[file_path]["hash"]
+            if file_hash in existing_hashes:
+                log.info(f"Skipping duplicate file: {file_path.name} (hash={file_hash[:8]}..., already processed as {existing_hashes[file_hash]})")
+                duplicate_files.append(file_path.name)
+            else:
+                new_file_paths.append(file_path)
+
+        if duplicate_files:
+            log.info(f"Skipped {len(duplicate_files)} duplicate file(s): {', '.join(duplicate_files)}")
+
+        if not new_file_paths:
+            log.info("No new files to process (all were duplicates)")
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE grading_sessions
+                    SET status = 'ready',
+                        processing_message = 'All uploaded files were duplicates - no new exams added',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (session_id,))
+            return
+
+        file_paths = new_file_paths
+        log.info(f"Processing {len(file_paths)} new file(s) after duplicate detection")
+
+        # Get the highest existing document_id to avoid conflicts
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT MAX(document_id) FROM submissions WHERE session_id = ?
+            """, (session_id,))
+            max_doc_id = cursor.fetchone()[0]
+            start_document_id = (max_doc_id + 1) if max_doc_id is not None else 0
+
+        log.info(f"Starting document_id offset: {start_document_id}")
+
+        # Get current totals for progress tracking
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT total_exams, processed_exams, matched_exams
+                FROM grading_sessions
+                WHERE id = ?
+            """, (session_id,))
+            row = cursor.fetchone()
+            base_total = row[0] or 0
+            base_processed = row[1] or 0
+            base_matched = row[2] or 0
+
+        # Progress callback to update database (with offset)
         def update_progress(processed, matched, message):
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     UPDATE grading_sessions
-                    SET processed_exams = ?,
+                    SET total_exams = ?,
+                        processed_exams = ?,
                         matched_exams = ?,
                         processing_message = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
-                """, (processed, matched, message, session_id))
+                """, (base_total + len(file_paths), base_processed + processed, base_matched + matched, message, session_id))
 
         # Process exams
         processor = ExamProcessor()
@@ -140,7 +249,9 @@ async def process_exam_files(session_id: int, file_paths: List[Path]):
             detect_blank=True,  # Enable blank detection
             blank_confidence_threshold=0.8,
             use_ai_for_borderline=False,  # Only use heuristics to save cost
-            progress_callback=update_progress
+            progress_callback=update_progress,
+            document_id_offset=start_document_id,
+            file_metadata=file_metadata
         )
 
         # Store in database
@@ -153,8 +264,8 @@ async def process_exam_files(session_id: int, file_paths: List[Path]):
                 # Insert submission
                 cursor.execute("""
                     INSERT INTO submissions
-                    (session_id, document_id, approximate_name, name_image_data, student_name, canvas_user_id, page_mappings)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (session_id, document_id, approximate_name, name_image_data, student_name, canvas_user_id, page_mappings, file_hash, original_filename)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     session_id,
                     submission["document_id"],
@@ -162,7 +273,9 @@ async def process_exam_files(session_id: int, file_paths: List[Path]):
                     submission.get("name_image_data"),
                     submission["student_name"],
                     submission["canvas_user_id"],
-                    json.dumps(submission["page_mappings"])
+                    json.dumps(submission["page_mappings"]),
+                    submission.get("file_hash"),
+                    submission.get("original_filename")
                 ))
 
                 submission_id = cursor.lastrowid

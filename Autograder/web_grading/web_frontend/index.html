@@ -75,6 +75,9 @@
             <!-- Upload Section -->
             <section id="upload-section" class="section">
                 <h2>Upload Exams</h2>
+                <div id="initial-upload-message" style="margin-bottom: 15px; padding: 10px; background: #eff6ff; border-radius: 6px; display: none;">
+                    <strong>Note:</strong> You can upload additional exams later if students submit late.
+                </div>
                 <div id="upload-area" class="upload-area">
                     <p>Drag and drop exam files here, or click to select</p>
                     <input type="file" id="file-input" multiple accept=".pdf,.zip">
@@ -119,7 +122,10 @@
                     </div>
                     <div class="overall-progress-text">
                         <span id="overall-progress-label">Overall: 0 / 0 (0%)</span>
-                        <button id="view-stats-btn" class="btn btn-secondary btn-small">View Statistics</button>
+                        <div style="display: flex; gap: 10px;">
+                            <button id="view-stats-btn" class="btn btn-secondary btn-small">View Statistics</button>
+                            <button id="upload-more-btn" class="btn btn-secondary btn-small">+ Upload More Exams</button>
+                        </div>
                     </div>
                 </div>
 
