@@ -99,6 +99,30 @@ document.getElementById('upload-more-btn').addEventListener('click', () => {
         `<strong>Adding exams to:</strong> ${currentSession.assignment_name} - ${currentSession.course_name || `Course ${currentSession.course_id}`}`;
 });
 
+// Setup score sync between slider and input
+function setupScoreSync() {
+    const scoreSlider = document.getElementById('score-slider');
+    const scoreInput = document.getElementById('score-input');
+
+    // Remove old listeners by replacing elements
+    const newSlider = scoreSlider.cloneNode(true);
+    const newInput = scoreInput.cloneNode(true);
+    scoreSlider.parentNode.replaceChild(newSlider, scoreSlider);
+    scoreInput.parentNode.replaceChild(newInput, scoreInput);
+
+    // Add new listeners
+    newSlider.addEventListener('input', (e) => {
+        newInput.value = e.target.value;
+    });
+
+    newInput.addEventListener('input', (e) => {
+        const value = parseFloat(e.target.value);
+        if (!isNaN(value)) {
+            newSlider.value = value;
+        }
+    });
+}
+
 // Setup grading controls
 function setupGradingControls() {
     document.getElementById('submit-grade-btn').onclick = submitGrade;
@@ -107,6 +131,9 @@ function setupGradingControls() {
         navigateToSection('stats-section');
         loadStatistics();
     };
+
+    // Initial score sync setup
+    setupScoreSync();
 
     // Keyboard shortcuts
     document.addEventListener('keydown', handleGradingKeyboard);
@@ -201,6 +228,28 @@ async function loadNextProblem() {
         // Update progress
         document.getElementById('grading-progress').textContent =
             `${currentProblem.current_index} / ${currentProblem.total_count}`;
+
+        // Update score input label and slider max with max points if available
+        const scoreSlider = document.getElementById('score-slider');
+        const scoreInput = document.getElementById('score-input');
+        const scoreLabel = document.querySelector('label:has(#score-input)');
+
+        if (currentProblem.max_points) {
+            scoreSlider.max = currentProblem.max_points;
+            scoreInput.max = currentProblem.max_points;
+            if (scoreLabel) {
+                scoreLabel.childNodes[0].textContent = `Score (max ${currentProblem.max_points}):`;
+            }
+        } else {
+            scoreSlider.max = 10;  // Default max
+            scoreInput.max = null;
+            if (scoreLabel) {
+                scoreLabel.childNodes[0].textContent = 'Score:';
+            }
+        }
+
+        // Re-attach event listeners after potential DOM updates
+        setupScoreSync();
 
         // Clear/populate form based on blank detection
         if (currentProblem.is_blank) {
@@ -332,10 +381,13 @@ async function loadStatistics() {
             container.innerHTML += '<h3 style="margin-top: 30px;">Per-Problem Statistics</h3>';
             const problemStatsHtml = stats.problem_stats.map(ps => {
                 const problemProgress = ps.num_total > 0 ? (ps.num_graded / ps.num_total * 100) : 0;
+                const avgText = ps.avg_score ? ps.avg_score.toFixed(2) : 'N/A';
+                const minText = ps.min_score !== null && ps.min_score !== undefined ? ps.min_score.toFixed(2) : 'N/A';
+                const maxText = ps.max_score !== null && ps.max_score !== undefined ? ps.max_score.toFixed(2) : 'N/A';
                 return `
                     <div class="stat-card">
                         <h3>Problem ${ps.problem_number}</h3>
-                        <div>Average: ${ps.avg_score ? ps.avg_score.toFixed(2) : 'N/A'}</div>
+                        <div>Avg: ${avgText} | Min: ${minText} | Max: ${maxText}</div>
                         <div>Graded: ${ps.num_graded} / ${ps.num_total} (${problemProgress.toFixed(0)}%)</div>
                     </div>
                 `;
@@ -642,7 +694,7 @@ function startFinalizationPolling() {
             }
 
             // Check if complete
-            if (status.status === 'complete') {
+            if (status.status === 'finalized' || status.status === 'complete') {
                 clearInterval(interval);
                 document.getElementById('finalization-progress-bar').style.width = '100%';
                 showNotification('Finalization complete! All grades have been uploaded to Canvas. 🎉', () => {

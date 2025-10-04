@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 10
 
 
 def get_db_path() -> Path:
@@ -213,6 +213,18 @@ def run_migrations(cursor, from_version: int):
         migrate_to_v7(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (7)")
 
+    if from_version < 8:
+        migrate_to_v8(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (8)")
+
+    if from_version < 9:
+        migrate_to_v9(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (9)")
+
+    if from_version < 10:
+        migrate_to_v10(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (10)")
+
 
 def migrate_to_v2(cursor):
     """Add progress tracking columns to grading_sessions"""
@@ -266,6 +278,38 @@ def migrate_to_v7(cursor):
     cursor.execute("ALTER TABLE grading_sessions ADD COLUMN use_prod_canvas INTEGER DEFAULT 0")
 
 
+def migrate_to_v8(cursor):
+    """Add min/max score tracking to problem_stats"""
+    log.info("Migrating to schema version 8: adding min_score and max_score to problem_stats")
+
+    cursor.execute("ALTER TABLE problem_stats ADD COLUMN min_score REAL")
+    cursor.execute("ALTER TABLE problem_stats ADD COLUMN max_score REAL")
+
+
+def migrate_to_v9(cursor):
+    """Add max_points column to problems"""
+    log.info("Migrating to schema version 9: adding max_points to problems")
+
+    cursor.execute("ALTER TABLE problems ADD COLUMN max_points REAL")
+
+
+def migrate_to_v10(cursor):
+    """Create problem_metadata table for storing max_points per problem number"""
+    log.info("Migrating to schema version 10: creating problem_metadata table")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS problem_metadata (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            problem_number INTEGER NOT NULL,
+            max_points REAL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
+            UNIQUE(session_id, problem_number)
+        )
+    """)
+
+
 def update_problem_stats(session_id: int):
     """Update computed statistics for a session"""
     with get_db_connection() as conn:
@@ -285,23 +329,34 @@ def update_problem_stats(session_id: int):
             cursor.execute("""
                 SELECT
                     AVG(score) as avg_score,
+                    MIN(score) as min_score,
+                    MAX(score) as max_score,
                     SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as num_graded,
                     COUNT(*) as num_total
                 FROM problems
-                WHERE session_id = ? AND problem_number = ?
+                WHERE session_id = ? AND problem_number = ? AND graded = 1
             """, (session_id, problem_num))
 
             row = cursor.fetchone()
-            avg_score, num_graded, num_total = row[0], row[1], row[2]
+            avg_score, min_score, max_score, num_graded, num_total_graded = row[0], row[1], row[2], row[3], row[4]
+
+            # Get total count (including ungraded)
+            cursor.execute("""
+                SELECT COUNT(*) FROM problems
+                WHERE session_id = ? AND problem_number = ?
+            """, (session_id, problem_num))
+            num_total = cursor.fetchone()[0]
 
             # Upsert statistics
             cursor.execute("""
-                INSERT INTO problem_stats (session_id, problem_number, avg_score, num_graded, num_total)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO problem_stats (session_id, problem_number, avg_score, min_score, max_score, num_graded, num_total)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id, problem_number)
                 DO UPDATE SET
                     avg_score = excluded.avg_score,
+                    min_score = excluded.min_score,
+                    max_score = excluded.max_score,
                     num_graded = excluded.num_graded,
                     num_total = excluded.num_total,
                     updated_at = CURRENT_TIMESTAMP
-            """, (session_id, problem_num, avg_score, num_graded, num_total))
+            """, (session_id, problem_num, avg_score, min_score, max_score, num_graded, num_total))

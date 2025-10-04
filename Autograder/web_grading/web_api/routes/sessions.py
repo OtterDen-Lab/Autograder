@@ -150,10 +150,18 @@ async def get_session_stats(session_id: int):
         problems_remaining = total_problems - problems_graded
         progress = (problems_graded / total_problems * 100) if total_problems > 0 else 0
 
-        # Get per-problem stats
+        # Get per-problem stats (calculate min/max dynamically)
         cursor.execute("""
-            SELECT * FROM problem_stats
+            SELECT
+                problem_number,
+                AVG(CASE WHEN graded = 1 THEN score END) as avg_score,
+                MIN(CASE WHEN graded = 1 THEN score END) as min_score,
+                MAX(CASE WHEN graded = 1 THEN score END) as max_score,
+                SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as num_graded,
+                COUNT(*) as num_total
+            FROM problems
             WHERE session_id = ?
+            GROUP BY problem_number
             ORDER BY problem_number
         """, (session_id,))
 
@@ -162,6 +170,8 @@ async def get_session_stats(session_id: int):
             problem_stats.append(ProblemStatsResponse(
                 problem_number=stat_row["problem_number"],
                 avg_score=stat_row["avg_score"],
+                min_score=stat_row["min_score"],
+                max_score=stat_row["max_score"],
                 num_graded=stat_row["num_graded"],
                 num_total=stat_row["num_total"],
             ))
@@ -327,6 +337,45 @@ async def update_canvas_config(
         raise HTTPException(status_code=400, detail=f"Failed to fetch Canvas data: {str(e)}")
 
 
+@router.put("/{session_id}/problem-max-points")
+async def update_problem_max_points(
+    session_id: int,
+    problem_number: int,
+    max_points: float
+):
+    """Update max points for a specific problem number in a session"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Verify session exists
+        cursor.execute("SELECT id FROM grading_sessions WHERE id = ?", (session_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Update metadata
+        cursor.execute("""
+            INSERT INTO problem_metadata (session_id, problem_number, max_points)
+            VALUES (?, ?, ?)
+            ON CONFLICT(session_id, problem_number)
+            DO UPDATE SET max_points = excluded.max_points, updated_at = CURRENT_TIMESTAMP
+        """, (session_id, problem_number, max_points))
+
+        # Update all existing problems with this number
+        cursor.execute("""
+            UPDATE problems
+            SET max_points = ?
+            WHERE session_id = ? AND problem_number = ?
+        """, (max_points, session_id, problem_number))
+
+        return {
+            "status": "updated",
+            "session_id": session_id,
+            "problem_number": problem_number,
+            "max_points": max_points,
+            "problems_updated": cursor.rowcount
+        }
+
+
 @router.delete("/{session_id}")
 async def delete_session(session_id: int):
     """Delete a grading session and all associated data"""
@@ -483,8 +532,8 @@ async def import_session(file: UploadFile = File(...)):
                     cursor.execute("""
                         INSERT INTO problems
                         (session_id, submission_id, problem_number, image_data, score, feedback,
-                         graded, graded_at, is_blank, blank_confidence, blank_method, blank_reasoning)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         graded, graded_at, is_blank, blank_confidence, blank_method, blank_reasoning, max_points)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         new_session_id,
                         new_submission_id,
@@ -497,7 +546,8 @@ async def import_session(file: UploadFile = File(...)):
                         problem.get("is_blank", 0),
                         problem.get("blank_confidence", 0.0),
                         problem.get("blank_method"),
-                        problem.get("blank_reasoning")
+                        problem.get("blank_reasoning"),
+                        problem.get("max_points")
                     ))
 
             # Import problem stats

@@ -280,22 +280,46 @@ async def process_exam_files(session_id: int, file_paths: List[Path], file_metad
 
                 submission_id = cursor.lastrowid
 
-                # Insert problems
+                # Insert problems and update metadata
                 for problem in submission["problems"]:
+                    problem_number = problem["problem_number"]
+
+                    # Check if we have metadata for this problem number
+                    cursor.execute("""
+                        SELECT max_points FROM problem_metadata
+                        WHERE session_id = ? AND problem_number = ?
+                    """, (session_id, problem_number))
+
+                    metadata_row = cursor.fetchone()
+                    if metadata_row:
+                        # Use stored max_points
+                        max_points = metadata_row["max_points"]
+                    else:
+                        # Use extracted max_points (if any) and store it
+                        max_points = problem.get("max_points")
+                        if max_points is not None:
+                            cursor.execute("""
+                                INSERT INTO problem_metadata (session_id, problem_number, max_points)
+                                VALUES (?, ?, ?)
+                                ON CONFLICT(session_id, problem_number)
+                                DO UPDATE SET max_points = excluded.max_points
+                            """, (session_id, problem_number, max_points))
+
                     cursor.execute("""
                         INSERT INTO problems
                         (session_id, submission_id, problem_number, image_data, graded,
-                         is_blank, blank_confidence, blank_method, blank_reasoning)
-                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+                         is_blank, blank_confidence, blank_method, blank_reasoning, max_points)
+                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
                     """, (
                         session_id,
                         submission_id,
-                        problem["problem_number"],
+                        problem_number,
                         problem["image_base64"],
                         1 if problem.get("is_blank", False) else 0,
                         problem.get("blank_confidence", 0.0),
                         problem.get("blank_method"),
-                        problem.get("blank_reasoning")
+                        problem.get("blank_reasoning"),
+                        max_points
                     ))
 
             # Update session status

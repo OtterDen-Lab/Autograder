@@ -100,13 +100,13 @@ async def run_finalization(session_id: int):
             # Run finalization
             await finalizer.finalize()
 
-        # Update session to complete
+        # Update session to finalized
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE grading_sessions
-                SET status = 'complete',
-                    processing_message = 'Finalization complete',
+                SET status = 'finalized',
+                    processing_message = 'Finalized and uploaded to Canvas',
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             """, (session_id,))

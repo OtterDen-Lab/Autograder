@@ -14,6 +14,7 @@ class SessionStatus(str, Enum):
     READY = "ready"
     GRADING = "grading"
     FINALIZING = "finalizing"
+    FINALIZED = "finalized"
     COMPLETE = "complete"
     ERROR = "error"
 
@@ -88,6 +89,7 @@ class ProblemResponse(BaseModel):
     score: Optional[float]
     feedback: Optional[str]
     graded: bool
+    max_points: Optional[float]
 
     # Metadata for grading context
     current_index: int
@@ -113,6 +115,8 @@ class ProblemStatsResponse(BaseModel):
     """Response model for problem statistics"""
     problem_number: int
     avg_score: Optional[float]
+    min_score: Optional[float]
+    max_score: Optional[float]
     num_graded: int
     num_total: int
 

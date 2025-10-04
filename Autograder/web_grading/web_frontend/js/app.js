@@ -17,7 +17,8 @@ function getStatusBadge(status) {
         'ready': { label: 'Ready to Grade', color: '#10b981' },  // green
         'grading': { label: 'Grading', color: '#8b5cf6' },  // purple
         'finalizing': { label: 'Finalizing', color: '#ec4899' },  // pink
-        'complete': { label: 'Complete', color: '#059669' },  // dark green
+        'finalized': { label: 'Finalized', color: '#6b7280' },  // grey
+        'complete': { label: 'Complete', color: '#059669' },  // dark green (legacy)
         'error': { label: 'Error', color: '#ef4444' }  // red
     };
 
@@ -101,6 +102,7 @@ function getNextSectionForStatus(status) {
         'ready': 'grading-section',
         'grading': 'grading-section',
         'finalizing': 'stats-section',
+        'finalized': 'stats-section',
         'complete': 'stats-section',
         'error': 'stats-section'
     };

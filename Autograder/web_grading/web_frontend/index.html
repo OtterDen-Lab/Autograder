@@ -144,7 +144,10 @@
                 <div class="grading-form">
                     <label>
                         Score:
-                        <input type="number" id="score-input" min="0" step="0.5" placeholder="Enter score">
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <input type="range" id="score-slider" min="0" max="10" step="0.5" value="0" style="flex: 1;">
+                            <input type="number" id="score-input" min="0" step="0.5" placeholder="Enter score" style="width: 100px;">
+                        </div>
                     </label>
                     <label>
                         Feedback (optional):

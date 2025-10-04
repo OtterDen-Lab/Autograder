@@ -491,6 +491,12 @@ class ExamProcessor:
                         problem_dict["blank_method"] = "ai"
                         problem_dict["blank_reasoning"] = ai_result.get("reasoning", "")
 
+                # Extract max points from score box (only if not already known for this problem number)
+                # Note: This will be checked against session metadata later
+                max_points = self.extract_max_points(img_base64)
+                if max_points is not None:
+                    problem_dict["max_points"] = max_points
+
                 problems.append(problem_dict)
 
                 problem_pdf.close()
@@ -627,3 +633,53 @@ Respond with ONLY a JSON object in this format:
                 "confidence": 0.0,
                 "reasoning": f"AI detection failed: {str(e)}"
             }
+
+    def extract_max_points(self, image_base64: str) -> Optional[float]:
+        """
+        Extract max points from score box in upper right corner.
+        Looks for patterns like "___/8" or "____ / 10"
+        """
+        try:
+            from PIL import Image
+            import io
+            import re
+
+            # Decode image
+            image_data = base64.b64decode(image_base64)
+            img = Image.open(io.BytesIO(image_data))
+
+            # Crop to upper right corner (top 15%, right 20%)
+            width, height = img.size
+            crop_height = int(height * 0.15)
+            crop_width = int(width * 0.20)
+            crop_box = (width - crop_width, 0, width, crop_height)
+            cropped = img.crop(crop_box)
+
+            # Convert to base64
+            buffer = io.BytesIO()
+            cropped.save(buffer, format='PNG')
+            cropped_b64 = base64.b64encode(buffer.getvalue()).decode()
+
+            # Use AI to extract the number
+            query = """Look at this image of a score box from the upper right corner of an exam problem.
+It should contain text like "___/8" or "____ / 10" where the number after the slash is the maximum points for this problem.
+
+Extract ONLY the number after the slash. If you cannot find a clear score box pattern, respond with "NOT_FOUND".
+Your response should be either a single number (e.g., "8" or "10") or "NOT_FOUND"."""
+
+            response, _ = ai_helper.AI_Helper__Anthropic().query_ai(query, attachments=[("png", cropped_b64)])
+            text = response.strip()
+
+            # Try to extract a number
+            match = re.search(r'\d+\.?\d*', text)
+            if match:
+                max_points = float(match.group())
+                log.info(f"Extracted max points: {max_points} from score box")
+                return max_points
+            else:
+                log.warning(f"Could not extract max points from AI response: {text}")
+                return None
+
+        except Exception as e:
+            log.error(f"Max points extraction failed: {e}")
+            return None
