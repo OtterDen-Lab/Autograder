@@ -160,6 +160,7 @@ function setupScoreSync() {
 function setupGradingControls() {
     document.getElementById('submit-grade-btn').onclick = submitGrade;
     document.getElementById('next-problem-btn').onclick = loadNextProblem;
+    document.getElementById('back-problem-btn').onclick = loadPreviousProblem;
     document.getElementById('view-stats-btn').onclick = () => {
         navigateToSection('stats-section');
         loadStatistics();
@@ -242,6 +243,67 @@ function handleGradingKeyboard(e) {
     }
 }
 
+// Load previous graded problem
+async function loadPreviousProblem() {
+    try {
+        const response = await fetch(
+            `${API_BASE}/problems/${currentSession.id}/${currentProblemNumber}/previous`
+        );
+
+        if (response.status === 404) {
+            alert('No previously graded problems found for this problem number');
+            return;
+        }
+
+        currentProblem = await response.json();
+
+        // Display problem
+        document.getElementById('problem-image').src =
+            `data:image/png;base64,${currentProblem.image_data}`;
+
+        // Update progress
+        document.getElementById('grading-progress').textContent =
+            `${currentProblem.current_index} / ${currentProblem.total_count}`;
+
+        // Update max points from cache (persistent per problem number)
+        updateMaxPointsDropdown();
+
+        // Re-attach event listeners after potential DOM updates
+        setupScoreSync();
+
+        // Populate form with existing grade
+        document.getElementById('score-input').value = currentProblem.score || '';
+        document.getElementById('score-slider').value = currentProblem.score || 0;
+        document.getElementById('feedback-input').value = currentProblem.feedback || '';
+
+        // Remove blank indicator if it exists
+        const oldIndicator = document.getElementById('blank-indicator');
+        if (oldIndicator) oldIndicator.remove();
+
+    } catch (error) {
+        console.error('Failed to load previous problem:', error);
+        alert('Failed to load previous problem: ' + error.message);
+    }
+}
+
+// Find next problem number with ungraded submissions
+async function findNextUngradedProblem() {
+    // Check each problem number to see if it has ungraded submissions
+    for (const problemNum of availableProblemNumbers) {
+        try {
+            const response = await fetch(
+                `${API_BASE}/problems/${currentSession.id}/${problemNum}/next`
+            );
+            if (response.ok) {
+                return problemNum; // Found an ungraded problem
+            }
+        } catch (error) {
+            console.error(`Error checking problem ${problemNum}:`, error);
+        }
+    }
+    return null; // No ungraded problems found
+}
+
 // Load next ungraded problem
 async function loadNextProblem() {
     try {
@@ -251,40 +313,37 @@ async function loadNextProblem() {
 
         if (response.status === 404) {
             // No more problems for this number
-            // Only show notification if we just graded something from this problem
-            if (lastGradedProblemNumber === currentProblemNumber) {
-                lastGradedProblemNumber = null; // Reset
+            // Find next ungraded problem number across all problems
+            const nextUngradedProblem = await findNextUngradedProblem();
 
-                // Find next ungraded problem number
-                const currentIndex = availableProblemNumbers.indexOf(currentProblemNumber);
-                const nextProblemNumber = availableProblemNumbers[currentIndex + 1];
-
-                if (nextProblemNumber) {
-                    showNotification(`All submissions for Problem ${currentProblemNumber} are graded! Moving to Problem ${nextProblemNumber}...`, () => {
-                        currentProblemNumber = nextProblemNumber;
+            if (nextUngradedProblem !== null) {
+                // Found ungraded problems in another problem number
+                if (lastGradedProblemNumber === currentProblemNumber) {
+                    // Show notification if we just graded something
+                    lastGradedProblemNumber = null;
+                    showNotification(`All submissions for Problem ${currentProblemNumber} are graded! Moving to Problem ${nextUngradedProblem}...`, () => {
+                        currentProblemNumber = nextUngradedProblem;
                         document.getElementById('problem-select').value = currentProblemNumber;
                         updateMaxPointsDropdown();
                         loadNextProblem();
                     });
                 } else {
-                    // All done!
+                    // Silently move to next ungraded problem
+                    currentProblemNumber = nextUngradedProblem;
+                    document.getElementById('problem-select').value = currentProblemNumber;
+                    updateMaxPointsDropdown();
+                    loadNextProblem();
+                }
+            } else {
+                // All problems are truly graded!
+                if (lastGradedProblemNumber === currentProblemNumber) {
+                    lastGradedProblemNumber = null;
                     showNotification('All problems are graded! 🎉', () => {
                         navigateToSection('stats-section');
                         loadStatistics();
                     });
-                }
-            } else {
-                // Already complete, just silently move to next or stats
-                const currentIndex = availableProblemNumbers.indexOf(currentProblemNumber);
-                const nextProblemNumber = availableProblemNumbers[currentIndex + 1];
-
-                if (nextProblemNumber) {
-                    currentProblemNumber = nextProblemNumber;
-                    document.getElementById('problem-select').value = currentProblemNumber;
-                    updateMaxPointsDropdown();
-                    loadNextProblem();
                 } else {
-                    // Show stats if everything is done
+                    // Already complete, go to stats
                     navigateToSection('stats-section');
                     loadStatistics();
                 }

@@ -60,6 +60,60 @@ async def get_next_problem(session_id: int, problem_number: int):
             score=row["score"],
             feedback=row["feedback"],
             graded=bool(row["graded"]),
+            max_points=row["max_points"],
+            current_index=current_index,
+            total_count=total_count,
+            is_blank=bool(row["is_blank"]),
+            blank_confidence=row["blank_confidence"] or 0.0,
+            blank_method=row["blank_method"],
+            blank_reasoning=row["blank_reasoning"]
+        )
+
+
+@router.get("/{session_id}/{problem_number}/previous", response_model=ProblemResponse)
+async def get_previous_problem(session_id: int, problem_number: int):
+    """Get most recently graded problem for a specific problem number"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get most recently graded problem
+        cursor.execute("""
+            SELECT * FROM problems
+            WHERE session_id = ? AND problem_number = ? AND graded = 1
+            ORDER BY graded_at DESC
+            LIMIT 1
+        """, (session_id, problem_number))
+
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No graded problems found for problem {problem_number}"
+            )
+
+        # Get counts for context
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as graded
+            FROM problems
+            WHERE session_id = ? AND problem_number = ?
+        """, (session_id, problem_number))
+
+        count_row = cursor.fetchone()
+        total_count = count_row["total"]
+        graded_count = count_row["graded"]
+        current_index = graded_count
+
+        return ProblemResponse(
+            id=row["id"],
+            problem_number=row["problem_number"],
+            submission_id=row["submission_id"],
+            image_data=row["image_data"],
+            score=row["score"],
+            feedback=row["feedback"],
+            graded=bool(row["graded"]),
+            max_points=row["max_points"],
             current_index=current_index,
             total_count=total_count,
             is_blank=bool(row["is_blank"]),
