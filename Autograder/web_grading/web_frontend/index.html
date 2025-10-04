@@ -69,7 +69,11 @@
                     </form>
                 </div>
 
-                <button id="new-session-btn" class="btn btn-primary">+ Create New Session</button>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button id="new-session-btn" class="btn btn-primary">+ Create New Session</button>
+                    <button id="import-session-btn" class="btn btn-secondary">Import Session</button>
+                </div>
+                <input type="file" id="import-file-input" accept=".json" style="display: none;">
             </section>
 
             <!-- Upload Section -->
@@ -167,7 +171,10 @@
                     </div>
                 </div>
 
-                <button id="finalize-btn" class="btn btn-success" style="margin-top: 20px;">Finalize & Upload to Canvas</button>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button id="finalize-btn" class="btn btn-success">Finalize & Upload to Canvas</button>
+                    <button id="export-session-btn" class="btn btn-secondary">Export Session (Checkpoint)</button>
+                </div>
             </section>
         </main>
     </div>

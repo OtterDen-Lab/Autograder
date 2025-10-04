@@ -1,9 +1,11 @@
 """
 Session management endpoints.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response, UploadFile, File
+from fastapi.responses import StreamingResponse
 from typing import List
 import json
+import io
 from datetime import datetime
 
 from ..models import (
@@ -287,3 +289,189 @@ async def delete_session(session_id: int):
             raise HTTPException(status_code=404, detail="Session not found")
 
         return {"status": "deleted", "session_id": session_id}
+
+
+@router.get("/{session_id}/export")
+async def export_session(session_id: int):
+    """Export complete session data as JSON for checkpointing"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get session metadata
+        cursor.execute("SELECT * FROM grading_sessions WHERE id = ?", (session_id,))
+        session_row = cursor.fetchone()
+        if not session_row:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        session_data = dict(session_row)
+
+        # Get all submissions
+        cursor.execute("SELECT * FROM submissions WHERE session_id = ?", (session_id,))
+        submissions = [dict(row) for row in cursor.fetchall()]
+
+        # Get all problems for each submission
+        for submission in submissions:
+            cursor.execute("""
+                SELECT * FROM problems
+                WHERE session_id = ? AND submission_id = ?
+                ORDER BY problem_number
+            """, (session_id, submission["id"]))
+            submission["problems"] = [dict(row) for row in cursor.fetchall()]
+
+        # Get problem stats
+        cursor.execute("SELECT * FROM problem_stats WHERE session_id = ?", (session_id,))
+        problem_stats = [dict(row) for row in cursor.fetchall()]
+
+        # Build export structure
+        export_data = {
+            "export_version": 1,
+            "exported_at": datetime.now().isoformat(),
+            "session": session_data,
+            "submissions": submissions,
+            "problem_stats": problem_stats
+        }
+
+        # Create JSON response
+        json_str = json.dumps(export_data, indent=2, default=str)
+
+        # Generate filename
+        assignment_name = session_data["assignment_name"].replace(" ", "_")
+        filename = f"grading_session_{session_id}_{assignment_name}.json"
+
+        # Return as downloadable file
+        return StreamingResponse(
+            io.BytesIO(json_str.encode()),
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+
+@router.post("/import")
+async def import_session(file: UploadFile = File(...)):
+    """Import session data from JSON checkpoint file"""
+    import logging
+    log = logging.getLogger(__name__)
+
+    try:
+        # Read file content
+        content = await file.read()
+
+        # Parse JSON
+        import_data = json.loads(content.decode())
+
+        # Validate structure
+        if import_data.get("export_version") != 1:
+            raise HTTPException(status_code=400, detail="Unsupported export version")
+
+        session_data = import_data["session"]
+        submissions = import_data["submissions"]
+        problem_stats = import_data.get("problem_stats", [])
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Create new session (without id to get auto-increment)
+            cursor.execute("""
+                INSERT INTO grading_sessions
+                (assignment_id, assignment_name, course_id, course_name, status, canvas_points,
+                 created_at, updated_at, total_exams, processed_exams, matched_exams, processing_message, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session_data["assignment_id"],
+                session_data["assignment_name"],
+                session_data["course_id"],
+                session_data.get("course_name"),
+                session_data["status"],
+                session_data.get("canvas_points"),
+                session_data.get("created_at"),
+                datetime.now(),  # Use current time for updated_at
+                session_data.get("total_exams", 0),
+                session_data.get("processed_exams", 0),
+                session_data.get("matched_exams", 0),
+                session_data.get("processing_message"),
+                session_data.get("metadata")
+            ))
+
+            new_session_id = cursor.lastrowid
+            log.info(f"Created new session {new_session_id} from import")
+
+            # Import submissions and problems
+            submission_id_map = {}  # Map old submission_id -> new submission_id
+
+            for submission in submissions:
+                old_submission_id = submission["id"]
+
+                cursor.execute("""
+                    INSERT INTO submissions
+                    (session_id, document_id, approximate_name, name_image_data, student_name, display_name,
+                     canvas_user_id, page_mappings, total_score, graded_at, file_hash, original_filename)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    new_session_id,
+                    submission["document_id"],
+                    submission.get("approximate_name"),
+                    submission.get("name_image_data"),
+                    submission.get("student_name"),
+                    submission.get("display_name"),
+                    submission.get("canvas_user_id"),
+                    submission["page_mappings"],
+                    submission.get("total_score"),
+                    submission.get("graded_at"),
+                    submission.get("file_hash"),
+                    submission.get("original_filename")
+                ))
+
+                new_submission_id = cursor.lastrowid
+                submission_id_map[old_submission_id] = new_submission_id
+
+                # Import problems for this submission
+                for problem in submission.get("problems", []):
+                    cursor.execute("""
+                        INSERT INTO problems
+                        (session_id, submission_id, problem_number, image_data, score, feedback,
+                         graded, graded_at, is_blank, blank_confidence, blank_method, blank_reasoning)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        new_session_id,
+                        new_submission_id,
+                        problem["problem_number"],
+                        problem["image_data"],
+                        problem.get("score"),
+                        problem.get("feedback"),
+                        problem.get("graded", 0),
+                        problem.get("graded_at"),
+                        problem.get("is_blank", 0),
+                        problem.get("blank_confidence", 0.0),
+                        problem.get("blank_method"),
+                        problem.get("blank_reasoning")
+                    ))
+
+            # Import problem stats
+            for stat in problem_stats:
+                cursor.execute("""
+                    INSERT INTO problem_stats
+                    (session_id, problem_number, avg_score, num_graded, num_total, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    new_session_id,
+                    stat["problem_number"],
+                    stat.get("avg_score"),
+                    stat.get("num_graded", 0),
+                    stat.get("num_total", 0),
+                    datetime.now()
+                ))
+
+            log.info(f"Imported {len(submissions)} submissions and {sum(len(s.get('problems', [])) for s in submissions)} problems")
+
+        return {
+            "status": "imported",
+            "session_id": new_session_id,
+            "assignment_name": session_data["assignment_name"],
+            "submissions_imported": len(submissions)
+        }
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+    except Exception as e:
+        log.error(f"Import failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")

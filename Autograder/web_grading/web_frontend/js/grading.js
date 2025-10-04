@@ -373,6 +373,47 @@ async function loadStatistics() {
     }
 }
 
+// Export session button
+document.getElementById('export-session-btn').onclick = async () => {
+    if (!currentSession) return;
+
+    try {
+        // Fetch export data
+        const response = await fetch(`${API_BASE}/sessions/${currentSession.id}/export`);
+
+        if (!response.ok) {
+            throw new Error('Export failed');
+        }
+
+        // Get filename from Content-Disposition header or generate default
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = `grading_session_${currentSession.id}.json`;
+        if (contentDisposition) {
+            const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+            if (filenameMatch) {
+                filename = filenameMatch[1];
+            }
+        }
+
+        // Download the file
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        alert('Session exported successfully! Save this file to resume grading later.');
+
+    } catch (error) {
+        console.error('Export failed:', error);
+        alert('Failed to export session. Please try again.');
+    }
+};
+
 // Finalize and upload to Canvas
 document.getElementById('finalize-btn').onclick = async () => {
     if (!currentSession) return;

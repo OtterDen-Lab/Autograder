@@ -140,6 +140,46 @@ function setupEventListeners() {
         }
     };
 
+    // Import session button
+    document.getElementById('import-session-btn').onclick = () => {
+        document.getElementById('import-file-input').click();
+    };
+
+    document.getElementById('import-file-input').onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            // Create FormData and append file
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await fetch(`${API_BASE}/sessions/import`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Import failed');
+            }
+
+            const result = await response.json();
+            alert(`Successfully imported session: ${result.assignment_name}\n${result.submissions_imported} submissions imported`);
+
+            // Reload sessions and select the new one
+            await loadSessions();
+            await selectSession(result.session_id);
+
+        } catch (error) {
+            console.error('Import failed:', error);
+            alert(`Import failed: ${error.message}`);
+        } finally {
+            // Reset file input
+            e.target.value = '';
+        }
+    };
+
     // Course selection handler
     document.getElementById('course-select').onchange = async (e) => {
         const courseId = e.target.value;
