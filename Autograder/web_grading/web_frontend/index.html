@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Grading Interface</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <!-- Overlay notification -->
+    <div id="notification-overlay" class="notification-overlay" style="display: none;">
+        <div class="notification-content">
+            <p id="notification-message"></p>
+            <button id="notification-ok" class="btn btn-primary">OK</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <header>
+            <div class="header-content" style="align-items: center;">
+                <h1 style="margin: 0;">Web Grading Interface <span id="session-info" style="font-size: 0.6em; color: var(--gray-600); font-weight: normal;"></span></h1>
+                <button id="home-btn" class="btn btn-secondary" style="display: none;">← Home</button>
+            </div>
+        </header>
+
+        <main>
+            <!-- Session Selection/Creation -->
+            <section id="session-section" class="section active">
+                <h2>Start Grading Session</h2>
+
+                <!-- Existing Sessions -->
+                <div id="existing-sessions">
+                    <h3>Recent Sessions</h3>
+                    <div id="session-list"></div>
+                </div>
+
+                <!-- New Session Form -->
+                <div id="new-session-form" style="display: none;">
+                    <h3>Create New Session</h3>
+                    <form id="session-form">
+                        <label>
+                            Canvas Environment:
+                            <select id="canvas-env-new" required>
+                                <option value="false">Development (Beta/Test)</option>
+                                <option value="true">Production</option>
+                            </select>
+                        </label>
+
+                        <label>
+                            Course:
+                            <select id="course-select" required>
+                                <option value="">Loading courses...</option>
+                            </select>
+                        </label>
+                        <div id="course-info" class="info-box"></div>
+
+                        <label>
+                            Assignment:
+                            <select id="assignment-select" required disabled>
+                                <option value="">Select a course first</option>
+                            </select>
+                        </label>
+                        <div id="assignment-info" class="info-box"></div>
+
+                        <label>
+                            Canvas Points Override (optional):
+                            <input type="number" id="canvas-points-input" step="0.5" min="0" placeholder="Leave blank to use assignment points">
+                        </label>
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">Create Session</button>
+                            <button type="button" id="cancel-session-btn" class="btn">Cancel</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button id="new-session-btn" class="btn btn-primary">+ Create New Session</button>
+                    <button id="import-session-btn" class="btn btn-secondary">Import Session</button>
+                </div>
+                <input type="file" id="import-file-input" accept=".json" style="display: none;">
+            </section>
+
+            <!-- Upload Section -->
+            <section id="upload-section" class="section">
+                <h2>Upload Exams</h2>
+                <div id="initial-upload-message" style="margin-bottom: 15px; padding: 10px; background: #eff6ff; border-radius: 6px; display: none;">
+                    <strong>Note:</strong> You can upload additional exams later if students submit late.
+                </div>
+                <div id="upload-area" class="upload-area">
+                    <p>Drag and drop exam files here, or click to select</p>
+                    <input type="file" id="file-input" multiple accept=".pdf,.zip">
+                </div>
+                <div id="upload-progress-container" style="display: none; margin: 20px 0;">
+                    <div id="upload-status" style="margin-bottom: 10px; font-weight: 500; color: var(--gray-700);"></div>
+                    <div id="upload-progress" class="progress-bar" style="height: 24px;">
+                        <div id="upload-progress-fill" class="progress-bar-fill" style="width: 0%; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: 600;"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Name Matching Section -->
+            <section id="matching-section" class="section">
+                <h2>Name Matching</h2>
+                <div id="matching-progress" style="margin-bottom: 20px;">
+                    <div class="progress-bar" style="height: 20px; margin-bottom: 10px;">
+                        <div id="matching-progress-fill" class="progress-bar-fill" style="width: 0%"></div>
+                    </div>
+                    <div id="matching-progress-text" style="text-align: center; font-weight: 500; color: var(--gray-700);"></div>
+                </div>
+                <div id="unmatched-list"></div>
+            </section>
+
+            <!-- Grading Section -->
+            <section id="grading-section" class="section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <div style="display: flex; gap: 20px; align-items: center;">
+                        <h2 style="margin: 0;">Grade Problems</h2>
+                        <label style="display: flex; gap: 5px; align-items: center; margin: 0;">
+                            Problem:
+                            <select id="problem-select"></select>
+                        </label>
+                        <label style="display: flex; gap: 5px; align-items: center; margin: 0;">
+                            Max Points:
+                            <select id="max-points-input" style="width: 60px;" title="Max points for this problem">
+                                <option value="">-</option>
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                                <option value="4">4</option>
+                                <option value="5">5</option>
+                                <option value="6">6</option>
+                                <option value="7">7</option>
+                                <option value="8">8</option>
+                                <option value="9">9</option>
+                                <option value="10">10</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="progress-info">
+                        <span id="grading-progress">0 / 0</span>
+                    </div>
+                </div>
+
+                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+                    <div style="flex: 1;">
+                        <div class="overall-progress-bar" style="margin-bottom: 5px;">
+                            <div id="overall-progress-fill" class="overall-progress-fill" style="width: 0%"></div>
+                        </div>
+                        <span id="overall-progress-label" style="font-size: 13px; color: var(--gray-700);">Overall: 0 / 0 (0%)</span>
+                    </div>
+                    <button id="view-stats-btn" class="btn btn-secondary btn-small">View Statistics</button>
+                    <button id="upload-more-btn" class="btn btn-secondary btn-small">+ Upload More Exams</button>
+                </div>
+
+                <div class="grading-form" style="margin-bottom: 10px;">
+                    <label style="margin-bottom: 5px;">
+                        Score:
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <input type="range" id="score-slider" min="0" max="8" step="1" value="0" style="flex: 1;">
+                            <input type="number" id="score-input" min="0" max="8" step="0.5" placeholder="Enter score" style="width: 80px;">
+                        </div>
+                    </label>
+                </div>
+
+                <div class="problem-container">
+                    <img id="problem-image" alt="Problem to grade">
+                </div>
+
+                <div class="grading-form">
+                    <label>
+                        Feedback (optional):
+                        <textarea id="feedback-input" rows="3" placeholder="Optional feedback for student"></textarea>
+                    </label>
+                    <div style="display: flex; gap: 10px; margin-bottom: 5px;">
+                        <button id="submit-grade-btn" class="btn btn-primary">Submit & Next</button>
+                        <button id="back-problem-btn" class="btn">← Back</button>
+                        <button id="next-problem-btn" class="btn">Skip</button>
+                        <button id="decipher-btn" class="btn btn-secondary">Decipher Handwriting</button>
+                    </div>
+                    <div style="text-align: center; padding: 5px 0;">
+                        <small style="color: var(--gray-600);">Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit | <strong>Shift+Tab</strong> to skip</small>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Statistics Section -->
+            <section id="stats-section" class="section">
+                <h2>Grading Statistics</h2>
+                <div id="stats-container"></div>
+
+                <div id="finalization-progress" style="display: none; margin-top: 20px; padding: 20px; background: #eff6ff; border-radius: 8px;">
+                    <h3 style="margin-top: 0;">Finalization Progress</h3>
+                    <div id="finalization-message" style="margin: 10px 0; font-size: 16px; font-weight: 500;"></div>
+                    <div class="progress-bar" style="height: 20px;">
+                        <div id="finalization-progress-bar" class="progress-bar-fill"></div>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button id="continue-grading-btn" class="btn btn-primary">← Continue Grading</button>
+                    <button id="finalize-btn" class="btn btn-success">Finalize & Upload to Canvas</button>
+                    <button id="export-session-btn" class="btn btn-secondary">Export Session (Checkpoint)</button>
+                    <button id="change-canvas-target-btn" class="btn btn-secondary">Change Canvas Target</button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Canvas Target Change Dialog -->
+    <div id="canvas-target-dialog" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div style="background: white; border-radius: 8px; padding: 30px; max-width: 600px; width: 90%;">
+            <h2 style="margin-top: 0;">Change Canvas Target</h2>
+            <p style="color: var(--gray-700); margin-bottom: 20px;">
+                Update the Canvas environment and assignment for this grading session. Useful for testing in dev before uploading to production.
+            </p>
+
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 10px;">
+                    <strong>Environment:</strong>
+                    <select id="canvas-env-select" style="display: block; width: 100%; padding: 8px; margin-top: 5px; border: 1px solid var(--gray-200); border-radius: 4px;">
+                        <option value="false">Development (Beta/Test)</option>
+                        <option value="true">Production</option>
+                    </select>
+                </label>
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 10px;">
+                    <strong>Course:</strong>
+                    <select id="canvas-course-select" style="display: block; width: 100%; padding: 8px; margin-top: 5px; border: 1px solid var(--gray-200); border-radius: 4px;">
+                        <option value="">Loading courses...</option>
+                    </select>
+                </label>
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 10px;">
+                    <strong>Assignment:</strong>
+                    <select id="canvas-assignment-select" disabled style="display: block; width: 100%; padding: 8px; margin-top: 5px; border: 1px solid var(--gray-200); border-radius: 4px;">
+                        <option value="">Select a course first</option>
+                    </select>
+                </label>
+            </div>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="cancel-canvas-target-btn" class="btn">Cancel</button>
+                <button id="save-canvas-target-btn" class="btn btn-primary">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Handwriting Transcription Dialog -->
+    <div id="transcription-dialog" class="transcription-dialog" style="display: none;">
+        <div class="transcription-header">
+            <span class="transcription-title">Handwriting Transcription</span>
+            <button id="close-transcription" class="transcription-close">&times;</button>
+        </div>
+        <div class="transcription-content">
+            <div id="transcription-text"></div>
+            <div id="transcription-actions" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--gray-200); display: none;">
+                <button id="retry-premium-btn" class="btn btn-primary" style="font-size: 14px; padding: 8px 16px;">
+                    Try Better Model (Opus)
+                </button>
+                <div id="model-used" style="margin-top: 10px; font-size: 13px; color: var(--gray-700); font-style: italic;"></div>
+            </div>
+        </div>
+        <div class="transcription-resize-handle"></div>
+    </div>
+
+    <script src="/js/app.js"></script>
+    <script src="/js/matching.js"></script>
+    <script src="/js/grading.js"></script>
+</body>
+</html>
