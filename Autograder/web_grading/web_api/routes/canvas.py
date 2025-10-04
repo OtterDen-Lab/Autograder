@@ -12,6 +12,69 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 router = APIRouter()
 
 
+@router.get("/courses")
+async def list_courses():
+    """List all active courses for the current user"""
+    try:
+        canvas_interface = get_canvas_interface()
+
+        # Get all courses
+        courses = canvas_interface.canvas.get_courses(enrollment_state='active')
+
+        # Determine environment label
+        is_dev = "beta" in canvas_interface.canvas_url or "test" in canvas_interface.canvas_url
+        env_label = "DEV" if is_dev else "PROD"
+
+        # Convert to simple list
+        course_list = []
+        for course in courses:
+            # Only include courses with a name (skip concluded/hidden courses)
+            if hasattr(course, 'name'):
+                course_list.append({
+                    "id": course.id,
+                    "name": course.name,
+                })
+
+        return {
+            "courses": course_list,
+            "environment": env_label
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch courses: {str(e)}"
+        )
+
+
+@router.get("/courses/{course_id}/assignments")
+async def list_assignments(course_id: int):
+    """List all assignments for a course"""
+    try:
+        canvas_interface = get_canvas_interface()
+        course = canvas_interface.get_course(course_id)
+
+        # Get all assignments
+        assignments = course.canvas_course.get_assignments()
+
+        # Convert to simple list
+        assignment_list = []
+        for assignment in assignments:
+            assignment_list.append({
+                "id": assignment.id,
+                "name": assignment.name,
+                "points_possible": assignment.points_possible if hasattr(assignment, 'points_possible') else None,
+            })
+
+        return {"assignments": assignment_list}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch assignments: {str(e)}"
+        )
+
+
 def get_canvas_interface():
     """
     Get CanvasInterface instance.

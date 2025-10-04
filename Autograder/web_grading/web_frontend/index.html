@@ -42,32 +42,24 @@
                     <h3>Create New Session</h3>
                     <form id="session-form">
                         <label>
-                            Course ID:
-                            <input type="number" id="course-id-input" required>
-                            <button type="button" id="fetch-course-btn" class="btn btn-small">Fetch Info</button>
+                            Course:
+                            <select id="course-select" required>
+                                <option value="">Loading courses...</option>
+                            </select>
                         </label>
                         <div id="course-info" class="info-box"></div>
 
                         <label>
-                            Assignment ID:
-                            <input type="number" id="assignment-id-input" required>
-                            <button type="button" id="fetch-assignment-btn" class="btn btn-small">Fetch Info</button>
+                            Assignment:
+                            <select id="assignment-select" required disabled>
+                                <option value="">Select a course first</option>
+                            </select>
                         </label>
                         <div id="assignment-info" class="info-box"></div>
 
                         <label>
-                            Assignment Name:
-                            <input type="text" id="assignment-name-input" required>
-                        </label>
-
-                        <label>
-                            Course Name (optional):
-                            <input type="text" id="course-name-input">
-                        </label>
-
-                        <label>
                             Canvas Points Override (optional):
-                            <input type="number" id="canvas-points-input" step="0.5" min="0">
+                            <input type="number" id="canvas-points-input" step="0.5" min="0" placeholder="Leave blank to use assignment points">
                         </label>
 
                         <div class="form-actions">

@@ -133,10 +133,56 @@ function setupEventListeners() {
         if (form.style.display === 'none') {
             form.style.display = 'block';
             btn.textContent = '− Hide Form';
+            loadCourses(); // Load courses when form is shown
         } else {
             form.style.display = 'none';
             btn.textContent = '+ Create New Session';
         }
+    };
+
+    // Course selection handler
+    document.getElementById('course-select').onchange = async (e) => {
+        const courseId = e.target.value;
+        const infoBox = document.getElementById('course-info');
+
+        if (!courseId) {
+            infoBox.textContent = '';
+            infoBox.className = 'info-box';
+            return;
+        }
+
+        const selectedOption = e.target.options[e.target.selectedIndex];
+        const courseName = selectedOption.textContent;
+
+        infoBox.textContent = `✓ Selected: ${courseName}`;
+        infoBox.className = 'info-box success';
+
+        // Load assignments for this course
+        await loadAssignments(parseInt(courseId));
+    };
+
+    // Assignment selection handler
+    document.getElementById('assignment-select').onchange = (e) => {
+        const assignmentId = e.target.value;
+        const infoBox = document.getElementById('assignment-info');
+
+        if (!assignmentId) {
+            infoBox.textContent = '';
+            infoBox.className = 'info-box';
+            return;
+        }
+
+        const selectedOption = e.target.options[e.target.selectedIndex];
+        const assignmentName = selectedOption.textContent;
+        const points = selectedOption.dataset.points;
+
+        // Auto-populate points if available
+        if (points && points !== 'null') {
+            document.getElementById('canvas-points-input').value = points;
+        }
+
+        infoBox.textContent = `✓ Selected: ${assignmentName} (${points || '?'} points)`;
+        infoBox.className = 'info-box success';
     };
 
     // Session form submission
@@ -148,12 +194,6 @@ function setupEventListeners() {
         document.getElementById('new-session-btn').textContent = '+ Create New Session';
         document.getElementById('session-form').reset();
     };
-
-    // Fetch course info button
-    document.getElementById('fetch-course-btn').onclick = fetchCourseInfo;
-
-    // Fetch assignment info button
-    document.getElementById('fetch-assignment-btn').onclick = fetchAssignmentInfo;
 
     // Upload area
     const uploadArea = document.getElementById('upload-area');
@@ -180,72 +220,75 @@ function setupEventListeners() {
     fileInput.onchange = uploadFiles;
 }
 
-// Fetch course info from Canvas
-async function fetchCourseInfo() {
-    const courseId = document.getElementById('course-id-input').value;
+// Load courses from Canvas
+async function loadCourses() {
+    const courseSelect = document.getElementById('course-select');
     const infoBox = document.getElementById('course-info');
 
-    if (!courseId) {
-        infoBox.textContent = 'Please enter a course ID';
-        infoBox.className = 'info-box error';
-        return;
-    }
-
-    infoBox.textContent = 'Fetching course info...';
-    infoBox.className = 'info-box';
+    courseSelect.innerHTML = '<option value="">Loading courses...</option>';
+    courseSelect.disabled = true;
 
     try {
-        const response = await fetch(`${API_BASE}/canvas/courses/${courseId}`);
-        if (response.ok) {
-            const course = await response.json();
-            document.getElementById('course-name-input').value = course.name;
-            const env = course.environment ? ` (${course.environment})` : '';
-            infoBox.textContent = `✓ Found: ${course.name}${env}`;
-            infoBox.className = 'info-box success';
-        } else {
-            infoBox.textContent = 'Course not found';
-            infoBox.className = 'info-box error';
+        const response = await fetch(`${API_BASE}/canvas/courses`);
+        if (!response.ok) {
+            throw new Error('Failed to load courses');
         }
+
+        const data = await response.json();
+
+        courseSelect.innerHTML = '<option value="">-- Select a Course --</option>';
+        data.courses.forEach(course => {
+            const option = document.createElement('option');
+            option.value = course.id;
+            option.textContent = course.name;
+            courseSelect.appendChild(option);
+        });
+
+        courseSelect.disabled = false;
+        infoBox.textContent = `Loaded ${data.courses.length} courses from Canvas ${data.environment}`;
+        infoBox.className = 'info-box success';
+
     } catch (error) {
-        console.error('Failed to fetch course:', error);
-        infoBox.textContent = 'Failed to fetch course info (API not implemented yet)';
+        console.error('Failed to load courses:', error);
+        courseSelect.innerHTML = '<option value="">Failed to load courses</option>';
+        infoBox.textContent = 'Failed to load courses from Canvas';
         infoBox.className = 'info-box error';
     }
 }
 
-// Fetch assignment info from Canvas
-async function fetchAssignmentInfo() {
-    const courseId = document.getElementById('course-id-input').value;
-    const assignmentId = document.getElementById('assignment-id-input').value;
+// Load assignments for a course
+async function loadAssignments(courseId) {
+    const assignmentSelect = document.getElementById('assignment-select');
     const infoBox = document.getElementById('assignment-info');
 
-    if (!courseId || !assignmentId) {
-        infoBox.textContent = 'Please enter both course ID and assignment ID';
-        infoBox.className = 'info-box error';
-        return;
-    }
-
-    infoBox.textContent = 'Fetching assignment info...';
-    infoBox.className = 'info-box';
+    assignmentSelect.innerHTML = '<option value="">Loading assignments...</option>';
+    assignmentSelect.disabled = true;
 
     try {
-        const response = await fetch(`${API_BASE}/canvas/courses/${courseId}/assignments/${assignmentId}`);
-        if (response.ok) {
-            const assignment = await response.json();
-            document.getElementById('assignment-name-input').value = assignment.name;
-            if (assignment.points_possible) {
-                document.getElementById('canvas-points-input').value = assignment.points_possible;
-            }
-            const env = assignment.environment ? ` (${assignment.environment})` : '';
-            infoBox.textContent = `✓ Found: ${assignment.name} (${assignment.points_possible} points)${env}`;
-            infoBox.className = 'info-box success';
-        } else {
-            infoBox.textContent = 'Assignment not found';
-            infoBox.className = 'info-box error';
+        const response = await fetch(`${API_BASE}/canvas/courses/${courseId}/assignments`);
+        if (!response.ok) {
+            throw new Error('Failed to load assignments');
         }
+
+        const data = await response.json();
+
+        assignmentSelect.innerHTML = '<option value="">-- Select an Assignment --</option>';
+        data.assignments.forEach(assignment => {
+            const option = document.createElement('option');
+            option.value = assignment.id;
+            option.textContent = assignment.name;
+            option.dataset.points = assignment.points_possible;
+            assignmentSelect.appendChild(option);
+        });
+
+        assignmentSelect.disabled = false;
+        infoBox.textContent = `Loaded ${data.assignments.length} assignments`;
+        infoBox.className = 'info-box success';
+
     } catch (error) {
-        console.error('Failed to fetch assignment:', error);
-        infoBox.textContent = 'Failed to fetch assignment info (API not implemented yet)';
+        console.error('Failed to load assignments:', error);
+        assignmentSelect.innerHTML = '<option value="">Failed to load assignments</option>';
+        infoBox.textContent = 'Failed to load assignments';
         infoBox.className = 'info-box error';
     }
 }
@@ -254,11 +297,20 @@ async function fetchAssignmentInfo() {
 async function createNewSession(e) {
     e.preventDefault();
 
-    const courseId = parseInt(document.getElementById('course-id-input').value);
-    const assignmentId = parseInt(document.getElementById('assignment-id-input').value);
-    const assignmentName = document.getElementById('assignment-name-input').value;
-    const courseName = document.getElementById('course-name-input').value;
-    const canvasPoints = parseFloat(document.getElementById('canvas-points-input').value) || null;
+    const courseSelect = document.getElementById('course-select');
+    const assignmentSelect = document.getElementById('assignment-select');
+
+    const courseId = parseInt(courseSelect.value);
+    const assignmentId = parseInt(assignmentSelect.value);
+
+    // Get names from selected options
+    const courseName = courseSelect.options[courseSelect.selectedIndex].textContent;
+    const assignmentName = assignmentSelect.options[assignmentSelect.selectedIndex].textContent;
+
+    // Get points (either override or from assignment)
+    const pointsInput = document.getElementById('canvas-points-input').value;
+    const assignmentPoints = assignmentSelect.options[assignmentSelect.selectedIndex].dataset.points;
+    const canvasPoints = pointsInput ? parseFloat(pointsInput) : (assignmentPoints ? parseFloat(assignmentPoints) : null);
 
     try {
         const response = await fetch(`${API_BASE}/sessions`, {
@@ -268,7 +320,7 @@ async function createNewSession(e) {
                 course_id: courseId,
                 assignment_id: assignmentId,
                 assignment_name: assignmentName,
-                course_name: courseName || null,
+                course_name: courseName,
                 canvas_points: canvasPoints
             })
         });
