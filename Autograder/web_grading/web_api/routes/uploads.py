@@ -137,6 +137,9 @@ async def process_exam_files(session_id: int, file_paths: List[Path]):
             canvas_students=canvas_students,
             page_ranges=None,  # TODO: Get from session config
             use_ai=True,
+            detect_blank=True,  # Enable blank detection
+            blank_confidence_threshold=0.8,
+            use_ai_for_borderline=False,  # Only use heuristics to save cost
             progress_callback=update_progress
         )
 
@@ -168,13 +171,18 @@ async def process_exam_files(session_id: int, file_paths: List[Path]):
                 for problem in submission["problems"]:
                     cursor.execute("""
                         INSERT INTO problems
-                        (session_id, submission_id, problem_number, image_data, graded)
-                        VALUES (?, ?, ?, ?, 0)
+                        (session_id, submission_id, problem_number, image_data, graded,
+                         is_blank, blank_confidence, blank_method, blank_reasoning)
+                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
                     """, (
                         session_id,
                         submission_id,
                         problem["problem_number"],
-                        problem["image_base64"]
+                        problem["image_base64"],
+                        1 if problem.get("is_blank", False) else 0,
+                        problem.get("blank_confidence", 0.0),
+                        problem.get("blank_method"),
+                        problem.get("blank_reasoning")
                     ))
 
             # Update session status

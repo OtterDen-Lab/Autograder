@@ -56,6 +56,10 @@ async def get_next_problem(session_id: int, problem_number: int):
             graded=bool(row["graded"]),
             current_index=current_index,
             total_count=total_count,
+            is_blank=bool(row["is_blank"]),
+            blank_confidence=row["blank_confidence"] or 0.0,
+            blank_method=row["blank_method"],
+            blank_reasoning=row["blank_reasoning"]
         )
 
 
@@ -120,4 +124,8 @@ async def get_problem(problem_id: int):
             graded=bool(row["graded"]),
             current_index=count_row["graded"] + 1,
             total_count=count_row["total"],
+            is_blank=bool(row["is_blank"]),
+            blank_confidence=row["blank_confidence"] or 0.0,
+            blank_method=row["blank_method"],
+            blank_reasoning=row["blank_reasoning"]
         )

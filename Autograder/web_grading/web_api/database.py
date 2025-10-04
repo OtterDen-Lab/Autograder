@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 def get_db_path() -> Path:
@@ -131,6 +131,10 @@ def create_schema(cursor):
             feedback TEXT,
             graded INTEGER DEFAULT 0,
             graded_at TIMESTAMP,
+            is_blank INTEGER DEFAULT 0,
+            blank_confidence REAL DEFAULT 0.0,
+            blank_method TEXT,
+            blank_reasoning TEXT,
             FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
             FOREIGN KEY (submission_id) REFERENCES submissions(id)
         )
@@ -189,6 +193,10 @@ def run_migrations(cursor, from_version: int):
         migrate_to_v4(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (4)")
 
+    if from_version < 5:
+        migrate_to_v5(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (5)")
+
 
 def migrate_to_v2(cursor):
     """Add progress tracking columns to grading_sessions"""
@@ -212,6 +220,16 @@ def migrate_to_v4(cursor):
     log.info("Migrating to schema version 4: adding name_image_data to submissions")
 
     cursor.execute("ALTER TABLE submissions ADD COLUMN name_image_data TEXT")
+
+
+def migrate_to_v5(cursor):
+    """Add blank detection columns to problems"""
+    log.info("Migrating to schema version 5: adding blank detection columns to problems")
+
+    cursor.execute("ALTER TABLE problems ADD COLUMN is_blank INTEGER DEFAULT 0")
+    cursor.execute("ALTER TABLE problems ADD COLUMN blank_confidence REAL DEFAULT 0.0")
+    cursor.execute("ALTER TABLE problems ADD COLUMN blank_method TEXT")
+    cursor.execute("ALTER TABLE problems ADD COLUMN blank_reasoning TEXT")
 
 
 def update_problem_stats(session_id: int):

@@ -191,9 +191,40 @@ async function loadNextProblem() {
         document.getElementById('grading-progress').textContent =
             `${currentProblem.current_index} / ${currentProblem.total_count}`;
 
-        // Clear form
-        document.getElementById('score-input').value = '';
-        document.getElementById('feedback-input').value = '';
+        // Clear/populate form based on blank detection
+        if (currentProblem.is_blank) {
+            // Auto-populate score as 0 for detected blank problems
+            document.getElementById('score-input').value = '0';
+            document.getElementById('feedback-input').value = 'No answer provided';
+
+            // Show blank detection indicator
+            const blankIndicator = document.createElement('div');
+            blankIndicator.id = 'blank-indicator';
+            blankIndicator.className = 'blank-indicator';
+            blankIndicator.innerHTML = `
+                <strong>⚠️ Blank Detected</strong>
+                <div style="font-size: 12px; margin-top: 5px;">
+                    Confidence: ${(currentProblem.blank_confidence * 100).toFixed(0)}%
+                    (${currentProblem.blank_method || 'heuristic'})
+                </div>
+            `;
+
+            // Remove old indicator if exists
+            const oldIndicator = document.getElementById('blank-indicator');
+            if (oldIndicator) oldIndicator.remove();
+
+            // Insert before the problem image
+            const problemContainer = document.querySelector('.problem-container');
+            problemContainer.parentNode.insertBefore(blankIndicator, problemContainer);
+        } else {
+            // Remove blank indicator if it exists
+            const oldIndicator = document.getElementById('blank-indicator');
+            if (oldIndicator) oldIndicator.remove();
+
+            // Clear form for non-blank problems
+            document.getElementById('score-input').value = '';
+            document.getElementById('feedback-input').value = '';
+        }
 
     } catch (error) {
         console.error('Failed to load problem:', error);

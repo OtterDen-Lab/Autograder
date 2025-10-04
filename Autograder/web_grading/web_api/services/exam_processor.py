@@ -61,6 +61,9 @@ class ExamProcessor:
         canvas_students: List[dict],
         page_ranges: Optional[List[Tuple[int, int]]] = None,
         use_ai: bool = True,
+        detect_blank: bool = False,
+        blank_confidence_threshold: float = 0.8,
+        use_ai_for_borderline: bool = False,
         progress_callback: Optional[callable] = None
     ) -> Tuple[List[Dict], List[Dict]]:
         """
@@ -71,12 +74,15 @@ class ExamProcessor:
             canvas_students: List of student dicts with name and user_id
             page_ranges: Optional list of (start, end) page ranges to merge
             use_ai: Whether to use AI for name extraction
+            detect_blank: Whether to detect blank/unanswered problems
+            blank_confidence_threshold: Confidence threshold for using AI verification on blanks
+            use_ai_for_borderline: Whether to use AI for low-confidence blank detections
             progress_callback: Optional callback function(processed, matched, message) for progress updates
 
         Returns:
             Tuple of (matched_submissions, unmatched_submissions)
             Each submission dict contains: document_id, student_name, canvas_user_id,
-            page_mappings, problems (list of {problem_number, image_base64})
+            page_mappings, problems (list of {problem_number, image_base64, is_blank, blank_confidence})
         """
         log.info(f"Processing {len(input_files)} exams")
 
@@ -182,7 +188,12 @@ class ExamProcessor:
             # Redact and split into problems (use auto-detection if no page_ranges specified)
             if page_ranges is None:
                 # Auto-detect problems using horizontal line detection
-                problems = self.redact_and_split_auto(pdf_path)
+                problems = self.redact_and_split_auto(
+                    pdf_path,
+                    detect_blank=detect_blank,
+                    blank_confidence_threshold=blank_confidence_threshold,
+                    use_ai_for_borderline=use_ai_for_borderline
+                )
             else:
                 # Use manual page ranges
                 problem_images = self.redact_and_split(pdf_path, page_ranges)
@@ -389,13 +400,22 @@ class ExamProcessor:
 
     def redact_and_split_auto(
         self,
-        pdf_path: Path
+        pdf_path: Path,
+        detect_blank: bool = False,
+        blank_confidence_threshold: float = 0.8,
+        use_ai_for_borderline: bool = False
     ) -> List[Dict]:
         """
         Redact names and automatically split PDF into problems based on horizontal line detection.
 
+        Args:
+            pdf_path: Path to PDF file
+            detect_blank: Whether to detect blank/unanswered problems
+            blank_confidence_threshold: Confidence threshold (0-1) for using AI verification
+            use_ai_for_borderline: Whether to use AI for low-confidence detections
+
         Returns:
-            List of problem dicts with {problem_number, page_number, image_base64}
+            List of problem dicts with {problem_number, page_number, image_base64, is_blank, blank_confidence}
         """
         pdf_document = fitz.open(str(pdf_path))
         total_pages = pdf_document.page_count
@@ -437,16 +457,165 @@ class ExamProcessor:
                 img_bytes = pix.tobytes("png")
                 img_base64 = base64.b64encode(img_bytes).decode("utf-8")
 
-                problems.append({
+                # Initialize problem dict
+                problem_dict = {
                     "problem_number": problem_number,
                     "page_number": page_num + 1,
-                    "image_base64": img_base64
-                })
+                    "image_base64": img_base64,
+                    "is_blank": False,
+                    "blank_confidence": 0.0
+                }
+
+                # Detect blank if requested
+                if detect_blank:
+                    # First try heuristic
+                    heuristic_result = self.is_blank_heuristic(img_base64)
+                    problem_dict["is_blank"] = heuristic_result["is_blank"]
+                    problem_dict["blank_confidence"] = heuristic_result["confidence"]
+                    problem_dict["blank_method"] = "heuristic"
+
+                    # If confidence is low and AI is enabled, verify with AI
+                    if use_ai_for_borderline and heuristic_result["confidence"] < blank_confidence_threshold:
+                        log.info(f"Problem {problem_number}: Low confidence ({heuristic_result['confidence']:.2f}), using AI verification")
+                        ai_result = self.is_blank_ai(img_base64)
+                        problem_dict["is_blank"] = ai_result["is_blank"]
+                        problem_dict["blank_confidence"] = ai_result["confidence"]
+                        problem_dict["blank_method"] = "ai"
+                        problem_dict["blank_reasoning"] = ai_result.get("reasoning", "")
+
+                problems.append(problem_dict)
 
                 problem_pdf.close()
                 problem_number += 1
 
         pdf_document.close()
 
-        log.info(f"Auto-split PDF into {len(problems)} problems across {total_pages} pages")
+        if detect_blank:
+            blank_count = sum(1 for p in problems if p["is_blank"])
+            log.info(f"Auto-split PDF into {len(problems)} problems ({blank_count} detected as blank) across {total_pages} pages")
+        else:
+            log.info(f"Auto-split PDF into {len(problems)} problems across {total_pages} pages")
+
         return problems
+
+    def is_blank_heuristic(self, image_base64: str, threshold: float = 0.02, crop_to_answer_area: bool = True) -> Dict:
+        """
+        Use heuristics to determine if a problem image appears blank/unanswered.
+
+        Args:
+            image_base64: Base64 encoded image
+            threshold: Ink density threshold (default 2% = mostly blank)
+            crop_to_answer_area: If True, only analyze middle/bottom area (skip printed question text)
+
+        Returns:
+            Dict with {is_blank: bool, confidence: float, ink_density: float, edge_density: float}
+        """
+        import io
+        from PIL import Image
+
+        # Decode image
+        img_bytes = base64.b64decode(image_base64)
+        img = Image.open(io.BytesIO(img_bytes))
+
+        # Convert to grayscale
+        if img.mode != 'L':
+            img = img.convert('L')
+
+        # Crop to answer area if requested (skip top 30% where question text usually is)
+        if crop_to_answer_area:
+            width, height = img.size
+            # Crop to middle 60% vertically (skip top 20% and bottom 20%)
+            # This avoids printed question text at top and page numbers at bottom
+            crop_top = int(height * 0.2)
+            crop_bottom = int(height * 0.8)
+            img = img.crop((0, crop_top, width, crop_bottom))
+            log.debug(f"Cropped to answer area: {crop_top} to {crop_bottom} (middle 60%)")
+
+        # Convert to numpy array
+        img_array = np.array(img)
+
+        # Calculate ink density (ratio of dark pixels that are likely real handwriting)
+        # Use threshold at 200 to ignore light gray bleed-through from opposite page
+        # (handwritten ink is typically much darker than bleed-through)
+        ink_pixels = np.sum(img_array < 200)
+        total_pixels = img_array.size
+        ink_density = ink_pixels / total_pixels
+
+        # Calculate edge density (how much writing/structure is present)
+        # Use higher thresholds to ignore faint bleed-through edges
+        edges = cv2.Canny(img_array, 100, 200)
+        edge_pixels = np.sum(edges > 0)
+        edge_density = edge_pixels / total_pixels
+
+        # Calculate pixel variance (blank pages have low variance)
+        pixel_variance = np.var(img_array)
+
+        # Determine if blank based on heuristics
+        # More lenient thresholds since we're now only counting darker pixels
+        is_blank = (
+            ink_density < 0.03 and  # Less than 3% dark ink
+            edge_density < 0.015 and  # Less than 1.5% strong edges
+            pixel_variance < 150  # Low variance (but allow for some bleed-through noise)
+        )
+
+        # Confidence score (higher = more confident in the assessment)
+        if is_blank:
+            # If clearly blank (very low ink), high confidence
+            confidence = 1.0 - (ink_density / threshold)
+        else:
+            # If has content, confidence based on how much content
+            confidence = min(1.0, ink_density / threshold)
+
+        log.debug(f"Blank detection: is_blank={is_blank}, ink_density={ink_density:.4f}, "
+                  f"edge_density={edge_density:.4f}, variance={pixel_variance:.2f}, confidence={confidence:.2f}")
+
+        return {
+            "is_blank": is_blank,
+            "confidence": confidence,
+            "ink_density": ink_density,
+            "edge_density": edge_density,
+            "pixel_variance": pixel_variance
+        }
+
+    def is_blank_ai(self, image_base64: str) -> Dict:
+        """
+        Use AI to determine if a problem image is blank/unanswered.
+        Only call this for borderline cases where heuristic is uncertain.
+
+        Args:
+            image_base64: Base64 encoded image (full problem image)
+
+        Returns:
+            Dict with {is_blank: bool, confidence: float, reasoning: str}
+        """
+        try:
+            query = """Is this exam question unanswered (no handwritten work)?
+
+This is an exam question that may have printed text (the question) and blank space for the answer.
+Look for ANY handwritten work, calculations, or answers. Even partial attempts count as answered.
+Ignore printed text, lines, and page numbers - only look for handwriting/student work.
+
+Respond with ONLY a JSON object in this format:
+{"is_blank": true/false, "confidence": 0.0-1.0, "reasoning": "brief explanation"}"""
+
+            response, _ = ai_helper.AI_Helper__Anthropic().query_ai(
+                query,
+                attachments=[("png", image_base64)]
+            )
+
+            # Parse JSON response
+            import json
+            result = json.loads(response.strip())
+
+            log.info(f"AI blank detection: is_blank={result['is_blank']}, "
+                     f"confidence={result['confidence']}, reasoning={result['reasoning']}")
+
+            return result
+
+        except Exception as e:
+            log.error(f"AI blank detection failed: {e}")
+            return {
+                "is_blank": False,  # Default to not blank if AI fails
+                "confidence": 0.0,
+                "reasoning": f"AI detection failed: {str(e)}"
+            }

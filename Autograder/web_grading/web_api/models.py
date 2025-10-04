@@ -93,6 +93,12 @@ class ProblemResponse(BaseModel):
     current_index: int
     total_count: int
 
+    # Blank detection metadata
+    is_blank: bool = False
+    blank_confidence: float = 0.0
+    blank_method: Optional[str] = None
+    blank_reasoning: Optional[str] = None
+
     class Config:
         from_attributes = True
 
