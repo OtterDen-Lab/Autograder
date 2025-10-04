@@ -264,7 +264,8 @@ async def process_exam_files(session_id: int, file_paths: List[Path], file_metad
             progress_callback=update_progress,
             document_id_offset=start_document_id,
             file_metadata=file_metadata,
-            problem_max_points=problem_max_points
+            problem_max_points=problem_max_points,
+            extract_max_points_enabled=False  # Disabled - use manual entry via UI
         )
 
         # Store in database

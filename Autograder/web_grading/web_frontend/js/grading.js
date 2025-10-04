@@ -4,14 +4,28 @@ let currentProblem = null;
 let currentProblemNumber = 1;
 let availableProblemNumbers = [];
 let lastGradedProblemNumber = null; // Track if we just graded something
+let problemMaxPoints = {}; // Cache max points per problem number
 
 // Initialize grading interface when section becomes active
 function initializeGrading() {
     if (!currentSession) return;
 
+    loadProblemMaxPoints();
     loadProblemNumbers();
     setupGradingControls();
     updateOverallProgress();
+}
+
+// Load max points metadata for all problems
+async function loadProblemMaxPoints() {
+    try {
+        const response = await fetch(`${API_BASE}/sessions/${currentSession.id}/problem-max-points-all`);
+        const data = await response.json();
+        problemMaxPoints = data.max_points || {};
+    } catch (error) {
+        console.error('Failed to load max points metadata:', error);
+        problemMaxPoints = {};
+    }
 }
 
 // Show notification overlay
@@ -43,6 +57,24 @@ function showNotification(message, callback) {
     okBtn.focus();
 }
 
+// Update max points dropdown based on current problem number
+function updateMaxPointsDropdown() {
+    const maxPointsInput = document.getElementById('max-points-input');
+    const scoreInput = document.getElementById('score-input');
+    const scoreSlider = document.getElementById('score-slider');
+    const cachedMax = problemMaxPoints[currentProblemNumber];
+
+    if (cachedMax) {
+        maxPointsInput.value = cachedMax;
+        scoreSlider.max = cachedMax;
+        scoreInput.max = cachedMax;
+    } else {
+        maxPointsInput.value = '';
+        scoreSlider.max = 10;
+        scoreInput.max = 10;
+    }
+}
+
 // Load available problem numbers
 async function loadProblemNumbers() {
     try {
@@ -64,6 +96,7 @@ async function loadProblemNumbers() {
         select.value = currentProblemNumber;
         select.onchange = () => {
             currentProblemNumber = parseInt(select.value);
+            updateMaxPointsDropdown();
             loadNextProblem();
         };
 
@@ -135,6 +168,39 @@ function setupGradingControls() {
     // Initial score sync setup
     setupScoreSync();
 
+    // Max points input handler
+    const maxPointsInput = document.getElementById('max-points-input');
+    maxPointsInput.addEventListener('change', async (e) => {
+        const maxPoints = parseFloat(e.target.value);
+        if (!isNaN(maxPoints) && maxPoints > 0 && currentProblemNumber) {
+            // Update slider and input max
+            document.getElementById('score-slider').max = maxPoints;
+            document.getElementById('score-input').max = maxPoints;
+
+            // Save to cache
+            problemMaxPoints[currentProblemNumber] = maxPoints;
+
+            // Save to backend
+            try {
+                const response = await fetch(`${API_BASE}/sessions/${currentSession.id}/problem-max-points?problem_number=${currentProblemNumber}&max_points=${maxPoints}`, {
+                    method: 'PUT'
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to save max points');
+                }
+
+                // Update current problem object
+                if (currentProblem) {
+                    currentProblem.max_points = maxPoints;
+                }
+            } catch (error) {
+                console.error('Failed to save max points:', error);
+                alert('Failed to save max points: ' + error.message);
+            }
+        }
+    });
+
     // Keyboard shortcuts
     document.addEventListener('keydown', handleGradingKeyboard);
 }
@@ -164,7 +230,7 @@ function handleGradingKeyboard(e) {
     }
 
     // Number keys 0-9 - quick score entry
-    if (/^[0-9]$/.test(e.key) && e.target.id !== 'score-input' && e.target.id !== 'feedback-input') {
+    if (/^[0-9]$/.test(e.key) && e.target.id !== 'score-input' && e.target.id !== 'feedback-input' && e.target.id !== 'max-points-input') {
         e.preventDefault();
         document.getElementById('score-input').value = e.key;
         document.getElementById('score-input').focus();
@@ -192,6 +258,7 @@ async function loadNextProblem() {
                     showNotification(`All submissions for Problem ${currentProblemNumber} are graded! Moving to Problem ${nextProblemNumber}...`, () => {
                         currentProblemNumber = nextProblemNumber;
                         document.getElementById('problem-select').value = currentProblemNumber;
+                        updateMaxPointsDropdown();
                         loadNextProblem();
                     });
                 } else {
@@ -209,6 +276,7 @@ async function loadNextProblem() {
                 if (nextProblemNumber) {
                     currentProblemNumber = nextProblemNumber;
                     document.getElementById('problem-select').value = currentProblemNumber;
+                    updateMaxPointsDropdown();
                     loadNextProblem();
                 } else {
                     // Show stats if everything is done
@@ -229,24 +297,8 @@ async function loadNextProblem() {
         document.getElementById('grading-progress').textContent =
             `${currentProblem.current_index} / ${currentProblem.total_count}`;
 
-        // Update score input label and slider max with max points if available
-        const scoreSlider = document.getElementById('score-slider');
-        const scoreInput = document.getElementById('score-input');
-        const scoreLabel = document.querySelector('label:has(#score-input)');
-
-        if (currentProblem.max_points) {
-            scoreSlider.max = currentProblem.max_points;
-            scoreInput.max = currentProblem.max_points;
-            if (scoreLabel) {
-                scoreLabel.childNodes[0].textContent = `Score (max ${currentProblem.max_points}):`;
-            }
-        } else {
-            scoreSlider.max = 10;  // Default max
-            scoreInput.max = null;
-            if (scoreLabel) {
-                scoreLabel.childNodes[0].textContent = 'Score:';
-            }
-        }
+        // Update max points from cache (persistent per problem number)
+        updateMaxPointsDropdown();
 
         // Re-attach event listeners after potential DOM updates
         setupScoreSync();
@@ -298,9 +350,15 @@ async function submitGrade() {
 
     const score = parseFloat(document.getElementById('score-input').value);
     const feedback = document.getElementById('feedback-input').value;
+    const maxPoints = problemMaxPoints[currentProblemNumber] || 10;
 
     if (isNaN(score)) {
         alert('Please enter a valid score');
+        return;
+    }
+
+    if (score > maxPoints) {
+        alert(`Score cannot exceed ${maxPoints} points`);
         return;
     }
 

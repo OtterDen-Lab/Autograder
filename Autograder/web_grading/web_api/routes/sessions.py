@@ -338,6 +338,29 @@ async def update_canvas_config(
         raise HTTPException(status_code=400, detail=f"Failed to fetch Canvas data: {str(e)}")
 
 
+@router.get("/{session_id}/problem-max-points-all")
+async def get_all_problem_max_points(session_id: int):
+    """Get max points for all problems in a session"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Verify session exists
+        cursor.execute("SELECT id FROM grading_sessions WHERE id = ?", (session_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Get all max points from metadata
+        cursor.execute("""
+            SELECT problem_number, max_points
+            FROM problem_metadata
+            WHERE session_id = ?
+        """, (session_id,))
+
+        max_points = {row["problem_number"]: row["max_points"] for row in cursor.fetchall()}
+
+        return {"max_points": max_points}
+
+
 @router.put("/{session_id}/problem-max-points")
 async def update_problem_max_points(
     session_id: int,

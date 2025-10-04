@@ -67,7 +67,8 @@ class ExamProcessor:
         progress_callback: Optional[callable] = None,
         document_id_offset: int = 0,
         file_metadata: Optional[Dict[Path, Dict]] = None,
-        problem_max_points: Optional[Dict[int, float]] = None
+        problem_max_points: Optional[Dict[int, float]] = None,
+        extract_max_points_enabled: bool = False
     ) -> Tuple[List[Dict], List[Dict]]:
         """
         Process exam PDFs.
@@ -498,11 +499,11 @@ class ExamProcessor:
                         problem_dict["blank_method"] = "ai"
                         problem_dict["blank_reasoning"] = ai_result.get("reasoning", "")
 
-                # Extract max points from score box (only if not already known for this problem number)
+                # Extract max points from score box (only if enabled and not already known for this problem number)
                 if problem_max_points and problem_number in problem_max_points:
                     # Use cached max_points
                     problem_dict["max_points"] = problem_max_points[problem_number]
-                else:
+                elif extract_max_points_enabled:
                     # Extract from image
                     max_points = self.extract_max_points(img_base64)
                     if max_points is not None:

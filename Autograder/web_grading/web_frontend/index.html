@@ -123,6 +123,22 @@
                         Problem:
                         <select id="problem-select"></select>
                     </label>
+                    <label>
+                        Max Points:
+                        <select id="max-points-input" style="width: 80px;" title="Max points for this problem">
+                            <option value="">-</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="7">7</option>
+                            <option value="8">8</option>
+                            <option value="9">9</option>
+                            <option value="10">10</option>
+                        </select>
+                    </label>
                     <div class="progress-info">
                         <span id="grading-progress">0 / 0</span>
                     </div>
@@ -145,18 +161,21 @@
                     <small>Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit | <strong>Shift+Tab</strong> to skip</small>
                 </div>
 
+                <div class="grading-form" style="margin-bottom: 20px;">
+                    <label>
+                        Score:
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <input type="range" id="score-slider" min="0" max="10" step="1" value="0" style="flex: 1;">
+                            <input type="number" id="score-input" min="0" max="10" step="0.5" placeholder="Enter score" style="width: 80px;">
+                        </div>
+                    </label>
+                </div>
+
                 <div class="problem-container">
                     <img id="problem-image" alt="Problem to grade">
                 </div>
 
                 <div class="grading-form">
-                    <label>
-                        Score:
-                        <div style="display: flex; gap: 10px; align-items: center;">
-                            <input type="range" id="score-slider" min="0" max="10" step="0.5" value="0" style="flex: 1;">
-                            <input type="number" id="score-input" min="0" step="0.5" placeholder="Enter score" style="width: 100px;">
-                        </div>
-                    </label>
                     <label>
                         Feedback (optional):
                         <textarea id="feedback-input" rows="4" placeholder="Optional feedback for student"></textarea>
