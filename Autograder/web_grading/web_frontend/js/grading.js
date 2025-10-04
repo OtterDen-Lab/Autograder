@@ -66,15 +66,12 @@ function updateMaxPointsDropdown() {
     const scoreSlider = document.getElementById('score-slider');
     const cachedMax = problemMaxPoints[currentProblemNumber];
 
-    if (cachedMax) {
-        maxPointsInput.value = cachedMax;
-        scoreSlider.max = cachedMax;
-        scoreInput.max = cachedMax;
-    } else {
-        maxPointsInput.value = '';
-        scoreSlider.max = 10;
-        scoreInput.max = 10;
-    }
+    // Default to 8 if not set
+    const maxPoints = cachedMax || 8;
+
+    maxPointsInput.value = maxPoints;
+    scoreSlider.max = maxPoints;
+    scoreInput.max = maxPoints;
 }
 
 // Load available problem numbers
@@ -454,7 +451,7 @@ async function submitGrade() {
 
     const score = parseFloat(document.getElementById('score-input').value);
     const feedback = document.getElementById('feedback-input').value;
-    const maxPoints = problemMaxPoints[currentProblemNumber] || 10;
+    const maxPoints = problemMaxPoints[currentProblemNumber] || 8;
 
     if (isNaN(score)) {
         alert('Please enter a valid score');
