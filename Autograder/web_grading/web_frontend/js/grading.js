@@ -5,6 +5,8 @@ let currentProblemNumber = 1;
 let availableProblemNumbers = [];
 let lastGradedProblemNumber = null; // Track if we just graded something
 let problemMaxPoints = {}; // Cache max points per problem number
+let problemHistory = []; // Track navigation history for back button
+let historyIndex = -1; // Current position in history
 
 // Initialize grading interface when section becomes active
 function initializeGrading() {
@@ -94,10 +96,10 @@ async function loadProblemNumbers() {
 
         currentProblemNumber = availableProblemNumbers[0] || 1;
         select.value = currentProblemNumber;
-        select.onchange = () => {
+        select.onchange = async () => {
             currentProblemNumber = parseInt(select.value);
             updateMaxPointsDropdown();
-            loadNextProblem();
+            await loadProblemOrMostRecent();
         };
 
         loadNextProblem();
@@ -243,46 +245,129 @@ function handleGradingKeyboard(e) {
     }
 }
 
-// Load previous graded problem
-async function loadPreviousProblem() {
-    try {
-        const response = await fetch(
-            `${API_BASE}/problems/${currentSession.id}/${currentProblemNumber}/previous`
-        );
+// Display the current problem (common display logic)
+function displayCurrentProblem() {
+    if (!currentProblem) return;
 
-        if (response.status === 404) {
-            alert('No previously graded problems found for this problem number');
-            return;
-        }
+    // Display problem
+    document.getElementById('problem-image').src =
+        `data:image/png;base64,${currentProblem.image_data}`;
 
-        currentProblem = await response.json();
+    // Update progress
+    document.getElementById('grading-progress').textContent =
+        `${currentProblem.current_index} / ${currentProblem.total_count}`;
 
-        // Display problem
-        document.getElementById('problem-image').src =
-            `data:image/png;base64,${currentProblem.image_data}`;
+    // Update max points from cache
+    updateMaxPointsDropdown();
 
-        // Update progress
-        document.getElementById('grading-progress').textContent =
-            `${currentProblem.current_index} / ${currentProblem.total_count}`;
+    // Re-attach event listeners
+    setupScoreSync();
 
-        // Update max points from cache (persistent per problem number)
-        updateMaxPointsDropdown();
-
-        // Re-attach event listeners after potential DOM updates
-        setupScoreSync();
-
-        // Populate form with existing grade
+    // Populate form based on whether it's graded or blank
+    if (currentProblem.graded) {
+        // Already graded - show existing grade
         document.getElementById('score-input').value = currentProblem.score || '';
         document.getElementById('score-slider').value = currentProblem.score || 0;
         document.getElementById('feedback-input').value = currentProblem.feedback || '';
 
-        // Remove blank indicator if it exists
+        // Remove blank indicator
+        const oldIndicator = document.getElementById('blank-indicator');
+        if (oldIndicator) oldIndicator.remove();
+    } else if (currentProblem.is_blank) {
+        // Auto-populate score as 0 for detected blank problems
+        document.getElementById('score-input').value = '0';
+        document.getElementById('feedback-input').value = 'No answer provided';
+
+        // Show blank detection indicator
+        const blankIndicator = document.createElement('div');
+        blankIndicator.id = 'blank-indicator';
+        blankIndicator.className = 'blank-indicator';
+        blankIndicator.innerHTML = `
+            <strong>⚠️ Blank Detected</strong>
+            <div style="font-size: 12px; margin-top: 5px;">
+                Confidence: ${(currentProblem.blank_confidence * 100).toFixed(0)}%
+                (${currentProblem.blank_method || 'heuristic'})
+            </div>
+        `;
+
+        // Remove old indicator if exists
         const oldIndicator = document.getElementById('blank-indicator');
         if (oldIndicator) oldIndicator.remove();
 
+        // Insert before the problem image
+        const problemContainer = document.querySelector('.problem-container');
+        problemContainer.parentNode.insertBefore(blankIndicator, problemContainer);
+    } else {
+        // Clear form for non-blank problems
+        document.getElementById('score-input').value = '';
+        document.getElementById('feedback-input').value = '';
+
+        // Remove blank indicator if it exists
+        const oldIndicator = document.getElementById('blank-indicator');
+        if (oldIndicator) oldIndicator.remove();
+    }
+}
+
+// Load problem for current problem number (ungraded if available, otherwise most recent)
+async function loadProblemOrMostRecent() {
+    try {
+        // Try to load next ungraded problem first
+        const nextResponse = await fetch(
+            `${API_BASE}/problems/${currentSession.id}/${currentProblemNumber}/next`
+        );
+
+        if (nextResponse.ok) {
+            // Found an ungraded problem, load it directly
+            currentProblem = await nextResponse.json();
+            addToHistory(currentProblem);
+            displayCurrentProblem();
+        } else if (nextResponse.status === 404) {
+            // No ungraded problems, load most recently graded
+            const prevResponse = await fetch(
+                `${API_BASE}/problems/${currentSession.id}/${currentProblemNumber}/previous`
+            );
+
+            if (prevResponse.ok) {
+                currentProblem = await prevResponse.json();
+                addToHistory(currentProblem);
+                displayCurrentProblem();
+            } else {
+                alert('No problems found for this problem number');
+            }
+        }
     } catch (error) {
-        console.error('Failed to load previous problem:', error);
-        alert('Failed to load previous problem: ' + error.message);
+        console.error('Failed to load problem:', error);
+        alert('Failed to load problem: ' + error.message);
+    }
+}
+
+// Add problem to history
+function addToHistory(problem) {
+    // If we're in the middle of history, remove everything after current position
+    if (historyIndex < problemHistory.length - 1) {
+        problemHistory = problemHistory.slice(0, historyIndex + 1);
+    }
+
+    // Add new problem to history
+    problemHistory.push(problem);
+    historyIndex = problemHistory.length - 1;
+
+    // Limit history to last 50 problems to avoid memory issues
+    if (problemHistory.length > 50) {
+        problemHistory.shift();
+        historyIndex--;
+    }
+}
+
+// Load previous problem from history
+async function loadPreviousProblem() {
+    if (historyIndex > 0) {
+        // Go back in history
+        historyIndex--;
+        currentProblem = problemHistory[historyIndex];
+        displayCurrentProblem();
+    } else {
+        alert('No more previous problems in history');
     }
 }
 
@@ -353,54 +438,9 @@ async function loadNextProblem() {
 
         currentProblem = await response.json();
 
-        // Display problem
-        document.getElementById('problem-image').src =
-            `data:image/png;base64,${currentProblem.image_data}`;
-
-        // Update progress
-        document.getElementById('grading-progress').textContent =
-            `${currentProblem.current_index} / ${currentProblem.total_count}`;
-
-        // Update max points from cache (persistent per problem number)
-        updateMaxPointsDropdown();
-
-        // Re-attach event listeners after potential DOM updates
-        setupScoreSync();
-
-        // Clear/populate form based on blank detection
-        if (currentProblem.is_blank) {
-            // Auto-populate score as 0 for detected blank problems
-            document.getElementById('score-input').value = '0';
-            document.getElementById('feedback-input').value = 'No answer provided';
-
-            // Show blank detection indicator
-            const blankIndicator = document.createElement('div');
-            blankIndicator.id = 'blank-indicator';
-            blankIndicator.className = 'blank-indicator';
-            blankIndicator.innerHTML = `
-                <strong>⚠️ Blank Detected</strong>
-                <div style="font-size: 12px; margin-top: 5px;">
-                    Confidence: ${(currentProblem.blank_confidence * 100).toFixed(0)}%
-                    (${currentProblem.blank_method || 'heuristic'})
-                </div>
-            `;
-
-            // Remove old indicator if exists
-            const oldIndicator = document.getElementById('blank-indicator');
-            if (oldIndicator) oldIndicator.remove();
-
-            // Insert before the problem image
-            const problemContainer = document.querySelector('.problem-container');
-            problemContainer.parentNode.insertBefore(blankIndicator, problemContainer);
-        } else {
-            // Remove blank indicator if it exists
-            const oldIndicator = document.getElementById('blank-indicator');
-            if (oldIndicator) oldIndicator.remove();
-
-            // Clear form for non-blank problems
-            document.getElementById('score-input').value = '';
-            document.getElementById('feedback-input').value = '';
-        }
+        // Add to history and display
+        addToHistory(currentProblem);
+        displayCurrentProblem();
 
     } catch (error) {
         console.error('Failed to load problem:', error);
