@@ -97,6 +97,9 @@ async def list_assignments(course_id: int):
                 "points_possible": assignment.points_possible if hasattr(assignment, 'points_possible') else None,
             })
 
+        # Sort alphabetically by name
+        assignment_list.sort(key=lambda a: a['name'].lower())
+
         log.info(f"Found {len(assignment_list)} assignments for course {course_id}")
         return {"assignments": assignment_list}
 
