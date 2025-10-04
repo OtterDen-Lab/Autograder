@@ -471,8 +471,14 @@ function startFinalizationPolling() {
 // Handwriting Transcription Dialog
 const transcriptionDialog = document.getElementById('transcription-dialog');
 const transcriptionText = document.getElementById('transcription-text');
+const transcriptionActions = document.getElementById('transcription-actions');
+const modelUsed = document.getElementById('model-used');
 const closeTranscription = document.getElementById('close-transcription');
 const decipherBtn = document.getElementById('decipher-btn');
+const retryPremiumBtn = document.getElementById('retry-premium-btn');
+
+// Cache for transcriptions: { problemId: { standard: {text, model}, premium: {text, model} } }
+const transcriptionCache = {};
 
 // Make dialog draggable
 let isDragging = false;
@@ -503,7 +509,46 @@ closeTranscription.addEventListener('click', () => {
     transcriptionDialog.style.display = 'none';
 });
 
-// Decipher handwriting button
+// Function to fetch transcription (with caching)
+async function fetchTranscription(problemId, usePremium = false) {
+    const cacheKey = usePremium ? 'premium' : 'standard';
+
+    // Check cache first
+    if (transcriptionCache[problemId] && transcriptionCache[problemId][cacheKey]) {
+        console.log(`Using cached ${cacheKey} transcription for problem ${problemId}`);
+        return transcriptionCache[problemId][cacheKey];
+    }
+
+    // Fetch from API
+    const url = `${API_BASE}/problems/${problemId}/decipher?use_premium_model=${usePremium}`;
+    const response = await fetch(url, { method: 'POST' });
+
+    if (!response.ok) {
+        throw new Error('Transcription failed');
+    }
+
+    const data = await response.json();
+
+    // Cache the result
+    if (!transcriptionCache[problemId]) {
+        transcriptionCache[problemId] = {};
+    }
+    transcriptionCache[problemId][cacheKey] = {
+        text: data.transcription,
+        model: data.model
+    };
+
+    return transcriptionCache[problemId][cacheKey];
+}
+
+// Function to display transcription in dialog
+function displayTranscription(transcription) {
+    transcriptionText.textContent = transcription.text;
+    modelUsed.textContent = `Model used: ${transcription.model}`;
+    transcriptionActions.style.display = 'block';
+}
+
+// Decipher handwriting button (standard model)
 decipherBtn.addEventListener('click', async () => {
     if (!currentProblem) {
         alert('No problem loaded');
@@ -512,21 +557,32 @@ decipherBtn.addEventListener('click', async () => {
 
     // Show dialog with loading state
     transcriptionText.innerHTML = '<div class="transcription-loading">Transcribing handwriting...</div>';
+    transcriptionActions.style.display = 'none';
     transcriptionDialog.style.display = 'flex';
 
     try {
-        const response = await fetch(`${API_BASE}/problems/${currentProblem.id}/decipher`, {
-            method: 'POST'
-        });
-
-        if (!response.ok) {
-            throw new Error('Transcription failed');
-        }
-
-        const data = await response.json();
-        transcriptionText.textContent = data.transcription;
+        const transcription = await fetchTranscription(currentProblem.id, false);
+        displayTranscription(transcription);
     } catch (error) {
         console.error('Failed to decipher handwriting:', error);
         transcriptionText.innerHTML = '<div style="color: var(--danger-color);">Failed to transcribe handwriting. Please try again.</div>';
+        transcriptionActions.style.display = 'none';
+    }
+});
+
+// Retry with premium model button
+retryPremiumBtn.addEventListener('click', async () => {
+    if (!currentProblem) return;
+
+    // Show loading state
+    transcriptionText.innerHTML = '<div class="transcription-loading">Transcribing with better model (Opus)...</div>';
+    transcriptionActions.style.display = 'none';
+
+    try {
+        const transcription = await fetchTranscription(currentProblem.id, true);
+        displayTranscription(transcription);
+    } catch (error) {
+        console.error('Failed to decipher with premium model:', error);
+        transcriptionText.innerHTML = '<div style="color: var(--danger-color);">Failed to transcribe with premium model. Please try again.</div>';
     }
 });

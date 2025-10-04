@@ -138,8 +138,13 @@ async def get_problem(problem_id: int):
 
 
 @router.post("/{problem_id}/decipher")
-async def decipher_handwriting(problem_id: int):
-    """Use AI to transcribe handwritten text from a problem image"""
+async def decipher_handwriting(problem_id: int, use_premium_model: bool = False):
+    """Use AI to transcribe handwritten text from a problem image
+
+    Args:
+        problem_id: ID of the problem to transcribe
+        use_premium_model: If True, use a more capable (and expensive) model
+    """
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
@@ -152,7 +157,20 @@ async def decipher_handwriting(problem_id: int):
         image_base64 = row["image_data"]
 
     # Query AI to transcribe handwriting
-    query = """Please transcribe all handwritten text from this exam answer.
+    if use_premium_model:
+        query = """Please transcribe all handwritten text from this exam answer with maximum accuracy.
+
+Instructions:
+- Transcribe ONLY handwritten text (ignore printed questions/instructions)
+- Preserve the structure and organization of the answer exactly
+- For unclear text, make your best interpretation and note uncertainty with [possibly: "alternative"]
+- Describe any diagrams, drawings, or mathematical figures in detail within [brackets]
+- Maintain all mathematical notation, equations, and symbols precisely
+- Note any corrections, cross-outs, or marginal notes
+
+Respond with just the transcribed text, being as thorough and accurate as possible."""
+    else:
+        query = """Please transcribe all handwritten text from this exam answer.
 
 Instructions:
 - Transcribe ONLY handwritten text (ignore printed questions/instructions)
@@ -164,14 +182,43 @@ Instructions:
 Respond with just the transcribed text."""
 
     try:
-        response, _ = ai_helper.AI_Helper__Anthropic().query_ai(
-            query,
-            attachments=[("png", image_base64)]
-        )
+        # Use Anthropic's AI with appropriate model
+        ai = ai_helper.AI_Helper__Anthropic()
+
+        # Override model if premium requested
+        if use_premium_model:
+            # Temporarily override the model in the client
+            original_model = None
+            response = ai._client.messages.create(
+                model="claude-opus-4-20250514",  # Most capable model
+                max_tokens=2000,  # More tokens for detailed transcription
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": query},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": image_base64
+                            }
+                        }
+                    ]
+                }]
+            )
+            transcription = response.content[0].text
+        else:
+            response, _ = ai.query_ai(
+                query,
+                attachments=[("png", image_base64)]
+            )
+            transcription = response
 
         return {
             "problem_id": problem_id,
-            "transcription": response.strip()
+            "transcription": transcription.strip(),
+            "model": "premium (Opus)" if use_premium_model else "standard (Sonnet)"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
