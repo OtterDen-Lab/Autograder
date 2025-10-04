@@ -205,7 +205,8 @@ class ExamProcessor:
                     detect_blank=detect_blank,
                     blank_confidence_threshold=blank_confidence_threshold,
                     use_ai_for_borderline=use_ai_for_borderline,
-                    problem_max_points=problem_max_points
+                    problem_max_points=problem_max_points,
+                    extract_max_points_enabled=extract_max_points_enabled
                 )
             else:
                 # Use manual page ranges
@@ -419,7 +420,8 @@ class ExamProcessor:
         detect_blank: bool = False,
         blank_confidence_threshold: float = 0.8,
         use_ai_for_borderline: bool = False,
-        problem_max_points: Dict[int, float] = None
+        problem_max_points: Dict[int, float] = None,
+        extract_max_points_enabled: bool = False
     ) -> List[Dict]:
         """
         Redact names and automatically split PDF into problems based on horizontal line detection.
@@ -519,6 +521,17 @@ class ExamProcessor:
 
         pdf_document.close()
 
+        # Filter out blank trailing page if present
+        # Check if the last problem is an entirely blank page (not just an unanswered question)
+        if problems and detect_blank:
+            last_problem = problems[-1]
+            # Re-check the last problem using full-page blank detection (not just answer area)
+            full_page_check = self.is_blank_heuristic(last_problem["image_base64"], crop_to_answer_area=False, threshold=0.015)
+
+            if full_page_check["is_blank"] and full_page_check["confidence"] > 0.85:
+                log.info(f"Removing blank trailing page (problem {last_problem['problem_number']}) - ink_density={full_page_check['ink_density']:.4f}")
+                problems.pop()
+
         if detect_blank:
             blank_count = sum(1 for p in problems if p["is_blank"])
             log.info(f"Auto-split PDF into {len(problems)} problems ({blank_count} detected as blank) across {total_pages} pages")
@@ -559,6 +572,12 @@ class ExamProcessor:
             crop_bottom = int(height * 0.8)
             img = img.crop((0, crop_top, width, crop_bottom))
             log.debug(f"Cropped to answer area: {crop_top} to {crop_bottom} (middle 60%)")
+        else:
+            # For full page checks, still apply small margins to avoid edge artifacts
+            width, height = img.size
+            margin = 30  # 30 pixels on each side
+            img = img.crop((margin, margin, width - margin, height - margin))
+            log.debug(f"Using full page with {margin}px margins for blank detection")
 
         # Convert to numpy array
         img_array = np.array(img)
