@@ -245,8 +245,8 @@ async def get_canvas_info(session_id: int):
         if not row:
             raise HTTPException(status_code=404, detail="Session not found")
 
-    # Initialize Canvas interface (hardcoded to dev for now)
-    use_prod = False
+    # Get Canvas environment from session
+    use_prod = bool(row.get("use_prod_canvas", 0))
     canvas = CanvasInterface(prod=use_prod)
 
     # Get course and assignment to construct URL
@@ -271,6 +271,57 @@ async def get_canvas_info(session_id: int):
         "canvas_url": canvas_url,
         "environment": "production" if use_prod else "development"
     }
+
+
+@router.put("/{session_id}/canvas-config")
+async def update_canvas_config(
+    session_id: int,
+    course_id: int,
+    assignment_id: int,
+    use_prod: bool = False
+):
+    """Update Canvas configuration for a session (useful for switching dev→prod)"""
+    # Get course and assignment details from Canvas
+    canvas_interface = CanvasInterface(prod=use_prod)
+    try:
+        course = canvas_interface.get_course(course_id)
+        assignment = course.get_assignment(assignment_id)
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                UPDATE grading_sessions
+                SET course_id = ?,
+                    course_name = ?,
+                    assignment_id = ?,
+                    assignment_name = ?,
+                    use_prod_canvas = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (
+                course_id,
+                course.name,
+                assignment_id,
+                assignment.name,
+                1 if use_prod else 0,
+                session_id
+            ))
+
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Session not found")
+
+        return {
+            "status": "updated",
+            "course_id": course_id,
+            "course_name": course.name,
+            "assignment_id": assignment_id,
+            "assignment_name": assignment.name,
+            "environment": "production" if use_prod else "development"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch Canvas data: {str(e)}")
 
 
 @router.delete("/{session_id}")

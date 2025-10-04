@@ -67,7 +67,7 @@ class FinalizationService:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT course_id, assignment_id, canvas_points
+                SELECT course_id, assignment_id, canvas_points, use_prod_canvas
                 FROM grading_sessions
                 WHERE id = ?
             """, (self.session_id,))
@@ -76,12 +76,15 @@ class FinalizationService:
             return {
                 "course_id": row["course_id"],
                 "assignment_id": row["assignment_id"],
-                "canvas_points": row["canvas_points"]
+                "canvas_points": row["canvas_points"],
+                "use_prod_canvas": row.get("use_prod_canvas", 0)
             }
 
     def _init_canvas(self, session_info: Dict):
         """Initialize Canvas interface"""
-        self.canvas_interface = CanvasInterface(prod=False)  # Use dev by default
+        use_prod = bool(session_info.get("use_prod_canvas", 0))
+        log.info(f"Initializing Canvas interface with prod={use_prod}")
+        self.canvas_interface = CanvasInterface(prod=use_prod)
         self.course = self.canvas_interface.get_course(session_info["course_id"])
         self.assignment = self.course.get_assignment(session_info["assignment_id"])
 

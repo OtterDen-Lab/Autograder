@@ -373,6 +373,147 @@ async function loadStatistics() {
     }
 }
 
+// Change Canvas Target button
+document.getElementById('change-canvas-target-btn').onclick = async () => {
+    if (!currentSession) return;
+
+    const dialog = document.getElementById('canvas-target-dialog');
+    const envSelect = document.getElementById('canvas-env-select');
+    const courseSelect = document.getElementById('canvas-course-select');
+    const assignmentSelect = document.getElementById('canvas-assignment-select');
+
+    // Show dialog
+    dialog.style.display = 'flex';
+
+    // Load current settings
+    try {
+        const response = await fetch(`${API_BASE}/sessions/${currentSession.id}/canvas-info`);
+        const info = await response.json();
+
+        // Set current environment
+        envSelect.value = info.environment === 'production' ? 'true' : 'false';
+
+        // Load courses for selected environment
+        await loadCanvasConfigCourses();
+
+        // Select current course
+        courseSelect.value = info.course_id;
+
+        // Load and select current assignment
+        await loadCanvasConfigAssignments(info.course_id);
+        assignmentSelect.value = info.assignment_id;
+
+    } catch (error) {
+        console.error('Failed to load current Canvas config:', error);
+    }
+};
+
+// Load courses for Canvas config dialog
+async function loadCanvasConfigCourses() {
+    const envSelect = document.getElementById('canvas-env-select');
+    const courseSelect = document.getElementById('canvas-course-select');
+    const useProd = envSelect.value === 'true';
+
+    courseSelect.innerHTML = '<option value="">Loading courses...</option>';
+    courseSelect.disabled = true;
+
+    try {
+        const response = await fetch(`${API_BASE}/canvas/courses?use_prod=${useProd}`);
+        const data = await response.json();
+
+        courseSelect.innerHTML = '<option value="">-- Select a Course --</option>';
+        data.courses.forEach(course => {
+            const option = document.createElement('option');
+            option.value = course.id;
+            const prefix = course.is_favorite ? '⭐ ' : '';
+            option.textContent = prefix + course.name;
+            courseSelect.appendChild(option);
+        });
+
+        courseSelect.disabled = false;
+    } catch (error) {
+        console.error('Failed to load courses:', error);
+        courseSelect.innerHTML = '<option value="">Failed to load courses</option>';
+    }
+}
+
+// Load assignments for Canvas config dialog
+async function loadCanvasConfigAssignments(courseId) {
+    const envSelect = document.getElementById('canvas-env-select');
+    const assignmentSelect = document.getElementById('canvas-assignment-select');
+    const useProd = envSelect.value === 'true';
+
+    assignmentSelect.innerHTML = '<option value="">Loading assignments...</option>';
+    assignmentSelect.disabled = true;
+
+    try {
+        const response = await fetch(`${API_BASE}/canvas/courses/${courseId}/assignments?use_prod=${useProd}`);
+        const data = await response.json();
+
+        assignmentSelect.innerHTML = '<option value="">-- Select an Assignment --</option>';
+        data.assignments.forEach(assignment => {
+            const option = document.createElement('option');
+            option.value = assignment.id;
+            option.textContent = assignment.name;
+            assignmentSelect.appendChild(option);
+        });
+
+        assignmentSelect.disabled = false;
+    } catch (error) {
+        console.error('Failed to load assignments:', error);
+        assignmentSelect.innerHTML = '<option value="">Failed to load assignments</option>';
+    }
+}
+
+// Canvas config dialog event handlers
+document.getElementById('canvas-env-select').onchange = loadCanvasConfigCourses;
+document.getElementById('canvas-course-select').onchange = (e) => {
+    if (e.target.value) {
+        loadCanvasConfigAssignments(e.target.value);
+    }
+};
+
+document.getElementById('cancel-canvas-target-btn').onclick = () => {
+    document.getElementById('canvas-target-dialog').style.display = 'none';
+};
+
+document.getElementById('save-canvas-target-btn').onclick = async () => {
+    const courseId = document.getElementById('canvas-course-select').value;
+    const assignmentId = document.getElementById('canvas-assignment-select').value;
+    const useProd = document.getElementById('canvas-env-select').value === 'true';
+
+    if (!courseId || !assignmentId) {
+        alert('Please select both a course and an assignment');
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `${API_BASE}/sessions/${currentSession.id}/canvas-config?course_id=${courseId}&assignment_id=${assignmentId}&use_prod=${useProd}`,
+            { method: 'PUT' }
+        );
+
+        if (!response.ok) {
+            throw new Error('Failed to update Canvas configuration');
+        }
+
+        const result = await response.json();
+        alert(`Canvas target updated!\n\nEnvironment: ${result.environment}\nCourse: ${result.course_name}\nAssignment: ${result.assignment_name}`);
+
+        // Close dialog and reload session
+        document.getElementById('canvas-target-dialog').style.display = 'none';
+
+        // Refresh session data
+        const sessionResponse = await fetch(`${API_BASE}/sessions/${currentSession.id}`);
+        currentSession = await sessionResponse.json();
+        updateSessionInfo();
+
+    } catch (error) {
+        console.error('Failed to update Canvas config:', error);
+        alert('Failed to update Canvas configuration. Please try again.');
+    }
+};
+
 // Export session button
 document.getElementById('export-session-btn').onclick = async () => {
     if (!currentSession) return;

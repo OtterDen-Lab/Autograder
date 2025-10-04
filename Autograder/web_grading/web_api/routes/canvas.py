@@ -13,10 +13,10 @@ router = APIRouter()
 
 
 @router.get("/courses")
-async def list_courses():
+async def list_courses(use_prod: bool = False):
     """List all active courses for the current user"""
     try:
-        canvas_interface = get_canvas_interface()
+        canvas_interface = get_canvas_interface(use_prod=use_prod)
 
         # Get all active courses, include additional fields for sorting
         courses = canvas_interface.canvas.get_courses(
@@ -74,13 +74,13 @@ async def list_courses():
 
 
 @router.get("/courses/{course_id}/assignments")
-async def list_assignments(course_id: int):
+async def list_assignments(course_id: int, use_prod: bool = False):
     """List all assignments for a course"""
     import logging
     log = logging.getLogger(__name__)
 
     try:
-        canvas_interface = get_canvas_interface()
+        canvas_interface = get_canvas_interface(use_prod=use_prod)
 
         # Get the raw Canvas course object directly from the canvasapi library
         canvas_course = canvas_interface.canvas.get_course(course_id)
@@ -111,15 +111,15 @@ async def list_assignments(course_id: int):
         )
 
 
-def get_canvas_interface():
+def get_canvas_interface(use_prod: bool = False):
     """
     Get CanvasInterface instance.
     Defaults to non-prod (dev) for safety.
+
+    Args:
+        use_prod: If True, use production Canvas; otherwise use dev/beta
     """
     from lms_interface.canvas_interface import CanvasInterface
-
-    # Check if we should use prod (must be explicitly set)
-    use_prod = os.getenv("USE_PROD_CANVAS", "false").lower() == "true"
 
     # Use existing CanvasInterface which handles ~/.env loading
     canvas_interface = CanvasInterface(prod=use_prod)

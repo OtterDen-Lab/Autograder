@@ -22,7 +22,7 @@ async def finalize_session(session_id: int, background_tasks: BackgroundTasks):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, course_id, assignment_id, status
+            SELECT id, course_id, assignment_id, status, use_prod_canvas
             FROM grading_sessions
             WHERE id = ?
         """, (session_id,))

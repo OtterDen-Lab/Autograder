@@ -174,9 +174,53 @@
                 <div style="display: flex; gap: 10px; margin-top: 20px;">
                     <button id="finalize-btn" class="btn btn-success">Finalize & Upload to Canvas</button>
                     <button id="export-session-btn" class="btn btn-secondary">Export Session (Checkpoint)</button>
+                    <button id="change-canvas-target-btn" class="btn btn-secondary">Change Canvas Target</button>
                 </div>
             </section>
         </main>
+    </div>
+
+    <!-- Canvas Target Change Dialog -->
+    <div id="canvas-target-dialog" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div style="background: white; border-radius: 8px; padding: 30px; max-width: 600px; width: 90%;">
+            <h2 style="margin-top: 0;">Change Canvas Target</h2>
+            <p style="color: var(--gray-700); margin-bottom: 20px;">
+                Update the Canvas environment and assignment for this grading session. Useful for testing in dev before uploading to production.
+            </p>
+
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 10px;">
+                    <strong>Environment:</strong>
+                    <select id="canvas-env-select" style="display: block; width: 100%; padding: 8px; margin-top: 5px; border: 1px solid var(--gray-200); border-radius: 4px;">
+                        <option value="false">Development (Beta/Test)</option>
+                        <option value="true">Production</option>
+                    </select>
+                </label>
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 10px;">
+                    <strong>Course:</strong>
+                    <select id="canvas-course-select" style="display: block; width: 100%; padding: 8px; margin-top: 5px; border: 1px solid var(--gray-200); border-radius: 4px;">
+                        <option value="">Loading courses...</option>
+                    </select>
+                </label>
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 10px;">
+                    <strong>Assignment:</strong>
+                    <select id="canvas-assignment-select" disabled style="display: block; width: 100%; padding: 8px; margin-top: 5px; border: 1px solid var(--gray-200); border-radius: 4px;">
+                        <option value="">Select a course first</option>
+                    </select>
+                </label>
+            </div>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="cancel-canvas-target-btn" class="btn">Cancel</button>
+                <button id="save-canvas-target-btn" class="btn btn-primary">Save Changes</button>
+            </div>
+        </div>
     </div>
 
     <!-- Handwriting Transcription Dialog -->

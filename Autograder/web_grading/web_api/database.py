@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 
 def get_db_path() -> Path:
@@ -97,7 +97,8 @@ def create_schema(cursor):
             total_exams INTEGER DEFAULT 0,
             processed_exams INTEGER DEFAULT 0,
             matched_exams INTEGER DEFAULT 0,
-            processing_message TEXT
+            processing_message TEXT,
+            use_prod_canvas INTEGER DEFAULT 0
         )
     """)
 
@@ -208,6 +209,10 @@ def run_migrations(cursor, from_version: int):
         migrate_to_v6(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (6)")
 
+    if from_version < 7:
+        migrate_to_v7(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (7)")
+
 
 def migrate_to_v2(cursor):
     """Add progress tracking columns to grading_sessions"""
@@ -252,6 +257,13 @@ def migrate_to_v6(cursor):
 
     # Create index for fast duplicate detection
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_submissions_file_hash ON submissions(session_id, file_hash)")
+
+
+def migrate_to_v7(cursor):
+    """Add Canvas environment setting to sessions"""
+    log.info("Migrating to schema version 7: adding use_prod_canvas to grading_sessions")
+
+    cursor.execute("ALTER TABLE grading_sessions ADD COLUMN use_prod_canvas INTEGER DEFAULT 0")
 
 
 def update_problem_stats(session_id: int):
