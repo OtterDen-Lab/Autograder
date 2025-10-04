@@ -17,11 +17,8 @@
 
     <div class="container">
         <header>
-            <div class="header-content">
-                <div class="header-main">
-                    <h1>Web Grading Interface</h1>
-                    <div id="session-info"></div>
-                </div>
+            <div class="header-content" style="align-items: center;">
+                <h1 style="margin: 0;">Web Grading Interface <span id="session-info" style="font-size: 0.6em; color: var(--gray-600); font-weight: normal;"></span></h1>
                 <button id="home-btn" class="btn btn-secondary" style="display: none;">← Home</button>
             </div>
         </header>
@@ -116,53 +113,48 @@
 
             <!-- Grading Section -->
             <section id="grading-section" class="section">
-                <h2>Grade Problems</h2>
-
-                <div class="grading-controls">
-                    <label>
-                        Problem:
-                        <select id="problem-select"></select>
-                    </label>
-                    <label>
-                        Max Points:
-                        <select id="max-points-input" style="width: 80px;" title="Max points for this problem">
-                            <option value="">-</option>
-                            <option value="1">1</option>
-                            <option value="2">2</option>
-                            <option value="3">3</option>
-                            <option value="4">4</option>
-                            <option value="5">5</option>
-                            <option value="6">6</option>
-                            <option value="7">7</option>
-                            <option value="8">8</option>
-                            <option value="9">9</option>
-                            <option value="10">10</option>
-                        </select>
-                    </label>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <div style="display: flex; gap: 20px; align-items: center;">
+                        <h2 style="margin: 0;">Grade Problems</h2>
+                        <label style="display: flex; gap: 5px; align-items: center; margin: 0;">
+                            Problem:
+                            <select id="problem-select"></select>
+                        </label>
+                        <label style="display: flex; gap: 5px; align-items: center; margin: 0;">
+                            Max Points:
+                            <select id="max-points-input" style="width: 60px;" title="Max points for this problem">
+                                <option value="">-</option>
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                                <option value="4">4</option>
+                                <option value="5">5</option>
+                                <option value="6">6</option>
+                                <option value="7">7</option>
+                                <option value="8">8</option>
+                                <option value="9">9</option>
+                                <option value="10">10</option>
+                            </select>
+                        </label>
+                    </div>
                     <div class="progress-info">
                         <span id="grading-progress">0 / 0</span>
                     </div>
                 </div>
 
-                <div class="grading-overall-progress">
-                    <div class="overall-progress-bar">
-                        <div id="overall-progress-fill" class="overall-progress-fill" style="width: 0%"></div>
-                    </div>
-                    <div class="overall-progress-text">
-                        <span id="overall-progress-label">Overall: 0 / 0 (0%)</span>
-                        <div style="display: flex; gap: 10px;">
-                            <button id="view-stats-btn" class="btn btn-secondary btn-small">View Statistics</button>
-                            <button id="upload-more-btn" class="btn btn-secondary btn-small">+ Upload More Exams</button>
+                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+                    <div style="flex: 1;">
+                        <div class="overall-progress-bar" style="margin-bottom: 5px;">
+                            <div id="overall-progress-fill" class="overall-progress-fill" style="width: 0%"></div>
                         </div>
+                        <span id="overall-progress-label" style="font-size: 13px; color: var(--gray-700);">Overall: 0 / 0 (0%)</span>
                     </div>
+                    <button id="view-stats-btn" class="btn btn-secondary btn-small">View Statistics</button>
+                    <button id="upload-more-btn" class="btn btn-secondary btn-small">+ Upload More Exams</button>
                 </div>
 
-                <div class="keyboard-hints">
-                    <small>Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit | <strong>Shift+Tab</strong> to skip</small>
-                </div>
-
-                <div class="grading-form" style="margin-bottom: 20px;">
-                    <label>
+                <div class="grading-form" style="margin-bottom: 10px;">
+                    <label style="margin-bottom: 5px;">
                         Score:
                         <div style="display: flex; gap: 10px; align-items: center;">
                             <input type="range" id="score-slider" min="0" max="10" step="1" value="0" style="flex: 1;">
@@ -178,12 +170,15 @@
                 <div class="grading-form">
                     <label>
                         Feedback (optional):
-                        <textarea id="feedback-input" rows="4" placeholder="Optional feedback for student"></textarea>
+                        <textarea id="feedback-input" rows="3" placeholder="Optional feedback for student"></textarea>
                     </label>
-                    <div style="display: flex; gap: 10px;">
-                        <button id="submit-grade-btn" class="btn btn-primary">Submit & Next (Enter)</button>
-                        <button id="next-problem-btn" class="btn">Skip (Shift+Tab)</button>
+                    <div style="display: flex; gap: 10px; margin-bottom: 5px;">
+                        <button id="submit-grade-btn" class="btn btn-primary">Submit & Next</button>
+                        <button id="next-problem-btn" class="btn">Skip</button>
                         <button id="decipher-btn" class="btn btn-secondary">Decipher Handwriting</button>
+                    </div>
+                    <div style="text-align: center; padding: 5px 0;">
+                        <small style="color: var(--gray-600);">Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit | <strong>Shift+Tab</strong> to skip</small>
                     </div>
                 </div>
             </section>
@@ -202,6 +197,7 @@
                 </div>
 
                 <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button id="continue-grading-btn" class="btn btn-primary">← Continue Grading</button>
                     <button id="finalize-btn" class="btn btn-success">Finalize & Upload to Canvas</button>
                     <button id="export-session-btn" class="btn btn-secondary">Export Session (Checkpoint)</button>
                     <button id="change-canvas-target-btn" class="btn btn-secondary">Change Canvas Target</button>

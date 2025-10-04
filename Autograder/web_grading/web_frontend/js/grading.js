@@ -165,6 +165,11 @@ function setupGradingControls() {
         loadStatistics();
     };
 
+    // Continue grading button (in stats section)
+    document.getElementById('continue-grading-btn').onclick = () => {
+        navigateToSection('grading-section');
+    };
+
     // Initial score sync setup
     setupScoreSync();
 
