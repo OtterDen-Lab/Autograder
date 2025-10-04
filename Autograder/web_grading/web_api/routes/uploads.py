@@ -239,6 +239,18 @@ async def process_exam_files(session_id: int, file_paths: List[Path], file_metad
                     WHERE id = ?
                 """, (base_total + len(file_paths), base_processed + processed, base_matched + matched, message, session_id))
 
+        # Load existing max_points metadata to avoid re-extracting
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT problem_number, max_points
+                FROM problem_metadata
+                WHERE session_id = ?
+            """, (session_id,))
+            problem_max_points = {row[0]: row[1] for row in cursor.fetchall()}
+
+        log.info(f"Loaded {len(problem_max_points)} existing max_points values from metadata")
+
         # Process exams
         processor = ExamProcessor()
         matched, unmatched = processor.process_exams(
@@ -251,7 +263,8 @@ async def process_exam_files(session_id: int, file_paths: List[Path], file_metad
             use_ai_for_borderline=False,  # Only use heuristics to save cost
             progress_callback=update_progress,
             document_id_offset=start_document_id,
-            file_metadata=file_metadata
+            file_metadata=file_metadata,
+            problem_max_points=problem_max_points
         )
 
         # Store in database

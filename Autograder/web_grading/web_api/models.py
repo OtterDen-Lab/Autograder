@@ -26,6 +26,7 @@ class SessionCreate(BaseModel):
     assignment_name: str
     course_name: Optional[str] = None
     canvas_points: Optional[float] = None
+    use_prod_canvas: bool = False
 
 
 class SessionResponse(BaseModel):
@@ -89,7 +90,7 @@ class ProblemResponse(BaseModel):
     score: Optional[float]
     feedback: Optional[str]
     graded: bool
-    max_points: Optional[float]
+    max_points: Optional[float] = None
 
     # Metadata for grading context
     current_index: int

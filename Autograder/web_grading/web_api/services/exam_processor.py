@@ -66,7 +66,8 @@ class ExamProcessor:
         use_ai_for_borderline: bool = False,
         progress_callback: Optional[callable] = None,
         document_id_offset: int = 0,
-        file_metadata: Optional[Dict[Path, Dict]] = None
+        file_metadata: Optional[Dict[Path, Dict]] = None,
+        problem_max_points: Optional[Dict[int, float]] = None
     ) -> Tuple[List[Dict], List[Dict]]:
         """
         Process exam PDFs.
@@ -193,12 +194,17 @@ class ExamProcessor:
 
             # Redact and split into problems (use auto-detection if no page_ranges specified)
             if page_ranges is None:
+                # Initialize problem_max_points dict if not provided (shared across all exams)
+                if problem_max_points is None:
+                    problem_max_points = {}
+
                 # Auto-detect problems using horizontal line detection
                 problems = self.redact_and_split_auto(
                     pdf_path,
                     detect_blank=detect_blank,
                     blank_confidence_threshold=blank_confidence_threshold,
-                    use_ai_for_borderline=use_ai_for_borderline
+                    use_ai_for_borderline=use_ai_for_borderline,
+                    problem_max_points=problem_max_points
                 )
             else:
                 # Use manual page ranges
@@ -411,7 +417,8 @@ class ExamProcessor:
         pdf_path: Path,
         detect_blank: bool = False,
         blank_confidence_threshold: float = 0.8,
-        use_ai_for_borderline: bool = False
+        use_ai_for_borderline: bool = False,
+        problem_max_points: Dict[int, float] = None
     ) -> List[Dict]:
         """
         Redact names and automatically split PDF into problems based on horizontal line detection.
@@ -492,10 +499,17 @@ class ExamProcessor:
                         problem_dict["blank_reasoning"] = ai_result.get("reasoning", "")
 
                 # Extract max points from score box (only if not already known for this problem number)
-                # Note: This will be checked against session metadata later
-                max_points = self.extract_max_points(img_base64)
-                if max_points is not None:
-                    problem_dict["max_points"] = max_points
+                if problem_max_points and problem_number in problem_max_points:
+                    # Use cached max_points
+                    problem_dict["max_points"] = problem_max_points[problem_number]
+                else:
+                    # Extract from image
+                    max_points = self.extract_max_points(img_base64)
+                    if max_points is not None:
+                        problem_dict["max_points"] = max_points
+                        # Cache it for subsequent problems with same number
+                        if problem_max_points is not None:
+                            problem_max_points[problem_number] = max_points
 
                 problems.append(problem_dict)
 
@@ -648,10 +662,14 @@ Respond with ONLY a JSON object in this format:
             image_data = base64.b64decode(image_base64)
             img = Image.open(io.BytesIO(image_data))
 
-            # Crop to upper right corner (top 15%, right 20%)
+            # Crop to upper right corner, avoiding name redaction area
+            # Name box is typically left-center (350-600px from left)
+            # Score box is in upper right corner
             width, height = img.size
             crop_height = int(height * 0.15)
-            crop_width = int(width * 0.20)
+
+            # Use rightmost 15% of width to avoid name box
+            crop_width = int(width * 0.15)
             crop_box = (width - crop_width, 0, width, crop_height)
             cropped = img.crop(crop_box)
 

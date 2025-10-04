@@ -42,6 +42,14 @@
                     <h3>Create New Session</h3>
                     <form id="session-form">
                         <label>
+                            Canvas Environment:
+                            <select id="canvas-env-new" required>
+                                <option value="false">Development (Beta/Test)</option>
+                                <option value="true">Production</option>
+                            </select>
+                        </label>
+
+                        <label>
                             Course:
                             <select id="course-select" required>
                                 <option value="">Loading courses...</option>

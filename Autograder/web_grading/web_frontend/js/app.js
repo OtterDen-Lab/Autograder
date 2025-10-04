@@ -135,11 +135,22 @@ function setupEventListeners() {
         if (form.style.display === 'none') {
             form.style.display = 'block';
             btn.textContent = '− Hide Form';
-            loadCourses(); // Load courses when form is shown
+            const useProd = document.getElementById('canvas-env-new').value === 'true';
+            loadCourses(useProd); // Load courses when form is shown
         } else {
             form.style.display = 'none';
             btn.textContent = '+ Create New Session';
         }
+    };
+
+    // Canvas environment change handler
+    document.getElementById('canvas-env-new').onchange = (e) => {
+        const useProd = e.target.value === 'true';
+        loadCourses(useProd);
+        // Clear assignment selection when environment changes
+        document.getElementById('assignment-select').innerHTML = '<option value="">Select a course first</option>';
+        document.getElementById('assignment-select').disabled = true;
+        document.getElementById('assignment-info').textContent = '';
     };
 
     // Import session button
@@ -200,7 +211,8 @@ function setupEventListeners() {
         infoBox.className = 'info-box success';
 
         // Load assignments for this course
-        await loadAssignments(parseInt(courseId));
+        const useProd = document.getElementById('canvas-env-new').value === 'true';
+        await loadAssignments(parseInt(courseId), useProd);
     };
 
     // Assignment selection handler
@@ -263,7 +275,7 @@ function setupEventListeners() {
 }
 
 // Load courses from Canvas
-async function loadCourses() {
+async function loadCourses(useProd = false) {
     const courseSelect = document.getElementById('course-select');
     const infoBox = document.getElementById('course-info');
 
@@ -271,7 +283,7 @@ async function loadCourses() {
     courseSelect.disabled = true;
 
     try {
-        const response = await fetch(`${API_BASE}/canvas/courses`);
+        const response = await fetch(`${API_BASE}/canvas/courses?use_prod=${useProd}`);
         if (!response.ok) {
             throw new Error('Failed to load courses');
         }
@@ -301,7 +313,7 @@ async function loadCourses() {
 }
 
 // Load assignments for a course
-async function loadAssignments(courseId) {
+async function loadAssignments(courseId, useProd = false) {
     const assignmentSelect = document.getElementById('assignment-select');
     const infoBox = document.getElementById('assignment-info');
 
@@ -309,7 +321,7 @@ async function loadAssignments(courseId) {
     assignmentSelect.disabled = true;
 
     try {
-        const response = await fetch(`${API_BASE}/canvas/courses/${courseId}/assignments`);
+        const response = await fetch(`${API_BASE}/canvas/courses/${courseId}/assignments?use_prod=${useProd}`);
         if (!response.ok) {
             throw new Error('Failed to load assignments');
         }
@@ -356,6 +368,9 @@ async function createNewSession(e) {
     const assignmentPoints = assignmentSelect.options[assignmentSelect.selectedIndex].dataset.points;
     const canvasPoints = pointsInput ? parseFloat(pointsInput) : (assignmentPoints ? parseFloat(assignmentPoints) : null);
 
+    // Get environment setting
+    const useProdCanvas = document.getElementById('canvas-env-new').value === 'true';
+
     try {
         const response = await fetch(`${API_BASE}/sessions`, {
             method: 'POST',
@@ -365,7 +380,8 @@ async function createNewSession(e) {
                 assignment_id: assignmentId,
                 assignment_name: assignmentName,
                 course_name: courseName,
-                canvas_points: canvasPoints
+                canvas_points: canvasPoints,
+                use_prod_canvas: useProdCanvas
             })
         });
 

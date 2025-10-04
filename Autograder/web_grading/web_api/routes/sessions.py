@@ -28,8 +28,8 @@ async def create_session(session: SessionCreate):
 
         cursor.execute("""
             INSERT INTO grading_sessions
-            (assignment_id, assignment_name, course_id, course_name, status, canvas_points)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (assignment_id, assignment_name, course_id, course_name, status, canvas_points, use_prod_canvas)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             session.assignment_id,
             session.assignment_name,
@@ -37,6 +37,7 @@ async def create_session(session: SessionCreate):
             session.course_name,
             "preprocessing",
             session.canvas_points,
+            1 if session.use_prod_canvas else 0,
         ))
 
         session_id = cursor.lastrowid
