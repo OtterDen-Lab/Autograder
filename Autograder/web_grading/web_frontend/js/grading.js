@@ -250,9 +250,18 @@ function displayCurrentProblem() {
     document.getElementById('problem-image').src =
         `data:image/png;base64,${currentProblem.image_data}`;
 
-    // Update progress
-    document.getElementById('grading-progress').textContent =
-        `${currentProblem.current_index} / ${currentProblem.total_count}`;
+    // Update progress with blank count
+    let progressText = `${currentProblem.current_index} / ${currentProblem.total_count}`;
+
+    // Add blank info if there are ungraded blanks
+    if (currentProblem.ungraded_blank > 0 || currentProblem.ungraded_nonblank > 0) {
+        const remaining = currentProblem.ungraded_blank + currentProblem.ungraded_nonblank;
+        if (currentProblem.ungraded_blank > 0) {
+            progressText += ` (${currentProblem.ungraded_blank} blank)`;
+        }
+    }
+
+    document.getElementById('grading-progress').textContent = progressText;
 
     // Update max points from cache
     updateMaxPointsDropdown();

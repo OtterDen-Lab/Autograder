@@ -95,6 +95,8 @@ class ProblemResponse(BaseModel):
     # Metadata for grading context
     current_index: int
     total_count: int
+    ungraded_blank: int = 0
+    ungraded_nonblank: int = 0
 
     # Blank detection metadata
     is_blank: bool = False

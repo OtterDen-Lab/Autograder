@@ -23,11 +23,11 @@ async def get_next_problem(session_id: int, problem_number: int):
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
-        # Get next ungraded problem
+        # Get next ungraded problem (non-blank first, then blank)
         cursor.execute("""
             SELECT * FROM problems
             WHERE session_id = ? AND problem_number = ? AND graded = 0
-            ORDER BY RANDOM()
+            ORDER BY is_blank ASC, RANDOM()
             LIMIT 1
         """, (session_id, problem_number))
 
@@ -38,11 +38,13 @@ async def get_next_problem(session_id: int, problem_number: int):
                 detail=f"No ungraded problems found for problem {problem_number}"
             )
 
-        # Get counts for context
+        # Get counts for context (including blank counts)
         cursor.execute("""
             SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as graded
+                SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as graded,
+                SUM(CASE WHEN graded = 0 AND is_blank = 1 THEN 1 ELSE 0 END) as ungraded_blank,
+                SUM(CASE WHEN graded = 0 AND is_blank = 0 THEN 1 ELSE 0 END) as ungraded_nonblank
             FROM problems
             WHERE session_id = ? AND problem_number = ?
         """, (session_id, problem_number))
@@ -50,6 +52,8 @@ async def get_next_problem(session_id: int, problem_number: int):
         count_row = cursor.fetchone()
         total_count = count_row["total"]
         graded_count = count_row["graded"]
+        ungraded_blank = count_row["ungraded_blank"]
+        ungraded_nonblank = count_row["ungraded_nonblank"]
         current_index = graded_count + 1
 
         return ProblemResponse(
@@ -63,6 +67,8 @@ async def get_next_problem(session_id: int, problem_number: int):
             max_points=row["max_points"],
             current_index=current_index,
             total_count=total_count,
+            ungraded_blank=ungraded_blank,
+            ungraded_nonblank=ungraded_nonblank,
             is_blank=bool(row["is_blank"]),
             blank_confidence=row["blank_confidence"] or 0.0,
             blank_method=row["blank_method"],
@@ -91,11 +97,13 @@ async def get_previous_problem(session_id: int, problem_number: int):
                 detail=f"No graded problems found for problem {problem_number}"
             )
 
-        # Get counts for context
+        # Get counts for context (including blank counts)
         cursor.execute("""
             SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as graded
+                SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as graded,
+                SUM(CASE WHEN graded = 0 AND is_blank = 1 THEN 1 ELSE 0 END) as ungraded_blank,
+                SUM(CASE WHEN graded = 0 AND is_blank = 0 THEN 1 ELSE 0 END) as ungraded_nonblank
             FROM problems
             WHERE session_id = ? AND problem_number = ?
         """, (session_id, problem_number))
@@ -103,6 +111,8 @@ async def get_previous_problem(session_id: int, problem_number: int):
         count_row = cursor.fetchone()
         total_count = count_row["total"]
         graded_count = count_row["graded"]
+        ungraded_blank = count_row["ungraded_blank"]
+        ungraded_nonblank = count_row["ungraded_nonblank"]
         current_index = graded_count
 
         return ProblemResponse(
@@ -116,6 +126,8 @@ async def get_previous_problem(session_id: int, problem_number: int):
             max_points=row["max_points"],
             current_index=current_index,
             total_count=total_count,
+            ungraded_blank=ungraded_blank,
+            ungraded_nonblank=ungraded_nonblank,
             is_blank=bool(row["is_blank"]),
             blank_confidence=row["blank_confidence"] or 0.0,
             blank_method=row["blank_method"],
