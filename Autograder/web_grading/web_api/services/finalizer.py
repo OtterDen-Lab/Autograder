@@ -46,7 +46,8 @@ class FinalizationService:
         # Get all submissions
         submissions = self._get_submissions()
         self.total_submissions = len(submissions)
-        self.total_steps = self.total_submissions * self.steps_per_submission
+        # Add 1 for final cleanup step
+        self.total_steps = (self.total_submissions * self.steps_per_submission) + 1
 
         log.info(f"Finalizing {len(submissions)} submissions ({self.total_steps} total steps)")
 
@@ -74,6 +75,9 @@ class FinalizationService:
                 log.error(f"Failed to process submission {submission['id']}: {e}", exc_info=True)
                 self._update_progress(f"Processing {i}/{len(submissions)}: ERROR - Failed for {student_name}: {str(e)}")
                 # Continue with other submissions
+
+        # Final cleanup step
+        self._update_progress(f"Finalization complete - all {len(submissions)} submissions processed")
 
     def _get_session_info(self) -> Dict:
         """Get session information from database"""
