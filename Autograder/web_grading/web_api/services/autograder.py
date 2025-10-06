@@ -63,21 +63,37 @@ class AutograderService:
         log.info(f"Deciphered handwriting ({usage['total_tokens']} tokens): {handwriting_text[:100]}...")
         return handwriting_text.strip()
 
-    def grade_problem(self, question_text: str, student_answer: str, max_points: float) -> Tuple[int, str]:
+    def grade_problem(self, question_text: str, student_answer: str, max_points: float,
+                     grading_examples: List[Dict] = None) -> Tuple[int, str]:
         """Grade a student's answer using AI.
 
         Args:
             question_text: The exam question
             student_answer: The student's handwritten answer
             max_points: Maximum points for this problem
+            grading_examples: Optional list of dicts with 'answer', 'score', 'feedback' for few-shot prompting
 
         Returns:
             Tuple of (score, feedback)
         """
+        # Build few-shot examples section
+        examples_section = ""
+        if grading_examples and len(grading_examples) > 0:
+            examples_section = "\n\nHere are examples of how you previously graded similar answers to this question:\n\n"
+            for i, example in enumerate(grading_examples, 1):
+                examples_section += (
+                    f"Example {i}:\n"
+                    f"Student Answer: {example['answer']}\n"
+                    f"Your Score: {example['score']}/{max_points}\n"
+                    f"Your Feedback: {example['feedback']}\n\n"
+                )
+            examples_section += "Please grade the current answer in a similar style and with similar standards.\n"
+
         message = (
             f"You are grading an exam problem worth {max_points} points.\n\n"
-            f"Question:\n{question_text}\n\n"
-            f"Student's Answer:\n{student_answer}\n\n"
+            f"Question:\n{question_text}"
+            f"{examples_section}\n"
+            f"Current Student's Answer:\n{student_answer}\n\n"
             f"Please grade this answer and provide:\n"
             f"1. An INTEGER score out of {max_points} points (no decimals, round to nearest integer)\n"
             f"2. Clear and constructive feedback for the student\n\n"
@@ -160,6 +176,57 @@ class AutograderService:
 
             return question_text
 
+    def get_grading_examples(self, session_id: int, problem_number: int, limit: int = 3) -> List[Dict]:
+        """Fetch examples of previously graded submissions for few-shot prompting.
+
+        Args:
+            session_id: Grading session ID
+            problem_number: Problem number
+            limit: Maximum number of examples to return
+
+        Returns:
+            List of dicts with 'answer', 'score', 'feedback'
+        """
+        examples = []
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get graded problems (exclude blanks and problems without feedback)
+            cursor.execute("""
+                SELECT image_data, score, feedback
+                FROM problems
+                WHERE session_id = ? AND problem_number = ? AND graded = 1
+                      AND is_blank = 0 AND feedback IS NOT NULL AND feedback != ''
+                ORDER BY RANDOM()
+                LIMIT ?
+            """, (session_id, problem_number, limit))
+
+            rows = cursor.fetchall()
+
+        if not rows:
+            log.info(f"No graded examples found for problem {problem_number}")
+            return examples
+
+        log.info(f"Found {len(rows)} graded examples for problem {problem_number}, deciphering...")
+
+        for row in rows:
+            try:
+                # Decipher the handwriting from the example
+                student_answer = self.decipher_handwriting(row["image_data"])
+
+                examples.append({
+                    'answer': student_answer,
+                    'score': row["score"],
+                    'feedback': row["feedback"]
+                })
+            except Exception as e:
+                log.warning(f"Failed to decipher example submission: {e}")
+                continue
+
+        log.info(f"Successfully prepared {len(examples)} grading examples")
+        return examples
+
     def autograde_problem(self, session_id: int, problem_number: int,
                           max_points: float = None, progress_callback=None) -> Dict:
         """Autograde all ungraded submissions for a specific problem number.
@@ -236,6 +303,18 @@ class AutograderService:
             if progress_callback:
                 progress_callback(0, total, f"Extracted question for problem {problem_number}")
 
+            # Get grading examples for few-shot prompting
+            if progress_callback:
+                progress_callback(0, total, f"Fetching grading examples for problem {problem_number}")
+
+            grading_examples = self.get_grading_examples(session_id, problem_number, limit=3)
+
+            if progress_callback:
+                if len(grading_examples) > 0:
+                    progress_callback(0, total, f"Found {len(grading_examples)} grading examples")
+                else:
+                    progress_callback(0, total, f"No grading examples found, proceeding without")
+
             # Grade each problem
             graded_count = 0
             for idx, problem in enumerate(problems, 1):
@@ -249,8 +328,10 @@ class AutograderService:
                     # Decipher handwriting
                     student_answer = self.decipher_handwriting(problem["image_data"])
 
-                    # Grade the answer
-                    score, feedback = self.grade_problem(question_text, student_answer, max_points)
+                    # Grade the answer with examples
+                    score, feedback = self.grade_problem(
+                        question_text, student_answer, max_points, grading_examples=grading_examples
+                    )
 
                     # Update problem with AI suggestion (score and feedback ready for instructor review)
                     cursor.execute("""
