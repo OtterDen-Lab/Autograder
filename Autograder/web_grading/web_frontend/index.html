@@ -15,6 +15,64 @@
         </div>
     </div>
 
+    <!-- Autograding Modal -->
+    <div id="autograding-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div style="background: white; border-radius: 8px; padding: 30px; max-width: 800px; width: 90%; max-height: 90vh; overflow-y: auto;">
+            <h2 style="margin-top: 0;">Autograding Setup</h2>
+
+            <div id="autograding-extract-phase" style="display: none;">
+                <p style="color: var(--gray-700); margin-bottom: 20px;">
+                    Extracting question text from problem image...
+                </p>
+                <div class="progress-bar" style="height: 8px;">
+                    <div style="width: 100%; height: 100%; background: var(--primary-color); animation: pulse 1.5s infinite;"></div>
+                </div>
+            </div>
+
+            <div id="autograding-verify-phase" style="display: none;">
+                <p style="color: var(--gray-700); margin-bottom: 15px;">
+                    Please verify the extracted question text. Make any necessary corrections before proceeding.
+                </p>
+
+                <label style="display: block; margin-bottom: 20px;">
+                    <strong>Extracted Question:</strong>
+                    <textarea id="autograding-question-text" rows="10" style="width: 100%; padding: 10px; font-family: inherit; border: 1px solid var(--gray-300); border-radius: 4px; margin-top: 5px;"></textarea>
+                </label>
+
+                <div style="background: #eff6ff; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
+                    <p style="margin: 0; font-size: 14px; color: var(--gray-700);">
+                        <strong>ℹ️ How Autograding Works:</strong><br>
+                        1. This question will be used for all submissions of this problem<br>
+                        2. Each student's handwritten answer will be extracted<br>
+                        3. AI will grade each answer and suggest a score<br>
+                        4. You'll review and approve AI suggestions before finalizing
+                    </p>
+                </div>
+
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button id="autograding-cancel-btn" class="btn">Cancel</button>
+                    <button id="autograding-confirm-btn" class="btn btn-primary">Start Autograding</button>
+                </div>
+            </div>
+
+            <div id="autograding-progress-phase" style="display: none;">
+                <p style="color: var(--gray-700); margin-bottom: 15px;">
+                    Autograding in progress... This may take a few minutes depending on the number of submissions.
+                </p>
+
+                <div id="autograding-progress-message" style="margin: 10px 0; font-size: 14px; color: var(--gray-700);"></div>
+
+                <div class="progress-bar" style="height: 20px; margin-bottom: 10px;">
+                    <div id="autograding-progress-bar" class="progress-bar-fill"></div>
+                </div>
+
+                <div style="text-align: center; margin-top: 15px;">
+                    <small style="color: var(--gray-600);">Processing <span id="autograding-current">0</span> of <span id="autograding-total">0</span> submissions</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="container">
         <header>
             <div class="header-content" style="align-items: center;">
@@ -177,6 +235,7 @@
                         <button id="back-problem-btn" class="btn">← Back</button>
                         <button id="next-problem-btn" class="btn">Skip</button>
                         <button id="decipher-btn" class="btn btn-secondary">Decipher Handwriting</button>
+                        <button id="start-autograde-btn" class="btn btn-success">Start Autograding</button>
                     </div>
                     <div style="text-align: center; padding: 5px 0;">
                         <small style="color: var(--gray-600);">Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit | <strong>Shift+Tab</strong> to skip</small>
