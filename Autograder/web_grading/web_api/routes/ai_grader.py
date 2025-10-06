@@ -1,5 +1,5 @@
 """
-Autograding endpoints for AI-assisted grading.
+AI grading endpoints for AI-assisted grading.
 """
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -8,7 +8,7 @@ import logging
 import asyncio
 
 from ..database import get_db_connection
-from ..services.autograder import AutograderService
+from ..services.ai_grader import AIGraderService
 from .. import sse
 
 router = APIRouter()
@@ -89,8 +89,8 @@ async def extract_question(session_id: int, request: ExtractQuestionRequest):
 
     try:
         # Extract question text
-        autograder = AutograderService()
-        question_text = autograder.get_or_extract_question(
+        ai_grader = AIGraderService()
+        question_text = ai_grader.get_or_extract_question(
             session_id,
             request.problem_number,
             problem["image_data"]
@@ -176,8 +176,8 @@ async def run_autograding(session_id: int, problem_number: int, max_points: floa
         # Get event loop reference
         loop = asyncio.get_event_loop()
 
-        # Create autograder service
-        autograder = AutograderService()
+        # Create AI grader service
+        ai_grader = AIGraderService()
 
         # Progress callback for SSE updates
         def update_progress(current, total, message):
@@ -196,10 +196,10 @@ async def run_autograding(session_id: int, problem_number: int, max_points: floa
             except Exception as e:
                 log.error(f"Failed to send SSE event: {e}")
 
-        # Run autograding in thread executor
+        # Run AI grading in thread executor
         result = await loop.run_in_executor(
             None,
-            lambda: autograder.autograde_problem(
+            lambda: ai_grader.autograde_problem(
                 session_id,
                 problem_number,
                 max_points=max_points,

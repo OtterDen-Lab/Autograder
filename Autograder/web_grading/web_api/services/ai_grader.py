@@ -1,5 +1,5 @@
 """
-Service for AI-assisted autograding of exam problems.
+Service for AI-assisted grading of exam problems.
 """
 import logging
 from typing import Dict, List, Optional, Tuple
@@ -15,7 +15,7 @@ from ..database import get_db_connection
 log = logging.getLogger(__name__)
 
 
-class AutograderService:
+class AIGraderService:
     """Handles AI-assisted autograding of exam problems"""
 
     def __init__(self):

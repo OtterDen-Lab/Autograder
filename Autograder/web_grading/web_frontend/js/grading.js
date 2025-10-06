@@ -1084,7 +1084,7 @@ startAutogradeBtn.addEventListener('click', async () => {
 
     try {
         // Extract question text
-        const response = await fetch(`${API_BASE}/autograder/${currentSession.id}/extract-question`, {
+        const response = await fetch(`${API_BASE}/ai-grader/${currentSession.id}/extract-question`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ problem_number: currentProblemNumber })
@@ -1140,7 +1140,7 @@ document.getElementById('autograding-confirm-btn').onclick = async () => {
 
     try {
         // Start autograding
-        const response = await fetch(`${API_BASE}/autograder/${currentSession.id}/autograde`, {
+        const response = await fetch(`${API_BASE}/ai-grader/${currentSession.id}/autograde`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1177,7 +1177,7 @@ function connectToAutogradingStream() {
     }
 
     // Connect to SSE stream
-    const streamUrl = `${API_BASE}/autograder/${currentSession.id}/autograde-stream`;
+    const streamUrl = `${API_BASE}/ai-grader/${currentSession.id}/autograde-stream`;
     autogradingEventSource = new EventSource(streamUrl);
 
     autogradingEventSource.addEventListener('connected', (e) => {
