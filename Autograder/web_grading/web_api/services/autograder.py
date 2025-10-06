@@ -109,8 +109,9 @@ class AutograderService:
         log.info(f"AI grading response ({usage['total_tokens']} tokens): {response[:200]}...")
 
         # Parse score and feedback from response
-        score = 0
+        score = 0  # Default to 0 if parsing fails
         feedback = response
+        score_found = False
 
         try:
             lines = response.split('\n')
@@ -123,6 +124,7 @@ class AutograderService:
                     if score_match:
                         # Convert to int (round if decimal was provided)
                         score = int(round(float(score_match.group(1))))
+                        score_found = True
                 elif line.startswith('FEEDBACK:'):
                     feedback = line.replace('FEEDBACK:', '').strip()
                     # Get the rest of the response after FEEDBACK:
@@ -132,6 +134,12 @@ class AutograderService:
         except Exception as e:
             log.error(f"Failed to parse AI grading response: {e}")
             feedback = response
+
+        # Ensure score is within valid range (0 to max_points)
+        score = max(0, min(int(max_points), score))
+
+        if not score_found:
+            log.warning(f"No score found in AI response, defaulting to 0. Response: {response[:200]}")
 
         return score, feedback
 
