@@ -411,6 +411,10 @@ async function uploadFiles() {
     }
 
     try {
+        // Connect to SSE stream BEFORE uploading so we don't miss any events
+        listenForStatusUpdates();
+
+        // Now upload the files
         const response = await fetch(`${API_BASE}/uploads/${currentSession.id}/upload`, {
             method: 'POST',
             body: formData
@@ -419,11 +423,14 @@ async function uploadFiles() {
         const result = await response.json();
         document.getElementById('upload-status').textContent = result.message;
 
-        // Start listening for status updates
-        listenForStatusUpdates();
     } catch (error) {
         console.error('Upload failed:', error);
         alert('Upload failed');
+        // Close SSE connection on error
+        if (uploadEventSource) {
+            uploadEventSource.close();
+            uploadEventSource = null;
+        }
     }
 }
 
@@ -450,7 +457,9 @@ async function deleteSession(sessionId) {
     }
 }
 
-// Listen for status updates via polling (SSE to be implemented)
+// Listen for status updates via SSE
+let uploadEventSource = null;
+
 function listenForStatusUpdates() {
     const container = document.getElementById('upload-progress-container');
     const progressFill = document.getElementById('upload-progress-fill');
@@ -461,58 +470,60 @@ function listenForStatusUpdates() {
     statusDiv.textContent = 'Starting upload processing...';
     progressFill.style.width = '0%';
 
-    console.log('Started listening for status updates');
+    console.log('Started listening for status updates via SSE');
 
-    const interval = setInterval(async () => {
-        try {
-            const response = await fetch(`${API_BASE}/sessions/${currentSession.id}`);
-            const session = await response.json();
+    // Close existing connection if any
+    if (uploadEventSource) {
+        uploadEventSource.close();
+    }
 
-            console.log('Status update:', session.processing_message, session.status);
+    // Connect to SSE stream
+    const streamUrl = `${API_BASE}/uploads/${currentSession.id}/upload-stream`;
+    uploadEventSource = new EventSource(streamUrl);
 
-            // Update progress display
-            if (session.processing_message) {
-                statusDiv.textContent = session.processing_message;
+    uploadEventSource.addEventListener('connected', (e) => {
+        console.log('SSE connected for upload progress');
+    });
 
-                // Try to parse progress from message (e.g., "Processing exam 3/27")
-                const progressMatch = session.processing_message.match(/(\d+)\/(\d+)/);
-                if (progressMatch) {
-                    const current = parseInt(progressMatch[1]);
-                    const total = parseInt(progressMatch[2]);
-                    const percentage = Math.round((current / total) * 100);
-                    progressFill.style.width = `${percentage}%`;
-                    progressFill.textContent = `${percentage}%`;
-                }
-            }
+    uploadEventSource.addEventListener('progress', (e) => {
+        const data = JSON.parse(e.data);
+        console.log('Upload progress:', data);
 
-            // Check if processing is complete (not in preprocessing state)
-            const isProcessingComplete = session.status !== 'preprocessing';
-            const statusChanged = session.status !== currentSession.status;
+        statusDiv.textContent = data.message;
+        progressFill.style.width = `${data.progress}%`;
+        progressFill.textContent = `${data.progress}%`;
+    });
 
-            if (statusChanged) {
-                currentSession = session;
-                updateSessionInfo();
-            }
+    uploadEventSource.addEventListener('complete', async (e) => {
+        const data = JSON.parse(e.data);
+        console.log('Upload complete:', data);
 
-            if (isProcessingComplete && (session.status === 'ready' || session.status === 'name_matching_needed' || session.status === 'grading')) {
-                clearInterval(interval);
+        uploadEventSource.close();
+        uploadEventSource = null;
 
-                // Complete the progress bar
-                progressFill.style.width = '100%';
-                progressFill.textContent = '100%';
-                statusDiv.textContent = 'Processing complete!';
+        // Complete the progress bar
+        progressFill.style.width = '100%';
+        progressFill.textContent = '100%';
+        statusDiv.textContent = data.message;
 
-                // Update currentSession one more time
-                currentSession = session;
-                updateSessionInfo();
+        // Reload session info
+        const response = await fetch(`${API_BASE}/sessions/${currentSession.id}`);
+        currentSession = await response.json();
+        updateSessionInfo();
 
-                // Show final message for 2 seconds before navigating
-                setTimeout(() => {
-                    navigateToSection(getNextSectionForStatus(session.status));
-                }, 2000);
-            }
-        } catch (error) {
-            console.error('Status check failed:', error);
+        // Show final message for 2 seconds before navigating
+        setTimeout(() => {
+            navigateToSection(getNextSectionForStatus(currentSession.status));
+        }, 2000);
+    });
+
+    uploadEventSource.addEventListener('error', (e) => {
+        console.error('SSE error:', e);
+        if (uploadEventSource && uploadEventSource.readyState === EventSource.CLOSED) {
+            console.log('SSE connection closed');
+            uploadEventSource = null;
+        } else {
+            statusDiv.textContent = 'Connection error - please refresh';
         }
-    }, 500);  // Poll every 500ms
+    });
 }

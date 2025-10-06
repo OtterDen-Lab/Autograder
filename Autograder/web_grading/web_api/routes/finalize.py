@@ -2,6 +2,7 @@
 Finalization endpoints for completing grading and uploading to Canvas.
 """
 from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from pathlib import Path
 import tempfile
 import shutil
@@ -9,9 +10,29 @@ import logging
 
 from ..database import get_db_connection
 from ..services.finalizer import FinalizationService
+from .. import sse
 
 router = APIRouter()
 log = logging.getLogger(__name__)
+
+
+@router.get("/{session_id}/finalize-stream")
+async def finalize_progress_stream(session_id: int):
+    """SSE stream for finalization progress"""
+    stream_id = sse.make_stream_id("finalize", session_id)
+
+    # Create stream if it doesn't exist
+    if not sse.get_stream(stream_id):
+        sse.create_stream(stream_id)
+
+    return StreamingResponse(
+        sse.event_generator(stream_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
 
 
 @router.post("/{session_id}/finalize")
@@ -54,8 +75,12 @@ async def finalize_session(session_id: int, background_tasks: BackgroundTasks):
             WHERE id = ?
         """, (session_id,))
 
+    # Create SSE stream for progress updates
+    stream_id = sse.make_stream_id("finalize", session_id)
+    sse.create_stream(stream_id)
+
     # Start background finalization
-    background_tasks.add_task(run_finalization, session_id)
+    background_tasks.add_task(run_finalization, session_id, stream_id)
 
     return {
         "status": "started",
@@ -85,17 +110,22 @@ async def get_finalization_status(session_id: int):
         }
 
 
-async def run_finalization(session_id: int):
+async def run_finalization(session_id: int, stream_id: str):
     """Background task to finalize grading and upload to Canvas"""
     try:
         log.info(f"Starting finalization for session {session_id}")
+
+        # Send start event
+        await sse.send_event(stream_id, "start", {
+            "message": "Starting finalization..."
+        })
 
         # Create temp directory for PDF processing
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
 
             # Initialize finalizer
-            finalizer = FinalizationService(session_id, temp_path)
+            finalizer = FinalizationService(session_id, temp_path, stream_id)
 
             # Run finalization
             await finalizer.finalize()
@@ -113,8 +143,19 @@ async def run_finalization(session_id: int):
 
         log.info(f"Finalization complete for session {session_id}")
 
+        # Send completion event
+        await sse.send_event(stream_id, "complete", {
+            "message": "Finalization complete - all grades uploaded to Canvas"
+        })
+
     except Exception as e:
         log.error(f"Finalization failed for session {session_id}: {e}", exc_info=True)
+
+        # Send error event
+        await sse.send_event(stream_id, "error", {
+            "error": str(e),
+            "message": f"Finalization failed: {str(e)}"
+        })
 
         # Update session to error state
         with get_db_connection() as conn:

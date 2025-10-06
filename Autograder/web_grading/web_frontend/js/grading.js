@@ -832,7 +832,7 @@ document.getElementById('finalize-btn').onclick = async () => {
         progressBar.style.width = '0%';
         document.getElementById('finalize-btn').disabled = true;
 
-        startFinalizationPolling();
+        connectToFinalizationStream();
 
     } catch (error) {
         console.error('Finalization failed:', error);
@@ -840,45 +840,62 @@ document.getElementById('finalize-btn').onclick = async () => {
     }
 };
 
-// Poll for finalization status
-function startFinalizationPolling() {
-    const interval = setInterval(async () => {
-        try {
-            const response = await fetch(`${API_BASE}/finalize/${currentSession.id}/finalization-status`);
-            const status = await response.json();
+// Listen for finalization status via SSE
+let finalizationEventSource = null;
 
-            // Update UI with progress message
-            if (status.message) {
-                document.getElementById('finalization-message').textContent = status.message;
+function connectToFinalizationStream() {
+    // Close existing connection if any
+    if (finalizationEventSource) {
+        finalizationEventSource.close();
+    }
 
-                // Try to parse progress from message (format: "Processing X/Y: ...")
-                const progressMatch = status.message.match(/Processing (\d+)\/(\d+)/);
-                if (progressMatch) {
-                    const current = parseInt(progressMatch[1]);
-                    const total = parseInt(progressMatch[2]);
-                    const percentage = (current / total) * 100;
-                    document.getElementById('finalization-progress-bar').style.width = `${percentage}%`;
-                }
-            }
+    const streamUrl = `${API_BASE}/finalize/${currentSession.id}/finalize-stream`;
+    console.log('Connecting to finalization SSE stream:', streamUrl);
 
-            // Check if complete
-            if (status.status === 'finalized' || status.status === 'complete') {
-                clearInterval(interval);
-                document.getElementById('finalization-progress-bar').style.width = '100%';
-                showNotification('Finalization complete! All grades have been uploaded to Canvas. 🎉', () => {
-                    // Reload session to update status
-                    location.reload();
-                });
-            } else if (status.status === 'error') {
-                clearInterval(interval);
-                document.getElementById('finalization-progress').style.backgroundColor = '#fee2e2';
-                showNotification('Finalization failed: ' + status.message);
-            }
+    finalizationEventSource = new EventSource(streamUrl);
 
-        } catch (error) {
-            console.error('Failed to check finalization status:', error);
+    finalizationEventSource.addEventListener('connected', (e) => {
+        console.log('SSE connected for finalization progress');
+    });
+
+    finalizationEventSource.addEventListener('start', (e) => {
+        const data = JSON.parse(e.data);
+        console.log('Finalization started:', data);
+        document.getElementById('finalization-message').textContent = data.message;
+    });
+
+    finalizationEventSource.addEventListener('progress', (e) => {
+        const data = JSON.parse(e.data);
+        console.log('Finalization progress:', data);
+
+        document.getElementById('finalization-message').textContent = data.message;
+        document.getElementById('finalization-progress-bar').style.width = `${data.progress}%`;
+    });
+
+    finalizationEventSource.addEventListener('complete', (e) => {
+        const data = JSON.parse(e.data);
+        console.log('Finalization complete:', data);
+
+        finalizationEventSource.close();
+        finalizationEventSource = null;
+
+        document.getElementById('finalization-progress-bar').style.width = '100%';
+        showNotification('Finalization complete! All grades have been uploaded to Canvas. 🎉', () => {
+            location.reload();
+        });
+    });
+
+    finalizationEventSource.addEventListener('error', (e) => {
+        console.error('Finalization SSE error:', e);
+
+        if (finalizationEventSource && finalizationEventSource.readyState === EventSource.CLOSED) {
+            console.log('SSE connection closed');
+            finalizationEventSource = null;
+        } else {
+            document.getElementById('finalization-progress').style.backgroundColor = '#fee2e2';
+            document.getElementById('finalization-message').textContent = 'Connection error during finalization';
         }
-    }, 500);  // Poll every 500ms for responsive updates
+    });
 }
 
 // Handwriting Transcription Dialog

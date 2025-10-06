@@ -2,6 +2,7 @@
 File upload and processing endpoints.
 """
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from typing import List, Dict
 import tempfile
 import zipfile
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from ..models import UploadResponse
 from ..database import get_db_connection
+from .. import sse
 
 router = APIRouter()
 
@@ -21,6 +23,25 @@ def compute_file_hash(file_path: Path) -> str:
         for byte_block in iter(lambda: f.read(4096), b""):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
+
+
+@router.get("/{session_id}/upload-stream")
+async def upload_progress_stream(session_id: int):
+    """SSE stream for upload/processing progress"""
+    stream_id = sse.make_stream_id("upload", session_id)
+
+    # Create stream if it doesn't exist
+    if not sse.get_stream(stream_id):
+        sse.create_stream(stream_id)
+
+    return StreamingResponse(
+        sse.event_generator(stream_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
 
 
 @router.post("/{session_id}/upload", response_model=UploadResponse)
@@ -80,8 +101,12 @@ async def upload_exams(
                 "original_filename": pdf_path.name
             }
 
+    # Create SSE stream for progress updates
+    stream_id = sse.make_stream_id("upload", session_id)
+    sse.create_stream(stream_id)
+
     # Start background processing
-    background_tasks.add_task(process_exam_files, session_id, saved_files, file_metadata)
+    background_tasks.add_task(process_exam_files, session_id, saved_files, file_metadata, stream_id)
 
     # Update session status with initial count
     with get_db_connection() as conn:
@@ -105,7 +130,7 @@ async def upload_exams(
     )
 
 
-async def process_exam_files(session_id: int, file_paths: List[Path], file_metadata: Dict[Path, Dict]):
+async def process_exam_files(session_id: int, file_paths: List[Path], file_metadata: Dict[Path, Dict], stream_id: str):
     """
     Background task to process uploaded exam files.
 
@@ -113,9 +138,11 @@ async def process_exam_files(session_id: int, file_paths: List[Path], file_metad
         session_id: Session ID to process for
         file_paths: List of PDF file paths
         file_metadata: Dict mapping file_path -> {hash, original_filename}
+        stream_id: SSE stream ID for progress updates
     """
     import logging
     import json
+    import asyncio
     from ..services.exam_processor import ExamProcessor
     from lms_interface.canvas_interface import CanvasInterface
 
@@ -225,8 +252,25 @@ async def process_exam_files(session_id: int, file_paths: List[Path], file_metad
             base_processed = row[1] or 0
             base_matched = row[2] or 0
 
-        # Progress callback to update database (with offset)
+        # Get event loop reference for sending SSE events from thread
+        main_loop = asyncio.get_event_loop()
+
+        # Step-based progress tracking (each exam has ~5 steps: extract, match, split, etc.)
+        # Estimate total steps based on number of files
+        estimated_steps_per_exam = 5
+        total_steps = len(file_paths) * estimated_steps_per_exam
+        current_step = {'count': 0}  # Use dict so it's mutable in closure
+
+        # Progress callback to update database and send SSE events (with offset)
         def update_progress(processed, matched, message):
+            total = base_total + len(file_paths)
+            processed_count = base_processed + processed
+            matched_count = base_matched + matched
+
+            # Increment step counter
+            current_step['count'] += 1
+
+            # Update database
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -237,7 +281,27 @@ async def process_exam_files(session_id: int, file_paths: List[Path], file_metad
                         processing_message = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
-                """, (base_total + len(file_paths), base_processed + processed, base_matched + matched, message, session_id))
+                """, (total, processed_count, matched_count, message, session_id))
+
+            # Calculate progress based on steps completed
+            progress_percent = min(100, int((current_step['count'] / total_steps) * 100))
+
+            # Send SSE progress event from thread to event loop
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    sse.send_event(stream_id, "progress", {
+                        "total": total,
+                        "processed": processed_count,
+                        "matched": matched_count,
+                        "progress": progress_percent,
+                        "current_step": current_step['count'],
+                        "total_steps": total_steps,
+                        "message": message
+                    }),
+                    main_loop
+                )
+            except Exception as e:
+                log.error(f"Failed to send SSE event: {e}")
 
         # Load existing max_points metadata to avoid re-extracting
         with get_db_connection() as conn:
@@ -251,21 +315,25 @@ async def process_exam_files(session_id: int, file_paths: List[Path], file_metad
 
         log.info(f"Loaded {len(problem_max_points)} existing max_points values from metadata")
 
-        # Process exams
+        # Process exams in thread executor so event loop can send SSE events
         processor = ExamProcessor()
-        matched, unmatched = processor.process_exams(
-            input_files=file_paths,
-            canvas_students=canvas_students,
-            page_ranges=None,  # TODO: Get from session config
-            use_ai=True,
-            detect_blank=True,  # Enable blank detection
-            blank_confidence_threshold=0.8,
-            use_ai_for_borderline=False,  # Only use heuristics to save cost
-            progress_callback=update_progress,
-            document_id_offset=start_document_id,
-            file_metadata=file_metadata,
-            problem_max_points=problem_max_points,
-            extract_max_points_enabled=False  # Disabled - use manual entry via UI
+        loop = asyncio.get_event_loop()
+        matched, unmatched = await loop.run_in_executor(
+            None,  # Use default thread pool
+            lambda: processor.process_exams(
+                input_files=file_paths,
+                canvas_students=canvas_students,
+                page_ranges=None,  # TODO: Get from session config
+                use_ai=True,
+                detect_blank=True,  # Enable blank detection
+                blank_confidence_threshold=0.8,
+                use_ai_for_borderline=False,  # Only use heuristics to save cost
+                progress_callback=update_progress,
+                document_id_offset=start_document_id,
+                file_metadata=file_metadata,
+                problem_max_points=problem_max_points,
+                extract_max_points_enabled=False  # Disabled - use manual entry via UI
+            )
         )
 
         # Store in database
@@ -352,8 +420,23 @@ async def process_exam_files(session_id: int, file_paths: List[Path], file_metad
 
         log.info(f"Completed processing for session {session_id}: {len(matched)} matched, {len(unmatched)} unmatched")
 
+        # Send completion event
+        await sse.send_event(stream_id, "complete", {
+            "total": len(matched) + len(unmatched),
+            "matched": len(matched),
+            "unmatched": len(unmatched),
+            "message": f"Processing complete: {len(matched)} matched, {len(unmatched)} unmatched"
+        })
+
     except Exception as e:
         log.error(f"Error processing exams: {e}", exc_info=True)
+
+        # Send error event
+        await sse.send_event(stream_id, "error", {
+            "error": str(e),
+            "message": f"Processing failed: {str(e)}"
+        })
+
         # Update session to error state
         with get_db_connection() as conn:
             cursor = conn.cursor()

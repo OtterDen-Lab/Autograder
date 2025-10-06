@@ -1,6 +1,7 @@
 """
 Service for finalizing grading: annotating PDFs and uploading to Canvas.
 """
+import asyncio
 import base64
 import io
 import json
@@ -13,6 +14,7 @@ from PIL import Image
 from ..database import get_db_connection
 from lms_interface.canvas_interface import CanvasInterface
 from lms_interface.classes import Feedback
+from .. import sse
 
 log = logging.getLogger(__name__)
 
@@ -20,12 +22,19 @@ log = logging.getLogger(__name__)
 class FinalizationService:
     """Handles finalization of grading sessions"""
 
-    def __init__(self, session_id: int, temp_dir: Path):
+    def __init__(self, session_id: int, temp_dir: Path, stream_id: str):
         self.session_id = session_id
         self.temp_dir = temp_dir
+        self.stream_id = stream_id
         self.canvas_interface = None
         self.course = None
         self.assignment = None
+        self.total_submissions = 0
+        self.current_submission = 0
+        # Step-based progress tracking (3 steps per submission: PDF, comments, upload)
+        self.steps_per_submission = 3
+        self.total_steps = 0
+        self.current_step = 0
 
     async def finalize(self):
         """Main finalization process"""
@@ -35,11 +44,14 @@ class FinalizationService:
 
         # Get all submissions
         submissions = self._get_submissions()
+        self.total_submissions = len(submissions)
+        self.total_steps = self.total_submissions * self.steps_per_submission
 
-        log.info(f"Finalizing {len(submissions)} submissions")
+        log.info(f"Finalizing {len(submissions)} submissions ({self.total_steps} total steps)")
 
         # Process each submission
         for i, submission in enumerate(submissions, 1):
+            self.current_submission = i
             student_name = submission['student_name'] or 'Unknown'
 
             try:
@@ -281,7 +293,11 @@ class FinalizationService:
         )
 
     def _update_progress(self, message: str):
-        """Update progress message in database"""
+        """Update progress message in database and send SSE event"""
+        # Increment step counter
+        self.current_step += 1
+
+        # Update database
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -289,5 +305,24 @@ class FinalizationService:
                 SET processing_message = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             """, (message, self.session_id))
+
+        # Send SSE progress event based on steps completed
+        if self.total_steps > 0:
+            progress_percent = min(100, int((self.current_step / self.total_steps) * 100))
+            try:
+                loop = asyncio.get_event_loop()
+                asyncio.run_coroutine_threadsafe(
+                    sse.send_event(self.stream_id, "progress", {
+                        "total": self.total_submissions,
+                        "current": self.current_submission,
+                        "progress": progress_percent,
+                        "current_step": self.current_step,
+                        "total_steps": self.total_steps,
+                        "message": message
+                    }),
+                    loop
+                )
+            except Exception as e:
+                log.error(f"Failed to send SSE event: {e}")
 
         log.info(message)
