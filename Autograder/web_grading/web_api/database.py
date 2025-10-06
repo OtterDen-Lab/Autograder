@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 12
 
 
 def get_db_path() -> Path:
@@ -225,6 +225,14 @@ def run_migrations(cursor, from_version: int):
         migrate_to_v10(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (10)")
 
+    if from_version < 11:
+        migrate_to_v11(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (11)")
+
+    if from_version < 12:
+        migrate_to_v12(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (12)")
+
 
 def migrate_to_v2(cursor):
     """Add progress tracking columns to grading_sessions"""
@@ -308,6 +316,20 @@ def migrate_to_v10(cursor):
             UNIQUE(session_id, problem_number)
         )
     """)
+
+
+def migrate_to_v11(cursor):
+    """Add question_text column to problem_metadata for autograding"""
+    log.info("Migrating to schema version 11: adding question_text to problem_metadata")
+
+    cursor.execute("ALTER TABLE problem_metadata ADD COLUMN question_text TEXT")
+
+
+def migrate_to_v12(cursor):
+    """Add ai_reasoning column to problems for storing AI feedback separately"""
+    log.info("Migrating to schema version 12: adding ai_reasoning to problems")
+
+    cursor.execute("ALTER TABLE problems ADD COLUMN ai_reasoning TEXT")
 
 
 def update_problem_stats(session_id: int):

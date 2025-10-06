@@ -277,8 +277,12 @@ function displayCurrentProblem() {
         document.getElementById('feedback-input').value = currentProblem.feedback || '';
 
         // Remove blank indicator
-        const oldIndicator = document.getElementById('blank-indicator');
-        if (oldIndicator) oldIndicator.remove();
+        const oldBlankIndicator = document.getElementById('blank-indicator');
+        if (oldBlankIndicator) oldBlankIndicator.remove();
+
+        // Remove AI indicator
+        const oldAiIndicator = document.getElementById('ai-graded-indicator');
+        if (oldAiIndicator) oldAiIndicator.remove();
     } else if (currentProblem.is_blank) {
         // Auto-populate score as 0 for detected blank problems
         document.getElementById('score-input').value = '0';
@@ -304,13 +308,51 @@ function displayCurrentProblem() {
         const problemContainer = document.querySelector('.problem-container');
         problemContainer.parentNode.insertBefore(blankIndicator, problemContainer);
     } else {
-        // Clear form for non-blank problems
-        document.getElementById('score-input').value = '';
-        document.getElementById('feedback-input').value = '';
-
         // Remove blank indicator if it exists
-        const oldIndicator = document.getElementById('blank-indicator');
-        if (oldIndicator) oldIndicator.remove();
+        const oldBlankIndicator = document.getElementById('blank-indicator');
+        if (oldBlankIndicator) oldBlankIndicator.remove();
+
+        // Check if this is an AI-graded problem (has score and feedback but not yet graded)
+        if (currentProblem.score != null && currentProblem.feedback) {
+            // Auto-populate both score and feedback for review
+            document.getElementById('score-input').value = currentProblem.score || '';
+            document.getElementById('score-slider').value = currentProblem.score || 0;
+            document.getElementById('feedback-input').value = currentProblem.feedback || '';
+
+            // Show AI-graded indicator
+            const aiIndicator = document.createElement('div');
+            aiIndicator.id = 'ai-graded-indicator';
+            aiIndicator.style.cssText = `
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 15px;
+                border-radius: 8px;
+                margin-bottom: 15px;
+                box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+            `;
+            aiIndicator.innerHTML = `
+                <strong>🤖 AI-Graded (Needs Review)</strong>
+                <div style="font-size: 12px; margin-top: 5px; opacity: 0.9;">
+                    Review and modify the score and feedback as needed, then submit
+                </div>
+            `;
+
+            // Remove old indicator if exists
+            const oldAiIndicator = document.getElementById('ai-graded-indicator');
+            if (oldAiIndicator) oldAiIndicator.remove();
+
+            // Insert before the problem image
+            const problemContainer = document.querySelector('.problem-container');
+            problemContainer.parentNode.insertBefore(aiIndicator, problemContainer);
+        } else {
+            // Clear form for non-AI-graded problems
+            document.getElementById('score-input').value = '';
+            document.getElementById('feedback-input').value = '';
+
+            // Remove AI indicator if it exists
+            const oldAiIndicator = document.getElementById('ai-graded-indicator');
+            if (oldAiIndicator) oldAiIndicator.remove();
+        }
     }
 }
 
@@ -1016,3 +1058,181 @@ retryPremiumBtn.addEventListener('click', async () => {
         transcriptionText.innerHTML = '<div style="color: var(--danger-color);">Failed to transcribe with premium model. Please try again.</div>';
     }
 });
+
+
+// =============================================================================
+// AUTOGRADING FUNCTIONALITY
+// =============================================================================
+
+let autogradingEventSource = null;
+
+// Start Autograding button
+const startAutogradeBtn = document.getElementById('start-autograde-btn');
+startAutogradeBtn.addEventListener('click', async () => {
+    if (!currentSession || !currentProblemNumber) return;
+
+    // Show modal with extract phase
+    const modal = document.getElementById('autograding-modal');
+    const extractPhase = document.getElementById('autograding-extract-phase');
+    const verifyPhase = document.getElementById('autograding-verify-phase');
+    const progressPhase = document.getElementById('autograding-progress-phase');
+
+    modal.style.display = 'flex';
+    extractPhase.style.display = 'block';
+    verifyPhase.style.display = 'none';
+    progressPhase.style.display = 'none';
+
+    try {
+        // Extract question text
+        const response = await fetch(`${API_BASE}/ai-grader/${currentSession.id}/extract-question`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ problem_number: currentProblemNumber })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to extract question text');
+        }
+
+        const data = await response.json();
+
+        // Show verify phase
+        extractPhase.style.display = 'none';
+        verifyPhase.style.display = 'block';
+
+        const questionTextArea = document.getElementById('autograding-question-text');
+        questionTextArea.value = data.question_text;
+
+    } catch (error) {
+        console.error('Failed to extract question:', error);
+        modal.style.display = 'none';
+        showNotification(`Failed to extract question: ${error.message}`);
+    }
+});
+
+// Cancel autograding
+document.getElementById('autograding-cancel-btn').onclick = () => {
+    const modal = document.getElementById('autograding-modal');
+    modal.style.display = 'none';
+};
+
+// Confirm and start autograding
+document.getElementById('autograding-confirm-btn').onclick = async () => {
+    const questionText = document.getElementById('autograding-question-text').value;
+
+    if (!questionText.trim()) {
+        alert('Please enter the question text');
+        return;
+    }
+
+    // Get max points from the UI
+    const maxPointsInput = document.getElementById('max-points-input');
+    const maxPoints = parseFloat(maxPointsInput.value) || 8; // Default to 8 if not set
+
+    // Hide verify phase, show progress phase
+    const verifyPhase = document.getElementById('autograding-verify-phase');
+    const progressPhase = document.getElementById('autograding-progress-phase');
+    verifyPhase.style.display = 'none';
+    progressPhase.style.display = 'block';
+
+    // Connect to SSE stream before starting
+    connectToAutogradingStream();
+
+    try {
+        // Start autograding
+        const response = await fetch(`${API_BASE}/ai-grader/${currentSession.id}/autograde`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                problem_number: currentProblemNumber,
+                question_text: questionText,
+                max_points: maxPoints
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to start autograding');
+        }
+
+        const data = await response.json();
+        console.log('Autograding started:', data);
+
+    } catch (error) {
+        console.error('Failed to start autograding:', error);
+        const modal = document.getElementById('autograding-modal');
+        modal.style.display = 'none';
+        showNotification(`Failed to start autograding: ${error.message}`);
+    }
+};
+
+function connectToAutogradingStream() {
+    const progressMessage = document.getElementById('autograding-progress-message');
+    const progressBar = document.getElementById('autograding-progress-bar');
+    const currentEl = document.getElementById('autograding-current');
+    const totalEl = document.getElementById('autograding-total');
+
+    // Close existing connection if any
+    if (autogradingEventSource) {
+        autogradingEventSource.close();
+    }
+
+    // Connect to SSE stream
+    const streamUrl = `${API_BASE}/ai-grader/${currentSession.id}/autograde-stream`;
+    autogradingEventSource = new EventSource(streamUrl);
+
+    autogradingEventSource.addEventListener('connected', (e) => {
+        console.log('SSE connected for autograding progress');
+    });
+
+    autogradingEventSource.addEventListener('start', (e) => {
+        const data = JSON.parse(e.data);
+        console.log('Autograding started:', data);
+        progressMessage.textContent = data.message;
+    });
+
+    autogradingEventSource.addEventListener('progress', (e) => {
+        const data = JSON.parse(e.data);
+        console.log('Autograding progress:', data);
+
+        progressMessage.textContent = data.message;
+        progressBar.style.width = `${data.progress}%`;
+        progressBar.textContent = `${data.progress}%`;
+        currentEl.textContent = data.current;
+        totalEl.textContent = data.total;
+    });
+
+    autogradingEventSource.addEventListener('complete', async (e) => {
+        const data = JSON.parse(e.data);
+        console.log('Autograding complete:', data);
+
+        autogradingEventSource.close();
+        autogradingEventSource = null;
+
+        // Complete the progress bar
+        progressBar.style.width = '100%';
+        progressBar.textContent = '100%';
+        progressMessage.textContent = data.message;
+
+        // Close modal after a brief delay
+        setTimeout(() => {
+            const modal = document.getElementById('autograding-modal');
+            modal.style.display = 'none';
+
+            // Show completion message
+            showNotification(`Autograding complete! ${data.graded} of ${data.total} problems graded. Please review the AI suggestions.`, async () => {
+                // Reload current problem to show AI suggestion
+                await loadProblemOrMostRecent();
+            });
+        }, 2000);
+    });
+
+    autogradingEventSource.addEventListener('error', (e) => {
+        console.error('SSE error:', e);
+        if (autogradingEventSource && autogradingEventSource.readyState === EventSource.CLOSED) {
+            console.log('SSE connection closed');
+            autogradingEventSource = null;
+        } else {
+            progressMessage.textContent = 'Connection error - autograding may still be running';
+        }
+    });
+}

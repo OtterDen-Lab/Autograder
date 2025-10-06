@@ -104,6 +104,9 @@ class ProblemResponse(BaseModel):
     blank_method: Optional[str] = None
     blank_reasoning: Optional[str] = None
 
+    # AI grading metadata
+    ai_reasoning: Optional[str] = None
+
     class Config:
         from_attributes = True
 
