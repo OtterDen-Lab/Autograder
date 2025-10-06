@@ -63,7 +63,7 @@ class AutograderService:
         log.info(f"Deciphered handwriting ({usage['total_tokens']} tokens): {handwriting_text[:100]}...")
         return handwriting_text.strip()
 
-    def grade_problem(self, question_text: str, student_answer: str, max_points: float) -> Tuple[float, str]:
+    def grade_problem(self, question_text: str, student_answer: str, max_points: float) -> Tuple[int, str]:
         """Grade a student's answer using AI.
 
         Args:
@@ -72,27 +72,29 @@ class AutograderService:
             max_points: Maximum points for this problem
 
         Returns:
-            Tuple of (score, reasoning)
+            Tuple of (score, feedback)
         """
         message = (
             f"You are grading an exam problem worth {max_points} points.\n\n"
             f"Question:\n{question_text}\n\n"
             f"Student's Answer:\n{student_answer}\n\n"
             f"Please grade this answer and provide:\n"
-            f"1. A score out of {max_points} points\n"
-            f"2. Brief reasoning for the score\n\n"
+            f"1. An INTEGER score out of {max_points} points (no decimals, round to nearest integer)\n"
+            f"2. Clear and constructive feedback for the student\n\n"
+            f"IMPORTANT: The score must be a whole number (integer) between 0 and {int(max_points)}.\n"
+            f"IMPORTANT: The feedback should be concise, direct, constructive, and helpful for the student to understand what they did well and what could be improved.\n\n"
             f"Format your response as:\n"
-            f"SCORE: [number]\n"
-            f"REASONING: [your explanation]"
+            f"SCORE: [integer]\n"
+            f"FEEDBACK: [clear and constructive feedback for the student]"
         )
 
         response, usage = self.ai_helper.query_ai(message, [], max_response_tokens=1000)
 
         log.info(f"AI grading response ({usage['total_tokens']} tokens): {response[:200]}...")
 
-        # Parse score and reasoning from response
-        score = 0.0
-        reasoning = response
+        # Parse score and feedback from response
+        score = 0
+        feedback = response
 
         try:
             lines = response.split('\n')
@@ -103,18 +105,19 @@ class AutograderService:
                     import re
                     score_match = re.search(r'(\d+\.?\d*)', score_str)
                     if score_match:
-                        score = float(score_match.group(1))
-                elif line.startswith('REASONING:'):
-                    reasoning = line.replace('REASONING:', '').strip()
-                    # Get the rest of the response after REASONING:
-                    reasoning_start = response.find('REASONING:') + len('REASONING:')
-                    reasoning = response[reasoning_start:].strip()
+                        # Convert to int (round if decimal was provided)
+                        score = int(round(float(score_match.group(1))))
+                elif line.startswith('FEEDBACK:'):
+                    feedback = line.replace('FEEDBACK:', '').strip()
+                    # Get the rest of the response after FEEDBACK:
+                    feedback_start = response.find('FEEDBACK:') + len('FEEDBACK:')
+                    feedback = response[feedback_start:].strip()
                     break
         except Exception as e:
             log.error(f"Failed to parse AI grading response: {e}")
-            reasoning = response
+            feedback = response
 
-        return score, reasoning
+        return score, feedback
 
     def get_or_extract_question(self, session_id: int, problem_number: int,
                                  sample_image_base64: str) -> str:
@@ -247,14 +250,14 @@ class AutograderService:
                     student_answer = self.decipher_handwriting(problem["image_data"])
 
                     # Grade the answer
-                    score, reasoning = self.grade_problem(question_text, student_answer, max_points)
+                    score, feedback = self.grade_problem(question_text, student_answer, max_points)
 
-                    # Update problem with AI suggestion (similar to blank detection)
+                    # Update problem with AI suggestion (score and feedback ready for instructor review)
                     cursor.execute("""
                         UPDATE problems
                         SET score = ?, feedback = ?, graded = 0
                         WHERE id = ?
-                    """, (score, f"[AI] {reasoning}", problem["id"]))
+                    """, (score, feedback, problem["id"]))
 
                     graded_count += 1
                     log.info(f"AI graded problem {problem['id']}: {score}/{max_points}")

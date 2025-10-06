@@ -308,22 +308,18 @@ function displayCurrentProblem() {
         const problemContainer = document.querySelector('.problem-container');
         problemContainer.parentNode.insertBefore(blankIndicator, problemContainer);
     } else {
-        // Clear form for non-blank problems
-        document.getElementById('score-input').value = '';
-        document.getElementById('feedback-input').value = '';
-
         // Remove blank indicator if it exists
         const oldBlankIndicator = document.getElementById('blank-indicator');
         if (oldBlankIndicator) oldBlankIndicator.remove();
 
-        // Check if this is an AI-graded problem (feedback starts with "[AI]")
-        if (currentProblem.feedback && currentProblem.feedback.startsWith('[AI]')) {
-            // Auto-populate score and feedback from AI suggestion
+        // Check if this is an AI-graded problem (has score and feedback but not yet graded)
+        if (currentProblem.score != null && currentProblem.feedback) {
+            // Auto-populate both score and feedback for review
             document.getElementById('score-input').value = currentProblem.score || '';
             document.getElementById('score-slider').value = currentProblem.score || 0;
             document.getElementById('feedback-input').value = currentProblem.feedback || '';
 
-            // Show AI-graded indicator with different color
+            // Show AI-graded indicator
             const aiIndicator = document.createElement('div');
             aiIndicator.id = 'ai-graded-indicator';
             aiIndicator.style.cssText = `
@@ -337,7 +333,7 @@ function displayCurrentProblem() {
             aiIndicator.innerHTML = `
                 <strong>🤖 AI-Graded (Needs Review)</strong>
                 <div style="font-size: 12px; margin-top: 5px; opacity: 0.9;">
-                    Please review the AI's suggested score and feedback before submitting
+                    Review and modify the score and feedback as needed, then submit
                 </div>
             `;
 
@@ -349,6 +345,10 @@ function displayCurrentProblem() {
             const problemContainer = document.querySelector('.problem-container');
             problemContainer.parentNode.insertBefore(aiIndicator, problemContainer);
         } else {
+            // Clear form for non-AI-graded problems
+            document.getElementById('score-input').value = '';
+            document.getElementById('feedback-input').value = '';
+
             // Remove AI indicator if it exists
             const oldAiIndicator = document.getElementById('ai-graded-indicator');
             if (oldAiIndicator) oldAiIndicator.remove();
