@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import shutil
 import logging
+import asyncio
 
 from ..database import get_db_connection
 from ..services.finalizer import FinalizationService
@@ -124,11 +125,14 @@ async def run_finalization(session_id: int, stream_id: str):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
 
-            # Initialize finalizer
-            finalizer = FinalizationService(session_id, temp_path, stream_id)
+            # Get event loop reference to pass to finalizer (for thread communication)
+            loop = asyncio.get_event_loop()
 
-            # Run finalization
-            await finalizer.finalize()
+            # Initialize finalizer with event loop reference
+            finalizer = FinalizationService(session_id, temp_path, stream_id, loop)
+
+            # Run finalization in thread executor so event loop can send SSE events
+            await loop.run_in_executor(None, finalizer.finalize)
 
         # Update session to finalized
         with get_db_connection() as conn:

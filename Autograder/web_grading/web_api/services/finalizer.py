@@ -22,10 +22,11 @@ log = logging.getLogger(__name__)
 class FinalizationService:
     """Handles finalization of grading sessions"""
 
-    def __init__(self, session_id: int, temp_dir: Path, stream_id: str):
+    def __init__(self, session_id: int, temp_dir: Path, stream_id: str, event_loop):
         self.session_id = session_id
         self.temp_dir = temp_dir
         self.stream_id = stream_id
+        self.event_loop = event_loop  # Store event loop reference for thread communication
         self.canvas_interface = None
         self.course = None
         self.assignment = None
@@ -36,8 +37,8 @@ class FinalizationService:
         self.total_steps = 0
         self.current_step = 0
 
-    async def finalize(self):
-        """Main finalization process"""
+    def finalize(self):
+        """Main finalization process (runs in thread to avoid blocking event loop)"""
         # Get session info and initialize Canvas
         session_info = self._get_session_info()
         self._init_canvas(session_info)
@@ -310,7 +311,7 @@ class FinalizationService:
         if self.total_steps > 0:
             progress_percent = min(100, int((self.current_step / self.total_steps) * 100))
             try:
-                loop = asyncio.get_event_loop()
+                # Use stored event loop reference (we're in a thread)
                 asyncio.run_coroutine_threadsafe(
                     sse.send_event(self.stream_id, "progress", {
                         "total": self.total_submissions,
@@ -320,7 +321,7 @@ class FinalizationService:
                         "total_steps": self.total_steps,
                         "message": message
                     }),
-                    loop
+                    self.event_loop
                 )
             except Exception as e:
                 log.error(f"Failed to send SSE event: {e}")
