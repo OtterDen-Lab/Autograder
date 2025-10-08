@@ -97,6 +97,8 @@ class FinalizationService:
             except (KeyError, IndexError):
                 use_prod = 0
 
+            log.info(f"Session {self.session_id}: use_prod_canvas from DB = {row['use_prod_canvas'] if 'use_prod_canvas' in row.keys() else 'NOT FOUND'} (type: {type(row['use_prod_canvas']) if 'use_prod_canvas' in row.keys() else 'N/A'}), computed use_prod = {use_prod}")
+
             return {
                 "course_id": row["course_id"],
                 "assignment_id": row["assignment_id"],
@@ -107,8 +109,10 @@ class FinalizationService:
     def _init_canvas(self, session_info: Dict):
         """Initialize Canvas interface"""
         use_prod = bool(session_info.get("use_prod_canvas", 0))
-        log.info(f"Initializing Canvas interface with prod={use_prod}")
+        log.info(f"Initializing Canvas interface: session_info['use_prod_canvas'] = {session_info.get('use_prod_canvas')} → use_prod = {use_prod}")
+        log.info(f"Calling CanvasInterface(prod={use_prod})")
         self.canvas_interface = CanvasInterface(prod=use_prod)
+        log.info(f"Canvas interface initialized with URL: {self.canvas_interface.canvas_url}")
         self.course = self.canvas_interface.get_course(session_info["course_id"])
         self.assignment = self.course.get_assignment(session_info["assignment_id"])
 

@@ -247,7 +247,7 @@ async def get_canvas_info(session_id: int):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT course_id, assignment_id, course_name, assignment_name
+            SELECT course_id, assignment_id, course_name, assignment_name, use_prod_canvas
             FROM grading_sessions
             WHERE id = ?
         """, (session_id,))
