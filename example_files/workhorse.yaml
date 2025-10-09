@@ -72,6 +72,7 @@ courses:
         assignments:
           - {id: 527876, repo_path: PA1, record_retention: true}  # Override for this assignment
           - {id: 529948, repo_path: PA2, record_retention: true}  # Override for this assignment
+          - {id: 532473, repo_path: PA3, record_retention: true}  # Override for this assignment
 
       - name: Learning Logs
         type: text
