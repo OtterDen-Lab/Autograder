@@ -1020,6 +1020,76 @@ function displayTranscription(transcription) {
     transcriptionActions.style.display = 'block';
 }
 
+// Show in Context button
+const showContextBtn = document.getElementById('show-context-btn');
+const contextDialog = document.getElementById('context-dialog');
+const closeContext = document.getElementById('close-context');
+const contextPageImage = document.getElementById('context-page-image');
+const contextHighlight = document.getElementById('context-highlight');
+
+showContextBtn.addEventListener('click', async () => {
+    if (!currentProblem) {
+        alert('No problem loaded');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/problems/${currentProblem.id}/context`);
+
+        if (!response.ok) {
+            if (response.status === 400) {
+                alert('Context view not available for this problem (uses legacy storage)');
+            } else {
+                throw new Error(`Failed to fetch context: ${response.statusText}`);
+            }
+            return;
+        }
+
+        const data = await response.json();
+
+        // Display the full page image
+        contextPageImage.src = `data:image/png;base64,${data.page_image}`;
+
+        // Wait for image to load before positioning highlight
+        contextPageImage.onload = () => {
+            const imgNaturalHeight = contextPageImage.naturalHeight;
+            const imgNaturalWidth = contextPageImage.naturalWidth;
+            const displayHeight = contextPageImage.offsetHeight;
+            const displayWidth = contextPageImage.offsetWidth;
+
+            // Scale region coordinates to displayed image size
+            const scaleY = displayHeight / imgNaturalHeight;
+
+            const highlightTop = data.problem_region.y_start * scaleY;
+            const highlightHeight = (data.problem_region.y_end - data.problem_region.y_start) * scaleY;
+
+            // Position the highlight box
+            contextHighlight.style.top = `${highlightTop}px`;
+            contextHighlight.style.left = '0px';
+            contextHighlight.style.width = `${displayWidth}px`;
+            contextHighlight.style.height = `${highlightHeight}px`;
+        };
+
+        // Show the dialog
+        contextDialog.style.display = 'flex';
+
+    } catch (error) {
+        console.error('Failed to show context:', error);
+        alert('Failed to load context view. Please try again.');
+    }
+});
+
+closeContext.addEventListener('click', () => {
+    contextDialog.style.display = 'none';
+});
+
+// Close on background click
+contextDialog.addEventListener('click', (e) => {
+    if (e.target === contextDialog) {
+        contextDialog.style.display = 'none';
+    }
+});
+
 // Decipher handwriting button (standard model)
 decipherBtn.addEventListener('click', async () => {
     if (!currentProblem) {

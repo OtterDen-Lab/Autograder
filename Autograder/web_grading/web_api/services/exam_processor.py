@@ -68,7 +68,8 @@ class ExamProcessor:
         document_id_offset: int = 0,
         file_metadata: Optional[Dict[Path, Dict]] = None,
         problem_max_points: Optional[Dict[int, float]] = None,
-        extract_max_points_enabled: bool = False
+        extract_max_points_enabled: bool = False,
+        manual_split_points: Optional[Dict[int, List[int]]] = None
     ) -> Tuple[List[Dict], List[Dict]]:
         """
         Process exam PDFs.
@@ -120,9 +121,19 @@ class ExamProcessor:
                 for submission_id, random_id in enumerate(shuffled_order):
                     page_mappings_by_submission[submission_id].append(random_id)
         else:
-            log.info("Using automatic problem detection via horizontal lines")
-            # No shuffling for auto-detection (all students get same order)
+            log.info("Using manual split points for problem detection")
+            # No shuffling for manual split detection (all students get same order)
             page_mappings_by_submission = None
+
+            # Manual split points are now required
+            if manual_split_points is None:
+                raise ValueError("Manual split points are required. Please use the alignment interface to specify split points.")
+
+            log.info(f"Using manual split points for {len(manual_split_points)} pages")
+            consensus_break_points = manual_split_points
+
+            total_consensus_breaks = sum(len(breaks) for breaks in consensus_break_points.values())
+            log.info(f"Using {total_consensus_breaks} manual split points across {len(consensus_break_points)} pages")
 
         # Process each PDF
         matched_submissions = []
@@ -199,9 +210,11 @@ class ExamProcessor:
                 if problem_max_points is None:
                     problem_max_points = {}
 
-                # Auto-detect problems using horizontal line detection
-                problems = self.redact_and_split_auto(
+                # Use manual split points to extract problem regions
+                # Returns (pdf_base64, problems_list) where problems contain region metadata
+                pdf_data, problems = self.redact_and_extract_regions(
                     pdf_path,
+                    split_points=consensus_break_points,
                     detect_blank=detect_blank,
                     blank_confidence_threshold=blank_confidence_threshold,
                     use_ai_for_borderline=use_ai_for_borderline,
@@ -209,7 +222,8 @@ class ExamProcessor:
                     extract_max_points_enabled=extract_max_points_enabled
                 )
             else:
-                # Use manual page ranges
+                # Use manual page ranges (old path - still stores individual PNGs for backwards compatibility)
+                pdf_data = None  # For backwards compatibility with manual page ranges
                 problem_images = self.redact_and_split(pdf_path, page_ranges)
 
                 # Convert problem images to base64
@@ -237,6 +251,7 @@ class ExamProcessor:
                 "canvas_user_id": matched_student["user_id"] if matched_student else None,
                 "page_mappings": page_mappings_by_submission[document_id] if page_mappings_by_submission else [],
                 "problems": problems,
+                "pdf_data": pdf_data,  # Base64 PDF (None for manual page ranges)
                 "file_hash": file_metadata[pdf_path]["hash"] if file_metadata and pdf_path in file_metadata else None,
                 "original_filename": file_metadata[pdf_path]["original_filename"] if file_metadata and pdf_path in file_metadata else pdf_path.name
             }
@@ -310,56 +325,6 @@ class ExamProcessor:
         pdf_document.close()
         return problem_pdfs
 
-    def detect_horizontal_lines(self, page: fitz.Page, min_line_width_ratio: float = 0.7) -> List[int]:
-        """
-        Detect horizontal divider lines on a page.
-
-        Args:
-            page: PyMuPDF page object
-            min_line_width_ratio: Minimum ratio of line width to page width (0.7 = 70% of page width)
-
-        Returns:
-            List of y-coordinates where horizontal lines are detected, sorted top to bottom
-        """
-        # Render page to image
-        pix = page.get_pixmap(dpi=150)
-        img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
-
-        # Convert to grayscale
-        if img_data.shape[2] == 4:  # RGBA
-            gray = cv2.cvtColor(img_data, cv2.COLOR_RGBA2GRAY)
-        elif img_data.shape[2] == 3:  # RGB
-            gray = cv2.cvtColor(img_data, cv2.COLOR_RGB2GRAY)
-        else:
-            gray = img_data
-
-        # Apply binary threshold to get black lines
-        _, binary = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY_INV)
-
-        # Detect horizontal lines using morphology
-        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(pix.width * 0.5), 1))
-        detected_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, horizontal_kernel)
-
-        # Find contours of horizontal lines
-        contours, _ = cv2.findContours(detected_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        line_positions = []
-        min_width = pix.width * min_line_width_ratio
-
-        for contour in contours:
-            x, y, w, h = cv2.boundingRect(contour)
-            # Filter for lines that are wide enough and thin enough
-            if w >= min_width and h < 20:  # Line should be at least 70% page width and less than 20px tall
-                # Convert from image coordinates (150 DPI) back to PDF coordinates (72 DPI)
-                pdf_y = (y / pix.height) * page.rect.height
-                line_positions.append(int(pdf_y))
-
-        # Sort lines from top to bottom
-        line_positions.sort()
-
-        log.info(f"Detected {len(line_positions)} horizontal divider lines at positions: {line_positions}")
-        return line_positions
-
     def split_page_by_lines(
         self,
         page: fitz.Page,
@@ -414,29 +379,68 @@ class ExamProcessor:
         log.info(f"Split page into {len(regions)} regions (filtered by min height {min_region_height})")
         return regions
 
-    def redact_and_split_auto(
+    def redact_and_get_pdf_data(self, pdf_path: Path) -> str:
+        """
+        Redact name area and return PDF as base64 string.
+
+        Args:
+            pdf_path: Path to PDF file
+
+        Returns:
+            Base64 encoded PDF data
+        """
+        pdf_document = fitz.open(str(pdf_path))
+
+        # Redact name area on first page
+        if pdf_document.page_count > 0:
+            pdf_document[0].draw_rect(self.fitz_name_rect, color=(0, 0, 0), fill=(0, 0, 0))
+
+        # Save to bytes and encode
+        pdf_bytes = pdf_document.tobytes()
+        pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+
+        pdf_document.close()
+
+        return pdf_base64
+
+    def redact_and_extract_regions(
         self,
         pdf_path: Path,
+        split_points: Dict[int, List[int]],
         detect_blank: bool = False,
         blank_confidence_threshold: float = 0.8,
         use_ai_for_borderline: bool = False,
         problem_max_points: Dict[int, float] = None,
         extract_max_points_enabled: bool = False
-    ) -> List[Dict]:
+    ) -> Tuple[str, List[Dict]]:
         """
-        Redact names and automatically split PDF into problems based on horizontal line detection.
+        Redact names and extract problem regions using manual split points.
+        Returns PDF data once and region metadata for each problem.
 
         Args:
             pdf_path: Path to PDF file
+            split_points: Dict mapping page_number -> list of y-positions (manual split points from alignment UI)
             detect_blank: Whether to detect blank/unanswered problems
             blank_confidence_threshold: Confidence threshold (0-1) for using AI verification
             use_ai_for_borderline: Whether to use AI for low-confidence detections
+            problem_max_points: Shared dict for caching max points by problem number
+            extract_max_points_enabled: Whether to extract max points from images
 
         Returns:
-            List of problem dicts with {problem_number, page_number, image_base64, is_blank, blank_confidence}
+            Tuple of (pdf_base64, problems_list)
+            - pdf_base64: Base64 encoded redacted PDF
+            - problems_list: List of problem dicts with region metadata
         """
         pdf_document = fitz.open(str(pdf_path))
         total_pages = pdf_document.page_count
+
+        # Redact name area on first page
+        if total_pages > 0:
+            pdf_document[0].draw_rect(self.fitz_name_rect, color=(0, 0, 0), fill=(0, 0, 0))
+
+        # Save redacted PDF as base64 (once for the entire submission)
+        pdf_bytes = pdf_document.tobytes()
+        pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
         problems = []
         problem_number = 1
@@ -444,101 +448,100 @@ class ExamProcessor:
         for page_num in range(total_pages):
             page = pdf_document[page_num]
 
-            # Redact name area on first page
-            if page_num == 0:
-                page.draw_rect(self.fitz_name_rect, color=(0, 0, 0), fill=(0, 0, 0))
-
-            # Detect horizontal lines
-            line_positions = self.detect_horizontal_lines(page)
+            # Get manual split points for this page
+            line_positions = split_points.get(page_num, [])
 
             # Split page into regions
-            # On first page, don't include top margin (that's the name area)
-            # On subsequent pages, include top margin (in case there's content above first line)
             regions = self.split_page_by_lines(page, line_positions, include_top_margin=False)
 
-            # Create a problem for each region
+            # Create metadata for each region
             for region in regions:
-                # Create a new single-page PDF with just this region
-                problem_pdf = fitz.open()
-                problem_page = problem_pdf.new_page(width=region.width, height=region.height)
-
-                # Copy the region content to the new page
-                problem_page.show_pdf_page(
-                    problem_page.rect,
-                    pdf_document,
-                    page_num,
-                    clip=region
-                )
-
-                # Convert to PNG
-                pix = problem_page.get_pixmap(dpi=150)
-                img_bytes = pix.tobytes("png")
-                img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-                # Initialize problem dict
+                # Initialize problem dict with region coordinates
                 problem_dict = {
                     "problem_number": problem_number,
-                    "page_number": page_num + 1,
-                    "image_base64": img_base64,
+                    "page_number": page_num,  # 0-indexed for PDF access
+                    "region_y_start": int(region.y0),
+                    "region_y_end": int(region.y1),
+                    "region_height": int(region.height),
                     "is_blank": False,
                     "blank_confidence": 0.0
                 }
 
-                # Detect blank if requested
-                if detect_blank:
-                    # First try heuristic
-                    heuristic_result = self.is_blank_heuristic(img_base64)
-                    problem_dict["is_blank"] = heuristic_result["is_blank"]
-                    problem_dict["blank_confidence"] = heuristic_result["confidence"]
-                    problem_dict["blank_method"] = "heuristic"
+                # For blank detection, we still need to extract the region temporarily
+                if detect_blank or extract_max_points_enabled:
+                    # Extract region as image for analysis
+                    problem_pdf = fitz.open()
+                    problem_page = problem_pdf.new_page(width=region.width, height=region.height)
+                    problem_page.show_pdf_page(problem_page.rect, pdf_document, page_num, clip=region)
 
-                    # If confidence is low and AI is enabled, verify with AI
-                    if use_ai_for_borderline and heuristic_result["confidence"] < blank_confidence_threshold:
-                        log.info(f"Problem {problem_number}: Low confidence ({heuristic_result['confidence']:.2f}), using AI verification")
-                        ai_result = self.is_blank_ai(img_base64)
-                        problem_dict["is_blank"] = ai_result["is_blank"]
-                        problem_dict["blank_confidence"] = ai_result["confidence"]
-                        problem_dict["blank_method"] = "ai"
-                        problem_dict["blank_reasoning"] = ai_result.get("reasoning", "")
+                    pix = problem_page.get_pixmap(dpi=150)
+                    img_bytes = pix.tobytes("png")
+                    img_base64 = base64.b64encode(img_bytes).decode("utf-8")
 
-                # Extract max points from score box (only if enabled and not already known for this problem number)
-                if problem_max_points and problem_number in problem_max_points:
-                    # Use cached max_points
-                    problem_dict["max_points"] = problem_max_points[problem_number]
-                elif extract_max_points_enabled:
-                    # Extract from image
-                    max_points = self.extract_max_points(img_base64)
-                    if max_points is not None:
-                        problem_dict["max_points"] = max_points
-                        # Cache it for subsequent problems with same number
-                        if problem_max_points is not None:
-                            problem_max_points[problem_number] = max_points
+                    # Detect blank if requested
+                    if detect_blank:
+                        heuristic_result = self.is_blank_heuristic(img_base64)
+                        problem_dict["is_blank"] = heuristic_result["is_blank"]
+                        problem_dict["blank_confidence"] = heuristic_result["confidence"]
+                        problem_dict["blank_method"] = "heuristic"
+
+                        if use_ai_for_borderline and heuristic_result["confidence"] < blank_confidence_threshold:
+                            log.info(f"Problem {problem_number}: Low confidence ({heuristic_result['confidence']:.2f}), using AI verification")
+                            ai_result = self.is_blank_ai(img_base64)
+                            problem_dict["is_blank"] = ai_result["is_blank"]
+                            problem_dict["blank_confidence"] = ai_result["confidence"]
+                            problem_dict["blank_method"] = "ai"
+                            problem_dict["blank_reasoning"] = ai_result.get("reasoning", "")
+
+                    # Extract max points from score box
+                    if problem_max_points and problem_number in problem_max_points:
+                        problem_dict["max_points"] = problem_max_points[problem_number]
+                    elif extract_max_points_enabled:
+                        max_points = self.extract_max_points(img_base64)
+                        if max_points is not None:
+                            problem_dict["max_points"] = max_points
+                            if problem_max_points is not None:
+                                problem_max_points[problem_number] = max_points
+
+                    problem_pdf.close()
 
                 problems.append(problem_dict)
-
-                problem_pdf.close()
                 problem_number += 1
 
         pdf_document.close()
 
         # Filter out blank trailing page if present
-        # Check if the last problem is an entirely blank page (not just an unanswered question)
         if problems and detect_blank:
             last_problem = problems[-1]
-            # Re-check the last problem using full-page blank detection (not just answer area)
-            full_page_check = self.is_blank_heuristic(last_problem["image_base64"], crop_to_answer_area=False, threshold=0.015)
+            # For last problem, need to extract and check
+            pdf_doc = fitz.open("pdf", base64.b64decode(pdf_base64))
+            page = pdf_doc[last_problem["page_number"]]
+            region = fitz.Rect(0, last_problem["region_y_start"], page.rect.width, last_problem["region_y_end"])
+
+            problem_pdf = fitz.open()
+            problem_page = problem_pdf.new_page(width=region.width, height=region.height)
+            problem_page.show_pdf_page(problem_page.rect, pdf_doc, last_problem["page_number"], clip=region)
+
+            pix = problem_page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+
+            full_page_check = self.is_blank_heuristic(img_base64, crop_to_answer_area=False, threshold=0.015)
 
             if full_page_check["is_blank"] and full_page_check["confidence"] > 0.85:
                 log.info(f"Removing blank trailing page (problem {last_problem['problem_number']}) - ink_density={full_page_check['ink_density']:.4f}")
                 problems.pop()
 
+            problem_pdf.close()
+            pdf_doc.close()
+
         if detect_blank:
             blank_count = sum(1 for p in problems if p["is_blank"])
-            log.info(f"Auto-split PDF into {len(problems)} problems ({blank_count} detected as blank) across {total_pages} pages")
+            log.info(f"Split PDF into {len(problems)} problems ({blank_count} detected as blank) using manual split points")
         else:
-            log.info(f"Auto-split PDF into {len(problems)} problems across {total_pages} pages")
+            log.info(f"Split PDF into {len(problems)} problems using manual split points")
 
-        return problems
+        return pdf_base64, problems
 
     def is_blank_heuristic(self, image_base64: str, threshold: float = 0.02, crop_to_answer_area: bool = True) -> Dict:
         """

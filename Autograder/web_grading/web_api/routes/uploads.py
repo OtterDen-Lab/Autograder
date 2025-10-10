@@ -4,6 +4,7 @@ File upload and processing endpoints.
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from typing import List, Dict
+from pydantic import BaseModel
 import tempfile
 import zipfile
 import hashlib
@@ -14,6 +15,11 @@ from ..database import get_db_connection
 from .. import sse
 
 router = APIRouter()
+
+
+class SplitPointsSubmission(BaseModel):
+    """Model for manual split points submission"""
+    split_points: Dict[str, List[int]]
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -47,13 +53,14 @@ async def upload_progress_stream(session_id: int):
 @router.post("/{session_id}/upload", response_model=UploadResponse)
 async def upload_exams(
     session_id: int,
-    background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...)
 ):
     """
     Upload exam PDFs or a zip file containing exams.
-    Processing happens in background, status available via SSE endpoint.
+    Returns composites for manual alignment before processing.
     """
+    from ..services.manual_alignment import ManualAlignmentService
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
@@ -101,36 +108,128 @@ async def upload_exams(
                 "original_filename": pdf_path.name
             }
 
+    # Generate composite images for manual alignment
+    alignment_service = ManualAlignmentService()
+    composites = alignment_service.create_composite_images(saved_files)
+
+    # Get page dimensions
+    import fitz
+    first_pdf = fitz.open(str(saved_files[0]))
+    page_dimensions = {}
+    for page_num in range(first_pdf.page_count):
+        page = first_pdf[page_num]
+        page_dimensions[page_num] = {
+            "width": page.rect.width,
+            "height": page.rect.height
+        }
+    first_pdf.close()
+
+    # Store file paths and metadata in session for later processing
+    # We'll use a temp location that can be retrieved when user submits alignment
+    import json
+    session_data = {
+        "temp_dir": str(temp_dir),
+        "file_paths": [str(f) for f in saved_files],
+        "file_metadata": {str(k): v for k, v in file_metadata.items()}
+    }
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE grading_sessions
+            SET status = 'awaiting_alignment',
+                total_exams = ?,
+                metadata = ?,
+                processing_message = 'Uploaded. Please align split points.',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (len(saved_files), json.dumps(session_data), session_id))
+
+    return {
+        "session_id": session_id,
+        "files_uploaded": len(saved_files),
+        "status": "awaiting_alignment",
+        "message": f"Uploaded {len(saved_files)} exam(s). Please set split points.",
+        "composites": composites,
+        "page_dimensions": page_dimensions,
+        "num_exams": len(saved_files)
+    }
+
+
+@router.post("/{session_id}/submit-alignment")
+async def submit_alignment(
+    session_id: int,
+    background_tasks: BackgroundTasks,
+    submission: SplitPointsSubmission
+):
+    """
+    Submit manual split points and start processing exams.
+
+    Args:
+        session_id: Session ID
+        submission: Model containing split_points dict mapping page_number (as string) -> list of y-positions
+    """
+    import json
+
+    # Retrieve stored file paths from session metadata
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT metadata FROM grading_sessions WHERE id = ?", (session_id,))
+        row = cursor.fetchone()
+
+        if not row or not row["metadata"]:
+            raise HTTPException(status_code=404, detail="Session not found or no files uploaded")
+
+        session_data = json.loads(row["metadata"])
+
+    # Reconstruct file paths and metadata
+    file_paths = [Path(p) for p in session_data["file_paths"]]
+    file_metadata = {Path(k): v for k, v in session_data["file_metadata"].items()}
+
+    # Convert split_points keys from strings to integers
+    manual_split_points = {int(k): v for k, v in submission.split_points.items()}
+
     # Create SSE stream for progress updates
     stream_id = sse.make_stream_id("upload", session_id)
     sse.create_stream(stream_id)
 
-    # Start background processing
-    background_tasks.add_task(process_exam_files, session_id, saved_files, file_metadata, stream_id)
+    # Start background processing with manual split points
+    background_tasks.add_task(
+        process_exam_files,
+        session_id,
+        file_paths,
+        file_metadata,
+        stream_id,
+        manual_split_points  # Pass manual splits
+    )
 
-    # Update session status with initial count
+    # Update session status
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE grading_sessions
             SET status = 'preprocessing',
-                total_exams = ?,
                 processed_exams = 0,
                 matched_exams = 0,
-                processing_message = ?,
+                processing_message = 'Processing with manual split points...',
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (len(saved_files), f"Uploaded {len(saved_files)} exam(s), starting processing...", session_id))
+        """, (session_id,))
 
-    return UploadResponse(
-        session_id=session_id,
-        files_uploaded=len(saved_files),
-        status="processing",
-        message=f"Processing {len(saved_files)} exam(s)"
-    )
+    return {
+        "session_id": session_id,
+        "status": "processing",
+        "message": f"Processing {len(file_paths)} exam(s) with manual alignment"
+    }
 
 
-async def process_exam_files(session_id: int, file_paths: List[Path], file_metadata: Dict[Path, Dict], stream_id: str):
+async def process_exam_files(
+    session_id: int,
+    file_paths: List[Path],
+    file_metadata: Dict[Path, Dict],
+    stream_id: str,
+    manual_split_points: Dict[int, List[int]] = None
+):
     """
     Background task to process uploaded exam files.
 
@@ -332,7 +431,8 @@ async def process_exam_files(session_id: int, file_paths: List[Path], file_metad
                 document_id_offset=start_document_id,
                 file_metadata=file_metadata,
                 problem_max_points=problem_max_points,
-                extract_max_points_enabled=False  # Disabled - use manual entry via UI
+                extract_max_points_enabled=False,  # Disabled - use manual entry via UI
+                manual_split_points=manual_split_points  # Use manual alignment if provided
             )
         )
 
@@ -343,21 +443,24 @@ async def process_exam_files(session_id: int, file_paths: List[Path], file_metad
             all_submissions = matched + unmatched
 
             for submission in all_submissions:
-                # Insert submission
+                # Insert submission (with PDF data at end for easier manual editing)
                 cursor.execute("""
                     INSERT INTO submissions
-                    (session_id, document_id, approximate_name, name_image_data, student_name, canvas_user_id, page_mappings, file_hash, original_filename)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (session_id, document_id, approximate_name, student_name,
+                     canvas_user_id, page_mappings, file_hash, original_filename,
+                     name_image_data, exam_pdf_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     session_id,
                     submission["document_id"],
                     submission.get("approximate_name"),
-                    submission.get("name_image_data"),
                     submission["student_name"],
                     submission["canvas_user_id"],
                     json.dumps(submission["page_mappings"]),
                     submission.get("file_hash"),
-                    submission.get("original_filename")
+                    submission.get("original_filename"),
+                    submission.get("name_image_data"),  # Large base64 data at end
+                    submission.get("pdf_data")  # Large base64 PDF data at end
                 ))
 
                 submission_id = cursor.lastrowid
@@ -387,21 +490,36 @@ async def process_exam_files(session_id: int, file_paths: List[Path], file_metad
                                 DO UPDATE SET max_points = excluded.max_points
                             """, (session_id, problem_number, max_points))
 
+                    # Prepare region_coords JSON if metadata is available
+                    region_coords = None
+                    if (problem.get("page_number") is not None and
+                        problem.get("region_y_start") is not None and
+                        problem.get("region_y_end") is not None):
+                        region_coords = json.dumps({
+                            "page_number": problem["page_number"],
+                            "region_y_start": problem["region_y_start"],
+                            "region_y_end": problem["region_y_end"],
+                            "region_height": problem.get("region_height")
+                        })
+
+                    # Insert problem with region metadata if available, otherwise use image_data
                     cursor.execute("""
                         INSERT INTO problems
                         (session_id, submission_id, problem_number, image_data, graded,
-                         is_blank, blank_confidence, blank_method, blank_reasoning, max_points)
-                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+                         is_blank, blank_confidence, blank_method, blank_reasoning, max_points,
+                         region_coords)
+                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
                     """, (
                         session_id,
                         submission_id,
                         problem_number,
-                        problem["image_base64"],
+                        problem.get("image_base64"),  # May be None for new PDF-based storage
                         1 if problem.get("is_blank", False) else 0,
                         problem.get("blank_confidence", 0.0),
                         problem.get("blank_method"),
                         problem.get("blank_reasoning"),
-                        max_points
+                        max_points,
+                        region_coords  # JSON with page_number, region_y_start, region_y_end, region_height
                     ))
 
             # Update session status

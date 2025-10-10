@@ -43,6 +43,14 @@ function renderMatchingList() {
         <p style="margin-bottom: 20px;">
             <strong>${unmatchedCount}</strong> of <strong>${allSubmissions.length}</strong> submission(s) need manual matching.
         </p>
+        <div style="margin-bottom: 20px; text-align: center;">
+            <button id="confirm-all-matches-btn" class="btn btn-primary" onclick="confirmAllMatches()" style="padding: 10px 30px; font-size: 16px;">
+                Confirm All Matches
+            </button>
+            <p style="margin-top: 10px; color: var(--gray-600); font-size: 14px;">
+                Select students from the dropdowns below, then click this button to confirm all changes at once.
+            </p>
+        </div>
     `;
 
     allSubmissions.forEach(submission => {
@@ -78,9 +86,6 @@ function renderMatchingList() {
                             </option>
                         `).join('')}
                     </select>
-                    <button class="btn btn-primary btn-small" onclick="matchSubmission(${submission.id})">
-                        ${submission.is_matched ? 'Reassign' : 'Match'}
-                    </button>
                 </div>
             </div>
         `;
@@ -114,7 +119,113 @@ function handleStudentSelection(submissionId) {
     }
 }
 
-// Match a submission to a student
+// Confirm all matches at once (batch operation)
+async function confirmAllMatches() {
+    // Collect all pending matches
+    const pendingMatches = [];
+    const warnings = [];
+
+    for (const submission of allSubmissions) {
+        const select = document.getElementById(`select-${submission.id}`);
+        const selectedUserId = parseInt(select.value);
+
+        // Skip if no selection or if already matched to the same student
+        if (!selectedUserId) continue;
+        if (submission.is_matched && submission.canvas_user_id === selectedUserId) continue;
+
+        // Check for warnings (reassignments)
+        const student = allStudents.find(s => s.user_id === selectedUserId);
+        if (student && student.is_matched) {
+            const currentMatchId = select.dataset.currentMatch;
+            if (!currentMatchId || parseInt(currentMatchId) !== selectedUserId) {
+                warnings.push(`"${student.name}" will be reassigned to Exam #${submission.document_id + 1}`);
+            }
+        }
+
+        pendingMatches.push({
+            submission_id: submission.id,
+            canvas_user_id: selectedUserId,
+            exam_number: submission.document_id + 1
+        });
+    }
+
+    if (pendingMatches.length === 0) {
+        alert('No new matches to confirm. Please select students from the dropdowns.');
+        return;
+    }
+
+    // Show confirmation dialog with warnings if any
+    let confirmMessage = `Confirm ${pendingMatches.length} match(es)?`;
+    if (warnings.length > 0) {
+        confirmMessage += '\n\nWarnings:\n' + warnings.join('\n');
+    }
+
+    if (!confirm(confirmMessage)) {
+        return;
+    }
+
+    // Disable button during processing
+    const btn = document.getElementById('confirm-all-matches-btn');
+    btn.disabled = true;
+    btn.textContent = 'Processing...';
+
+    try {
+        // Process all matches
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const match of pendingMatches) {
+            try {
+                const response = await fetch(`${API_BASE}/matching/${currentSession.id}/match`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        submission_id: match.submission_id,
+                        canvas_user_id: match.canvas_user_id
+                    })
+                });
+
+                if (response.ok) {
+                    successCount++;
+                } else {
+                    failCount++;
+                    console.error(`Failed to match submission ${match.submission_id}`);
+                }
+            } catch (error) {
+                failCount++;
+                console.error(`Error matching submission ${match.submission_id}:`, error);
+            }
+        }
+
+        // Show result
+        if (failCount > 0) {
+            alert(`Completed with ${successCount} successful and ${failCount} failed matches.`);
+        }
+
+        // Reload data to reflect changes
+        await loadNameMatching();
+
+        // Check if all are now matched
+        const response = await fetch(`${API_BASE}/sessions/${currentSession.id}`);
+        currentSession = await response.json();
+
+        if (currentSession.status === 'ready') {
+            setTimeout(() => {
+                updateSessionInfo();
+                navigateToSection('grading-section');
+            }, 1500);
+        }
+
+    } catch (error) {
+        console.error('Failed to confirm matches:', error);
+        alert('Failed to confirm matches: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Confirm All Matches';
+    }
+}
+
+// Match a submission to a student (legacy single-match function, kept for compatibility)
 async function matchSubmission(submissionId) {
     const select = document.getElementById(`select-${submissionId}`);
     const canvasUserId = parseInt(select.value);

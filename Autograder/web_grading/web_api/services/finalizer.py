@@ -121,42 +121,66 @@ class FinalizationService:
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
+            # Get submissions with exam_pdf_data
             cursor.execute("""
                 SELECT
                     s.id,
                     s.student_name,
                     s.canvas_user_id,
                     s.page_mappings,
-                    GROUP_CONCAT(p.problem_number || ':' || p.score || ':' || COALESCE(p.feedback, ''), '|') as problem_data,
-                    GROUP_CONCAT(p.problem_number || ':' || p.image_data, '|') as image_data
+                    s.exam_pdf_data
                 FROM submissions s
-                LEFT JOIN problems p ON p.submission_id = s.id
                 WHERE s.session_id = ?
-                GROUP BY s.id
             """, (self.session_id,))
 
             submissions = []
             for row in cursor.fetchall():
-                # Parse problem data
-                problems = []
-                if row["problem_data"]:
-                    for prob_str in row["problem_data"].split('|'):
-                        parts = prob_str.split(':', 2)
-                        problems.append({
-                            "problem_number": int(parts[0]),
-                            "score": float(parts[1]) if parts[1] else 0.0,
-                            "feedback": parts[2] if len(parts) > 2 else ""
-                        })
+                submission_id = row["id"]
 
-                # Parse image data
+                # Get problems for this submission
+                cursor.execute("""
+                    SELECT
+                        problem_number,
+                        score,
+                        COALESCE(feedback, '') as feedback,
+                        image_data,
+                        region_coords
+                    FROM problems
+                    WHERE submission_id = ?
+                    ORDER BY problem_number
+                """, (submission_id,))
+
+                problems = []
                 images = {}
-                if row["image_data"]:
-                    for img_str in row["image_data"].split('|'):
-                        parts = img_str.split(':', 1)
-                        images[int(parts[0])] = parts[1]
+
+                for prob_row in cursor.fetchall():
+                    prob_num = prob_row["problem_number"]
+
+                    problems.append({
+                        "problem_number": prob_num,
+                        "score": prob_row["score"] or 0.0,
+                        "feedback": prob_row["feedback"]
+                    })
+
+                    # Get image data - either directly or extract from PDF
+                    if prob_row["image_data"]:
+                        # Legacy: image_data is stored
+                        images[prob_num] = prob_row["image_data"]
+                    elif prob_row["region_coords"] and row["exam_pdf_data"]:
+                        # New: extract from PDF using region_coords
+                        region_data = json.loads(prob_row["region_coords"])
+                        image_b64 = self._extract_problem_image_from_pdf(
+                            row["exam_pdf_data"],
+                            region_data["page_number"],
+                            region_data["region_y_start"],
+                            region_data["region_y_end"]
+                        )
+                        images[prob_num] = image_b64
+                    else:
+                        log.warning(f"No image data available for problem {prob_num} in submission {submission_id}")
 
                 submissions.append({
-                    "id": row["id"],
+                    "id": submission_id,
                     "student_name": row["student_name"],
                     "canvas_user_id": row["canvas_user_id"],
                     "page_mappings": json.loads(row["page_mappings"]),
@@ -165,6 +189,40 @@ class FinalizationService:
                 })
 
             return submissions
+
+    def _extract_problem_image_from_pdf(self, pdf_base64: str, page_number: int,
+                                       region_y_start: int, region_y_end: int) -> str:
+        """
+        Extract a problem image from stored PDF data using region coordinates.
+
+        Returns:
+            Base64 encoded PNG image of the problem region
+        """
+        # Decode PDF from base64
+        pdf_bytes = base64.b64decode(pdf_base64)
+        pdf_document = fitz.open("pdf", pdf_bytes)
+
+        # Get the page
+        page = pdf_document[page_number]
+
+        # Create region rectangle
+        region = fitz.Rect(0, region_y_start, page.rect.width, region_y_end)
+
+        # Extract region as new PDF page
+        problem_pdf = fitz.open()
+        problem_page = problem_pdf.new_page(width=region.width, height=region.height)
+        problem_page.show_pdf_page(problem_page.rect, pdf_document, page_number, clip=region)
+
+        # Convert to PNG
+        pix = problem_page.get_pixmap(dpi=150)
+        img_bytes = pix.tobytes("png")
+        img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+
+        # Cleanup
+        problem_pdf.close()
+        pdf_document.close()
+
+        return img_base64
 
     def _create_annotated_pdf(self, submission: Dict) -> Path:
         """Create annotated PDF with score stickers on each page"""

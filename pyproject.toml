@@ -29,6 +29,7 @@ dependencies = [
     "pymupdf",
     "lms_interface",
     "slack-sdk>=3.36.0",
+    "scikit-learn",
 ]
 
 [tool.uv.sources]

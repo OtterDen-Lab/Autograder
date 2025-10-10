@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Optional
 import sys
 from pathlib import Path
+import base64
+import fitz  # PyMuPDF
 
 from ..models import ProblemResponse, GradeSubmission
 from ..database import get_db_connection, update_problem_stats
@@ -15,6 +17,96 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 import Autograder.ai_helper as ai_helper
 
 router = APIRouter()
+
+
+def extract_problem_image(pdf_data: str, page_number: int, region_y_start: int,
+                         region_y_end: int) -> str:
+    """
+    Extract a problem image from stored PDF data using region coordinates.
+
+    Args:
+        pdf_data: Base64 encoded PDF
+        page_number: 0-indexed page number
+        region_y_start: Y coordinate of region start
+        region_y_end: Y coordinate of region end
+
+    Returns:
+        Base64 encoded PNG image of the problem region
+    """
+    # Decode PDF from base64
+    pdf_bytes = base64.b64decode(pdf_data)
+    pdf_document = fitz.open("pdf", pdf_bytes)
+
+    # Get the page
+    page = pdf_document[page_number]
+
+    # Create region rectangle
+    region = fitz.Rect(0, region_y_start, page.rect.width, region_y_end)
+
+    # Extract region as new PDF page
+    problem_pdf = fitz.open()
+    problem_page = problem_pdf.new_page(width=region.width, height=region.height)
+    problem_page.show_pdf_page(problem_page.rect, pdf_document, page_number, clip=region)
+
+    # Convert to PNG
+    pix = problem_page.get_pixmap(dpi=150)
+    img_bytes = pix.tobytes("png")
+    img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+
+    # Cleanup
+    problem_pdf.close()
+    pdf_document.close()
+
+    return img_base64
+
+
+def get_problem_image_data(problem_row, cursor) -> str:
+    """
+    Get image data for a problem, extracting from PDF if needed.
+
+    Args:
+        problem_row: Database row for the problem
+        cursor: Database cursor (for fetching submission PDF data)
+
+    Returns:
+        Base64 encoded PNG image
+    """
+    import json
+
+    # If image_data is stored, return it directly
+    if problem_row["image_data"]:
+        return problem_row["image_data"]
+
+    # Otherwise, extract from PDF using region metadata from region_coords JSON
+    if problem_row["region_coords"]:
+        try:
+            region_data = json.loads(problem_row["region_coords"])
+
+            # Get PDF data from submission (column is exam_pdf_data)
+            cursor.execute(
+                "SELECT exam_pdf_data FROM submissions WHERE id = ?",
+                (problem_row["submission_id"],)
+            )
+            submission_row = cursor.fetchone()
+
+            if submission_row and submission_row["exam_pdf_data"]:
+                return extract_problem_image(
+                    submission_row["exam_pdf_data"],
+                    region_data["page_number"],
+                    region_data["region_y_start"],
+                    region_data["region_y_end"]
+                )
+        except (json.JSONDecodeError, KeyError) as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Invalid region_coords data: {str(e)}"
+            )
+
+    # Fallback: no image data available
+    raise HTTPException(
+        status_code=500,
+        detail="Problem image data not available (no stored image or PDF data)"
+    )
 
 
 @router.get("/{session_id}/{problem_number}/next", response_model=ProblemResponse)
@@ -56,11 +148,14 @@ async def get_next_problem(session_id: int, problem_number: int):
         ungraded_nonblank = count_row["ungraded_nonblank"]
         current_index = graded_count + 1
 
+        # Get image data (extract from PDF if needed)
+        image_data = get_problem_image_data(row, cursor)
+
         return ProblemResponse(
             id=row["id"],
             problem_number=row["problem_number"],
             submission_id=row["submission_id"],
-            image_data=row["image_data"],
+            image_data=image_data,
             score=row["score"],
             feedback=row["feedback"],
             graded=bool(row["graded"]),
@@ -116,11 +211,14 @@ async def get_previous_problem(session_id: int, problem_number: int):
         ungraded_nonblank = count_row["ungraded_nonblank"]
         current_index = graded_count
 
+        # Get image data (extract from PDF if needed)
+        image_data = get_problem_image_data(row, cursor)
+
         return ProblemResponse(
             id=row["id"],
             problem_number=row["problem_number"],
             submission_id=row["submission_id"],
-            image_data=row["image_data"],
+            image_data=image_data,
             score=row["score"],
             feedback=row["feedback"],
             graded=bool(row["graded"]),
@@ -188,11 +286,14 @@ async def get_problem(problem_id: int):
 
         count_row = cursor.fetchone()
 
+        # Get image data (extract from PDF if needed)
+        image_data = get_problem_image_data(row, cursor)
+
         return ProblemResponse(
             id=row["id"],
             problem_number=row["problem_number"],
             submission_id=row["submission_id"],
-            image_data=row["image_data"],
+            image_data=image_data,
             score=row["score"],
             feedback=row["feedback"],
             graded=bool(row["graded"]),
@@ -206,6 +307,80 @@ async def get_problem(problem_id: int):
         )
 
 
+@router.get("/{problem_id}/context")
+async def get_problem_in_context(problem_id: int):
+    """
+    Get the full page containing this problem, with the problem region highlighted.
+
+    Returns:
+        JSON with:
+        - page_image: Base64 PNG of full page
+        - problem_region: Coordinates {y_start, y_end, height} for highlighting
+    """
+    import json
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get problem with region metadata
+        cursor.execute("SELECT * FROM problems WHERE id = ?", (problem_id,))
+        row = cursor.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Problem not found")
+
+        # Check if PDF-based storage is available (parse region_coords JSON)
+        if not row["region_coords"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Context view not available (problem uses legacy image storage)"
+            )
+
+        try:
+            region_data = json.loads(row["region_coords"])
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=500,
+                detail="Invalid region_coords data"
+            )
+
+        # Get PDF data from submission (column is exam_pdf_data)
+        cursor.execute(
+            "SELECT exam_pdf_data FROM submissions WHERE id = ?",
+            (row["submission_id"],)
+        )
+        submission_row = cursor.fetchone()
+
+        if not submission_row or not submission_row["exam_pdf_data"]:
+            raise HTTPException(
+                status_code=500,
+                detail="PDF data not found for submission"
+            )
+
+        # Extract full page as image
+        pdf_bytes = base64.b64decode(submission_row["exam_pdf_data"])
+        pdf_document = fitz.open("pdf", pdf_bytes)
+        page = pdf_document[region_data["page_number"]]
+
+        # Convert full page to PNG
+        pix = page.get_pixmap(dpi=150)
+        img_bytes = pix.tobytes("png")
+        page_image_base64 = base64.b64encode(img_bytes).decode("utf-8")
+
+        pdf_document.close()
+
+        return {
+            "problem_id": problem_id,
+            "page_image": page_image_base64,
+            "problem_region": {
+                "y_start": region_data["region_y_start"],
+                "y_end": region_data["region_y_end"],
+                "height": region_data.get("region_height")
+            },
+            "page_number": region_data["page_number"]
+        }
+
+
 @router.post("/{problem_id}/decipher")
 async def decipher_handwriting(problem_id: int, use_premium_model: bool = False):
     """Use AI to transcribe handwritten text from a problem image
@@ -217,13 +392,14 @@ async def decipher_handwriting(problem_id: int, use_premium_model: bool = False)
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
-        cursor.execute("SELECT image_data FROM problems WHERE id = ?", (problem_id,))
+        cursor.execute("SELECT * FROM problems WHERE id = ?", (problem_id,))
         row = cursor.fetchone()
 
         if not row:
             raise HTTPException(status_code=404, detail="Problem not found")
 
-        image_base64 = row["image_data"]
+        # Get image data (extract from PDF if needed)
+        image_base64 = get_problem_image_data(row, cursor)
 
     # Query AI to transcribe handwriting
     if use_premium_model:

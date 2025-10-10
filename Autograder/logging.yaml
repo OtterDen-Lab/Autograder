@@ -41,7 +41,7 @@ loggers:
     propagate: false
 
   lms_interface:
-    level: INFO
+    level: DEBUG
     handlers: [console, file]
     propagate: false
     

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import __version__
 from .database import init_database
-from .routes import sessions, problems, uploads, canvas, matching, finalize, ai_grader
+from .routes import sessions, problems, uploads, canvas, matching, finalize, ai_grader, alignment
 
 
 @asynccontextmanager
@@ -49,6 +49,7 @@ app.include_router(canvas.router, prefix="/api/canvas", tags=["canvas"])
 app.include_router(matching.router, prefix="/api/matching", tags=["matching"])
 app.include_router(finalize.router, prefix="/api/finalize", tags=["finalize"])
 app.include_router(ai_grader.router, prefix="/api/ai-grader", tags=["ai-grader"])
+app.include_router(alignment.router, prefix="/api/alignment", tags=["alignment"])
 
 # Mount static files (frontend)
 frontend_path = Path(__file__).parent.parent / "web_frontend"
