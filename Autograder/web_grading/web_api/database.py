@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 14
 
 
 def get_db_path() -> Path:
@@ -233,6 +233,14 @@ def run_migrations(cursor, from_version: int):
         migrate_to_v12(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (12)")
 
+    if from_version < 13:
+        migrate_to_v13(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (13)")
+
+    if from_version < 14:
+        migrate_to_v14(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (14)")
+
 
 def migrate_to_v2(cursor):
     """Add progress tracking columns to grading_sessions"""
@@ -330,6 +338,100 @@ def migrate_to_v12(cursor):
     log.info("Migrating to schema version 12: adding ai_reasoning to problems")
 
     cursor.execute("ALTER TABLE problems ADD COLUMN ai_reasoning TEXT")
+
+
+def migrate_to_v13(cursor):
+    """Add region_coords to problems for PDF-based storage (was added in actual v13)"""
+    log.info("Migrating to schema version 13: adding region_coords to problems")
+
+    # This migration was already applied, but we need the function for migration flow
+    # Check if column exists before adding
+    cursor.execute("PRAGMA table_info(problems)")
+    columns = [row[1] for row in cursor.fetchall()]
+
+    if "region_coords" not in columns:
+        cursor.execute("ALTER TABLE problems ADD COLUMN region_coords TEXT")
+
+
+def migrate_to_v14(cursor):
+    """Make image_data nullable in problems table for PDF-based storage"""
+    log.info("Migrating to schema version 14: making image_data nullable")
+
+    # SQLite doesn't support ALTER COLUMN, so we need to recreate the table
+    # Step 1: Get all existing data
+    cursor.execute("SELECT * FROM problems")
+    existing_data = cursor.fetchall()
+
+    # Step 2: Get column names
+    cursor.execute("PRAGMA table_info(problems)")
+    columns_info = cursor.fetchall()
+
+    # Step 3: Drop old table and recreate without NOT NULL on image_data
+    cursor.execute("DROP TABLE IF EXISTS problems_backup")
+    cursor.execute("ALTER TABLE problems RENAME TO problems_backup")
+
+    # Recreate problems table with image_data as nullable
+    cursor.execute("""
+        CREATE TABLE problems (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            submission_id INTEGER NOT NULL,
+            problem_number INTEGER NOT NULL,
+            image_data TEXT,
+            score REAL,
+            feedback TEXT,
+            graded INTEGER DEFAULT 0,
+            graded_at TIMESTAMP,
+            is_blank INTEGER DEFAULT 0,
+            blank_confidence REAL DEFAULT 0.0,
+            blank_method TEXT,
+            blank_reasoning TEXT,
+            max_points REAL,
+            transcription TEXT,
+            transcription_model TEXT,
+            ai_grading_status TEXT DEFAULT 'none',
+            ai_suggested_score REAL,
+            ai_suggested_feedback TEXT,
+            ai_suggestion_received_at TIMESTAMP,
+            is_example_submission INTEGER DEFAULT 0,
+            example_priority INTEGER DEFAULT 0,
+            ai_reasoning TEXT,
+            region_coords TEXT,
+            page_number INTEGER,
+            region_y_start INTEGER,
+            region_y_end INTEGER,
+            region_height INTEGER,
+            FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
+            FOREIGN KEY (submission_id) REFERENCES submissions(id)
+        )
+    """)
+
+    # Step 4: Copy data back
+    # Get column names from backup table
+    cursor.execute("PRAGMA table_info(problems_backup)")
+    backup_columns = [row[1] for row in cursor.fetchall()]
+    column_list = ", ".join(backup_columns)
+
+    cursor.execute(f"""
+        INSERT INTO problems ({column_list})
+        SELECT {column_list} FROM problems_backup
+    """)
+
+    # Step 5: Recreate indexes
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_problems_session_problem
+        ON problems(session_id, problem_number)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_problems_graded
+        ON problems(session_id, graded)
+    """)
+
+    # Step 6: Drop backup table
+    cursor.execute("DROP TABLE problems_backup")
+
+    log.info("Successfully made image_data nullable in problems table")
 
 
 def update_problem_stats(session_id: int):

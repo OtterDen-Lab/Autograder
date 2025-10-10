@@ -443,11 +443,12 @@ async def process_exam_files(
             all_submissions = matched + unmatched
 
             for submission in all_submissions:
-                # Insert submission
+                # Insert submission (with PDF data if present)
                 cursor.execute("""
                     INSERT INTO submissions
-                    (session_id, document_id, approximate_name, name_image_data, student_name, canvas_user_id, page_mappings, file_hash, original_filename)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (session_id, document_id, approximate_name, name_image_data, student_name,
+                     canvas_user_id, page_mappings, file_hash, original_filename, exam_pdf_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     session_id,
                     submission["document_id"],
@@ -457,7 +458,8 @@ async def process_exam_files(
                     submission["canvas_user_id"],
                     json.dumps(submission["page_mappings"]),
                     submission.get("file_hash"),
-                    submission.get("original_filename")
+                    submission.get("original_filename"),
+                    submission.get("pdf_data")  # Base64 PDF (stored in exam_pdf_data column)
                 ))
 
                 submission_id = cursor.lastrowid
@@ -487,21 +489,36 @@ async def process_exam_files(
                                 DO UPDATE SET max_points = excluded.max_points
                             """, (session_id, problem_number, max_points))
 
+                    # Prepare region_coords JSON if metadata is available
+                    region_coords = None
+                    if (problem.get("page_number") is not None and
+                        problem.get("region_y_start") is not None and
+                        problem.get("region_y_end") is not None):
+                        region_coords = json.dumps({
+                            "page_number": problem["page_number"],
+                            "region_y_start": problem["region_y_start"],
+                            "region_y_end": problem["region_y_end"],
+                            "region_height": problem.get("region_height")
+                        })
+
+                    # Insert problem with region metadata if available, otherwise use image_data
                     cursor.execute("""
                         INSERT INTO problems
                         (session_id, submission_id, problem_number, image_data, graded,
-                         is_blank, blank_confidence, blank_method, blank_reasoning, max_points)
-                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+                         is_blank, blank_confidence, blank_method, blank_reasoning, max_points,
+                         region_coords)
+                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
                     """, (
                         session_id,
                         submission_id,
                         problem_number,
-                        problem["image_base64"],
+                        problem.get("image_base64"),  # May be None for new PDF-based storage
                         1 if problem.get("is_blank", False) else 0,
                         problem.get("blank_confidence", 0.0),
                         problem.get("blank_method"),
                         problem.get("blank_reasoning"),
-                        max_points
+                        max_points,
+                        region_coords  # JSON with page_number, region_y_start, region_y_end, region_height
                     ))
 
             # Update session status
