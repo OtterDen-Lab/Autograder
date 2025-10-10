@@ -587,9 +587,24 @@ function showAlignmentInterface(composites, pageDimensions, numExams) {
 
     container.appendChild(pagesContainer);
 
+    // Add "Go to Top" button at the bottom
+    const bottomControls = document.createElement('div');
+    bottomControls.style.cssText = 'margin: 20px; text-align: center;';
+    bottomControls.innerHTML = `
+        <div style="display: flex; gap: 10px; justify-content: center;">
+            <button id="submit-alignment-bottom-btn" class="btn btn-primary">Submit Split Points & Process Exams</button>
+            <button id="go-to-top-btn" class="btn btn-secondary">↑ Go to Top</button>
+        </div>
+    `;
+    container.appendChild(bottomControls);
+
     // Setup button handlers
     document.getElementById('submit-alignment-btn').onclick = submitAlignment;
+    document.getElementById('submit-alignment-bottom-btn').onclick = submitAlignment;
     document.getElementById('cancel-alignment-btn').onclick = cancelAlignment;
+    document.getElementById('go-to-top-btn').onclick = () => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
 }
 
 function createAlignmentPageSection(pageNum, imageBase64) {
@@ -732,6 +747,8 @@ async function submitAlignment() {
     try {
         document.getElementById('submit-alignment-btn').disabled = true;
         document.getElementById('submit-alignment-btn').textContent = 'Submitting...';
+        document.getElementById('submit-alignment-bottom-btn').disabled = true;
+        document.getElementById('submit-alignment-bottom-btn').textContent = 'Submitting...';
 
         // Submit split points to backend
         const response = await fetch(`${API_BASE}/uploads/${currentSession.id}/submit-alignment`, {
@@ -756,6 +773,8 @@ async function submitAlignment() {
         alert('Failed to submit alignment: ' + error.message);
         document.getElementById('submit-alignment-btn').disabled = false;
         document.getElementById('submit-alignment-btn').textContent = 'Submit Split Points & Process Exams';
+        document.getElementById('submit-alignment-bottom-btn').disabled = false;
+        document.getElementById('submit-alignment-bottom-btn').textContent = 'Submit Split Points & Process Exams';
     }
 }
 

@@ -443,23 +443,24 @@ async def process_exam_files(
             all_submissions = matched + unmatched
 
             for submission in all_submissions:
-                # Insert submission (with PDF data if present)
+                # Insert submission (with PDF data at end for easier manual editing)
                 cursor.execute("""
                     INSERT INTO submissions
-                    (session_id, document_id, approximate_name, name_image_data, student_name,
-                     canvas_user_id, page_mappings, file_hash, original_filename, exam_pdf_data)
+                    (session_id, document_id, approximate_name, student_name,
+                     canvas_user_id, page_mappings, file_hash, original_filename,
+                     name_image_data, exam_pdf_data)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     session_id,
                     submission["document_id"],
                     submission.get("approximate_name"),
-                    submission.get("name_image_data"),
                     submission["student_name"],
                     submission["canvas_user_id"],
                     json.dumps(submission["page_mappings"]),
                     submission.get("file_hash"),
                     submission.get("original_filename"),
-                    submission.get("pdf_data")  # Base64 PDF (stored in exam_pdf_data column)
+                    submission.get("name_image_data"),  # Large base64 data at end
+                    submission.get("pdf_data")  # Large base64 PDF data at end
                 ))
 
                 submission_id = cursor.lastrowid

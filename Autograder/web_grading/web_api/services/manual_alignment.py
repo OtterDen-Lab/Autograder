@@ -114,14 +114,14 @@ class ManualAlignmentService:
         alpha: float = 0.3
     ) -> Image.Image:
         """
-        Create a composite image by overlaying multiple images with transparency.
+        Create a composite image by overlaying multiple images with brightness-based transparency.
 
-        The overlay approach makes aligned content (like printed text and lines)
-        appear darker/more prominent, while misaligned content fades.
+        Dark pixels (black ink) are rendered opaque, while lighter pixels are very transparent.
+        This ensures that handwritten ink remains visible even when stacking many exams.
 
         Args:
             images: List of PIL Images to overlay
-            alpha: Transparency level per image (lower = more transparent)
+            alpha: Base transparency level (now modulated by pixel brightness)
 
         Returns:
             Composite PIL Image
@@ -143,14 +143,45 @@ class ManualAlignmentService:
         # Convert images to numpy arrays
         arrays = [np.array(img, dtype=np.float32) for img in resized_images]
 
-        # Calculate weighted average
-        # Using alpha blending: each image contributes based on alpha value
-        composite_array = np.zeros_like(arrays[0], dtype=np.float32)
+        # Initialize composite with white background
+        composite_array = np.ones_like(arrays[0], dtype=np.float32) * 255
 
+        # Brightness-based alpha blending
         for arr in arrays:
-            # Blend each image into the composite
-            # This creates the "overlay" effect where aligned content is emphasized
-            composite_array = composite_array * (1 - alpha) + arr * alpha
+            # Calculate brightness for each pixel (average across RGB channels)
+            # Shape: (height, width)
+            brightness = np.mean(arr, axis=2, keepdims=True)
+
+            # Calculate per-pixel alpha based on darkness
+            # Brightness range: 0 (black) to 255 (white)
+            # We want: dark pixels (< 25) -> alpha ≈ 1.0 (fully opaque)
+            #          medium pixels (25-230) -> alpha decreases from 1.0 to 0.05
+            #          light pixels (> 230) -> alpha ≈ 0.05 (very transparent)
+
+            # Normalize brightness to 0-1 range
+            normalized_brightness = brightness / 255.0
+
+            # Create threshold-based alpha:
+            # - Very dark (< 10% brightness / > 90% dark): alpha = 1.0 (fully opaque)
+            # - Moderately dark to light: smooth transition from 1.0 to 0.05
+            darkness_threshold = 0.1  # 10% brightness = 90% dark
+            light_threshold = 0.9      # 90% brightness = 10% dark
+
+            # Calculate per-pixel alpha
+            pixel_alpha = np.where(
+                normalized_brightness < darkness_threshold,
+                1.0,  # Fully opaque for very dark pixels
+                np.where(
+                    normalized_brightness > light_threshold,
+                    0.05,  # Very transparent for light pixels
+                    # Linear interpolation for medium pixels
+                    1.0 - ((normalized_brightness - darkness_threshold) / (light_threshold - darkness_threshold)) * 0.95
+                )
+            )
+
+            # Apply alpha blending with per-pixel alpha
+            # composite = composite * (1 - pixel_alpha) + arr * pixel_alpha
+            composite_array = composite_array * (1 - pixel_alpha) + arr * pixel_alpha
 
         # Clip values to valid range and convert back to uint8
         composite_array = np.clip(composite_array, 0, 255).astype(np.uint8)
