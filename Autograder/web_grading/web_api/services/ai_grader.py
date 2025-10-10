@@ -99,19 +99,56 @@ class AIGraderService:
             f"3. Be clear and objective enough for consistent grading\n"
             f"4. Account for partial credit where appropriate\n"
             f"5. Align with the grading standards shown in the example answers above\n\n"
-            f"Format the rubric clearly with point values. For example:\n"
-            f"- Correct identification of X (2 points)\n"
-            f"- Proper calculation showing Y (3 points)\n"
-            f"- Clear explanation of Z (3 points)\n"
-            f"- Partial credit: Award 1 point for attempt at X even if incorrect\n\n"
-            f"Keep the rubric concise but comprehensive."
+            f"IMPORTANT: Return ONLY valid JSON (no markdown, no code blocks, no commentary) in this exact format:\n"
+            f"{{\n"
+            f'  "items": [\n'
+            f'    {{"points": 2, "description": "Correct identification of X"}},\n'
+            f'    {{"points": 3, "description": "Proper calculation showing Y"}},\n'
+            f'    {{"points": 3, "description": "Clear explanation of Z"}}\n'
+            f"  ]\n"
+            f"}}\n\n"
+            f"The sum of all points should equal {max_points}. Return only the JSON object."
         )
 
         response, usage = self.ai_helper.query_ai(message, [], max_response_tokens=2000)
 
         log.info(f"Generated rubric ({usage['total_tokens']} tokens): {response[:200]}...")
 
-        return response.strip()
+        # Parse and validate JSON, then re-serialize to ensure clean format
+        import json
+        try:
+            # Try to extract JSON if the AI wrapped it in markdown code blocks
+            response_clean = response.strip()
+            if response_clean.startswith('```'):
+                # Extract content between code fences
+                lines = response_clean.split('\n')
+                json_lines = []
+                in_code_block = False
+                for line in lines:
+                    if line.startswith('```'):
+                        in_code_block = not in_code_block
+                        continue
+                    if in_code_block:
+                        json_lines.append(line)
+                response_clean = '\n'.join(json_lines)
+
+            rubric_data = json.loads(response_clean)
+
+            # Validate structure
+            if 'items' not in rubric_data or not isinstance(rubric_data['items'], list):
+                raise ValueError("Invalid rubric structure: missing 'items' array")
+
+            # Return clean JSON string
+            return json.dumps(rubric_data)
+
+        except json.JSONDecodeError as e:
+            log.error(f"Failed to parse rubric JSON: {e}. Raw response: {response}")
+            # Fallback: return a simple valid JSON structure
+            return json.dumps({
+                "items": [
+                    {"points": max_points, "description": "Complete and correct answer"}
+                ]
+            })
 
     def grade_problem(self, question_text: str, student_answer: str, max_points: float,
                      grading_examples: List[Dict] = None, rubric: str = None) -> Tuple[int, str]:
@@ -130,7 +167,23 @@ class AIGraderService:
         # Build rubric section
         rubric_section = ""
         if rubric:
-            rubric_section = f"\n\nGrading Rubric:\n{rubric}\n\nPlease follow this rubric when grading.\n"
+            # Try to parse as JSON, fall back to treating as text
+            import json
+            try:
+                rubric_data = json.loads(rubric)
+                if 'items' in rubric_data and isinstance(rubric_data['items'], list):
+                    # Convert JSON rubric to readable format
+                    rubric_text = "Grading Rubric:\n"
+                    for item in rubric_data['items']:
+                        points = item.get('points', 0)
+                        description = item.get('description', '')
+                        rubric_text += f"- {description} ({points} points)\n"
+                    rubric_section = f"\n\n{rubric_text}\nPlease follow this rubric when grading.\n"
+                else:
+                    rubric_section = f"\n\nGrading Rubric:\n{rubric}\n\nPlease follow this rubric when grading.\n"
+            except json.JSONDecodeError:
+                # Not JSON, treat as plain text
+                rubric_section = f"\n\nGrading Rubric:\n{rubric}\n\nPlease follow this rubric when grading.\n"
 
         # Build few-shot examples section
         examples_section = ""

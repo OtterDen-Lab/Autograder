@@ -234,8 +234,13 @@ function handleGradingKeyboard(e) {
         loadNextProblem();
     }
 
-    // Number keys 0-9 - quick score entry
-    if (/^[0-9]$/.test(e.key) && e.target.id !== 'score-input' && e.target.id !== 'feedback-input' && e.target.id !== 'max-points-input') {
+    // Number keys 0-9 - quick score entry (but not when typing in rubric table or other inputs)
+    if (/^[0-9]$/.test(e.key) &&
+        e.target.id !== 'score-input' &&
+        e.target.id !== 'feedback-input' &&
+        e.target.id !== 'max-points-input' &&
+        !e.target.classList.contains('rubric-points') &&
+        !e.target.classList.contains('rubric-description')) {
         e.preventDefault();
         document.getElementById('score-input').value = e.key;
         document.getElementById('score-input').focus();
@@ -1179,7 +1184,8 @@ startAutogradeBtn.addEventListener('click', async () => {
             if (rubricResponse.ok) {
                 const rubricData = await rubricResponse.json();
                 if (rubricData.rubric) {
-                    document.getElementById('autograding-rubric-text').value = rubricData.rubric;
+                    // Render as table (rubric-table.js provides this function)
+                    renderRubricTable(rubricData.rubric);
                 }
             }
         } catch (error) {
