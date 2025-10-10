@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function getStatusBadge(status) {
     const statusConfig = {
         'preprocessing': { label: 'Processing', color: '#3b82f6' },  // blue
+        'awaiting_alignment': { label: 'Awaiting Alignment', color: '#f97316' },  // orange
         'name_matching_needed': { label: 'Needs Matching', color: '#f59e0b' },  // amber
         'ready': { label: 'Ready to Grade', color: '#10b981' },  // green
         'grading': { label: 'Grading', color: '#8b5cf6' },  // purple
@@ -98,6 +99,7 @@ function updateSessionInfo() {
 function getNextSectionForStatus(status) {
     const sectionMap = {
         'preprocessing': 'upload-section',
+        'awaiting_alignment': 'upload-section',
         'name_matching_needed': 'matching-section',
         'ready': 'grading-section',
         'grading': 'grading-section',
@@ -411,17 +413,25 @@ async function uploadFiles() {
     }
 
     try {
-        // Connect to SSE stream BEFORE uploading so we don't miss any events
-        listenForStatusUpdates();
-
-        // Now upload the files
+        // Upload the files
         const response = await fetch(`${API_BASE}/uploads/${currentSession.id}/upload`, {
             method: 'POST',
             body: formData
         });
 
         const result = await response.json();
-        document.getElementById('upload-status').textContent = result.message;
+        console.log('Upload response:', result);
+
+        // Check if we need to show alignment interface
+        if (result.status === 'awaiting_alignment' && result.composites) {
+            console.log('Showing alignment interface with', Object.keys(result.composites).length, 'pages');
+            showAlignmentInterface(result.composites, result.page_dimensions, result.num_exams);
+        } else {
+            console.log('Not showing alignment interface. Status:', result.status, 'Has composites:', !!result.composites);
+            // Connect to SSE stream for processing updates
+            listenForStatusUpdates();
+            document.getElementById('upload-status').textContent = result.message;
+        }
 
     } catch (error) {
         console.error('Upload failed:', error);
@@ -526,4 +536,236 @@ function listenForStatusUpdates() {
             statusDiv.textContent = 'Connection error - please refresh';
         }
     });
+}
+
+// Show alignment interface for manual split point selection
+let splitPoints = {};
+let compositeData = null;
+
+function showAlignmentInterface(composites, pageDimensions, numExams) {
+    compositeData = {
+        composites: composites,
+        page_dimensions: pageDimensions,
+        num_exams: numExams
+    };
+    splitPoints = {};
+
+    // Hide upload area, show alignment interface
+    document.getElementById('upload-area').style.display = 'none';
+
+    const container = document.getElementById('upload-progress-container');
+    container.style.display = 'block';
+
+    const statusDiv = document.getElementById('upload-status');
+    statusDiv.innerHTML = `
+        <h3>Manual Exam Alignment</h3>
+        <p>Click on the composite images below to mark where questions should be split.</p>
+        <p><strong>Instructions:</strong></p>
+        <ul style="text-align: left; margin: 10px 0;">
+            <li><strong>Click</strong> on the image to add a split line</li>
+            <li><strong>Click</strong> a red line to remove it</li>
+            <li>Split lines mark the <strong>top</strong> of each question</li>
+        </ul>
+        <div style="display: flex; gap: 10px; margin-top: 15px;">
+            <button id="submit-alignment-btn" class="btn btn-primary">Submit Split Points & Process Exams</button>
+            <button id="cancel-alignment-btn" class="btn btn-secondary">Cancel</button>
+        </div>
+    `;
+
+    // Clear and populate progress area with composite images
+    const progressFill = document.getElementById('upload-progress-fill');
+    progressFill.innerHTML = '';
+
+    const pagesContainer = document.createElement('div');
+    pagesContainer.id = 'alignment-pages-container';
+    pagesContainer.style.marginTop = '20px';
+
+    for (const [pageNum, imageBase64] of Object.entries(composites)) {
+        const pageSection = createAlignmentPageSection(parseInt(pageNum), imageBase64);
+        pagesContainer.appendChild(pageSection);
+    }
+
+    container.appendChild(pagesContainer);
+
+    // Setup button handlers
+    document.getElementById('submit-alignment-btn').onclick = submitAlignment;
+    document.getElementById('cancel-alignment-btn').onclick = cancelAlignment;
+}
+
+function createAlignmentPageSection(pageNum, imageBase64) {
+    const section = document.createElement('div');
+    section.className = 'alignment-page-section';
+    section.style.cssText = 'margin-bottom: 40px; border: 1px solid var(--gray-200); border-radius: 8px; overflow: hidden;';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'background: var(--primary-color); color: white; padding: 15px; font-weight: bold;';
+    header.textContent = `Page ${pageNum + 1}`;
+
+    const canvasContainer = document.createElement('div');
+    canvasContainer.style.cssText = 'position: relative; margin: 20px; cursor: crosshair;';
+
+    const canvas = document.createElement('canvas');
+    canvas.id = `alignment-canvas-${pageNum}`;
+    canvas.style.cssText = 'border: 1px solid var(--gray-200); max-width: 100%; height: auto;';
+
+    const img = new Image();
+    img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+    };
+    img.src = `data:image/png;base64,${imageBase64}`;
+
+    // Click to add split line
+    canvas.addEventListener('click', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        // Get click position relative to the displayed canvas
+        const clickY = e.clientY - rect.top;
+
+        // Convert from displayed canvas coordinates to actual canvas pixel coordinates
+        const canvasY = (clickY / rect.height) * canvas.height;
+
+        // Convert from canvas pixel coordinates to PDF coordinates
+        const pageDims = compositeData.page_dimensions[pageNum];
+        const pdfY = Math.round((canvasY / canvas.height) * pageDims.height);
+
+        console.log(`Click: displayY=${clickY.toFixed(1)}, canvasY=${canvasY.toFixed(1)}, pdfY=${pdfY}, canvas.height=${canvas.height}, rect.height=${rect.height.toFixed(1)}`);
+
+        addSplitLine(pageNum, pdfY, canvasContainer, canvas);
+    });
+
+    canvasContainer.appendChild(canvas);
+
+    const helpText = document.createElement('p');
+    helpText.style.cssText = 'margin: 10px 20px; color: var(--gray-700); font-size: 14px;';
+    helpText.innerHTML = `
+        <strong>Click</strong> on the composite image to add split points.<br>
+        <strong>Click</strong> a red line to remove it.
+    `;
+
+    section.appendChild(header);
+    section.appendChild(helpText);
+    section.appendChild(canvasContainer);
+
+    return section;
+}
+
+function addSplitLine(pageNum, pdfY, container, canvas) {
+    if (!splitPoints[pageNum]) {
+        splitPoints[pageNum] = [];
+    }
+
+    splitPoints[pageNum].push(pdfY);
+    splitPoints[pageNum].sort((a, b) => a - b);
+
+    updateSplitLines(pageNum, container, canvas);
+}
+
+function updateSplitLines(pageNum, container, canvas) {
+    // Remove existing lines
+    container.querySelectorAll('.alignment-split-line').forEach(el => el.remove());
+
+    const pageDims = compositeData.page_dimensions[pageNum];
+    const rect = canvas.getBoundingClientRect();
+
+    (splitPoints[pageNum] || []).forEach((pdfY, idx) => {
+        // Convert from PDF coordinates to canvas pixel coordinates
+        const canvasY = (pdfY / pageDims.height) * canvas.height;
+
+        // Convert from canvas pixel coordinates to displayed canvas coordinates
+        const displayY = (canvasY / canvas.height) * rect.height;
+
+        const line = document.createElement('div');
+        line.className = 'alignment-split-line';
+        line.style.cssText = `
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: red;
+            cursor: pointer;
+            opacity: 0.7;
+            top: ${displayY}px;
+        `;
+
+        const label = document.createElement('div');
+        label.style.cssText = `
+            position: absolute;
+            right: 5px;
+            top: -20px;
+            background: red;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+            pointer-events: none;
+        `;
+        label.textContent = `Split ${idx + 1}`;
+
+        // Click to remove
+        line.addEventListener('click', (e) => {
+            e.stopPropagation();
+            splitPoints[pageNum] = splitPoints[pageNum].filter(y => y !== pdfY);
+            if (splitPoints[pageNum].length === 0) {
+                delete splitPoints[pageNum];
+            }
+            updateSplitLines(pageNum, container, canvas);
+        });
+
+        line.addEventListener('mouseenter', () => {
+            line.style.opacity = '1';
+            line.style.height = '5px';
+        });
+
+        line.addEventListener('mouseleave', () => {
+            line.style.opacity = '0.7';
+            line.style.height = '3px';
+        });
+
+        line.appendChild(label);
+        container.appendChild(line);
+    });
+}
+
+async function submitAlignment() {
+    try {
+        document.getElementById('submit-alignment-btn').disabled = true;
+        document.getElementById('submit-alignment-btn').textContent = 'Submitting...';
+
+        // Submit split points to backend
+        const response = await fetch(`${API_BASE}/uploads/${currentSession.id}/submit-alignment`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ split_points: splitPoints })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to submit alignment');
+        }
+
+        // Clean up alignment interface
+        document.getElementById('alignment-pages-container').remove();
+        document.getElementById('upload-status').textContent = 'Processing exams with manual split points...';
+
+        // Start listening for processing updates
+        listenForStatusUpdates();
+
+    } catch (error) {
+        console.error('Failed to submit alignment:', error);
+        alert('Failed to submit alignment: ' + error.message);
+        document.getElementById('submit-alignment-btn').disabled = false;
+        document.getElementById('submit-alignment-btn').textContent = 'Submit Split Points & Process Exams';
+    }
+}
+
+function cancelAlignment() {
+    if (confirm('Cancel alignment? You will need to re-upload the exams.')) {
+        // Reset the upload section
+        document.getElementById('upload-area').style.display = 'block';
+        document.getElementById('upload-progress-container').style.display = 'none';
+        document.getElementById('file-input').value = '';
+        splitPoints = {};
+        compositeData = null;
+    }
 }

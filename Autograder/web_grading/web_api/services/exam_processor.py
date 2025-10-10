@@ -68,7 +68,8 @@ class ExamProcessor:
         document_id_offset: int = 0,
         file_metadata: Optional[Dict[Path, Dict]] = None,
         problem_max_points: Optional[Dict[int, float]] = None,
-        extract_max_points_enabled: bool = False
+        extract_max_points_enabled: bool = False,
+        manual_split_points: Optional[Dict[int, List[int]]] = None
     ) -> Tuple[List[Dict], List[Dict]]:
         """
         Process exam PDFs.
@@ -120,9 +121,19 @@ class ExamProcessor:
                 for submission_id, random_id in enumerate(shuffled_order):
                     page_mappings_by_submission[submission_id].append(random_id)
         else:
-            log.info("Using automatic problem detection via horizontal lines")
-            # No shuffling for auto-detection (all students get same order)
+            log.info("Using manual split points for problem detection")
+            # No shuffling for manual split detection (all students get same order)
             page_mappings_by_submission = None
+
+            # Manual split points are now required
+            if manual_split_points is None:
+                raise ValueError("Manual split points are required. Please use the alignment interface to specify split points.")
+
+            log.info(f"Using manual split points for {len(manual_split_points)} pages")
+            consensus_break_points = manual_split_points
+
+            total_consensus_breaks = sum(len(breaks) for breaks in consensus_break_points.values())
+            log.info(f"Using {total_consensus_breaks} manual split points across {len(consensus_break_points)} pages")
 
         # Process each PDF
         matched_submissions = []
@@ -199,9 +210,10 @@ class ExamProcessor:
                 if problem_max_points is None:
                     problem_max_points = {}
 
-                # Auto-detect problems using horizontal line detection
-                problems = self.redact_and_split_auto(
+                # Use consensus-based splitting (all exams split at same positions)
+                problems = self.redact_and_split_with_consensus(
                     pdf_path,
+                    consensus_break_points=consensus_break_points,
                     detect_blank=detect_blank,
                     blank_confidence_threshold=blank_confidence_threshold,
                     use_ai_for_borderline=use_ai_for_borderline,
@@ -310,56 +322,6 @@ class ExamProcessor:
         pdf_document.close()
         return problem_pdfs
 
-    def detect_horizontal_lines(self, page: fitz.Page, min_line_width_ratio: float = 0.7) -> List[int]:
-        """
-        Detect horizontal divider lines on a page.
-
-        Args:
-            page: PyMuPDF page object
-            min_line_width_ratio: Minimum ratio of line width to page width (0.7 = 70% of page width)
-
-        Returns:
-            List of y-coordinates where horizontal lines are detected, sorted top to bottom
-        """
-        # Render page to image
-        pix = page.get_pixmap(dpi=150)
-        img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
-
-        # Convert to grayscale
-        if img_data.shape[2] == 4:  # RGBA
-            gray = cv2.cvtColor(img_data, cv2.COLOR_RGBA2GRAY)
-        elif img_data.shape[2] == 3:  # RGB
-            gray = cv2.cvtColor(img_data, cv2.COLOR_RGB2GRAY)
-        else:
-            gray = img_data
-
-        # Apply binary threshold to get black lines
-        _, binary = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY_INV)
-
-        # Detect horizontal lines using morphology
-        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(pix.width * 0.5), 1))
-        detected_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, horizontal_kernel)
-
-        # Find contours of horizontal lines
-        contours, _ = cv2.findContours(detected_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        line_positions = []
-        min_width = pix.width * min_line_width_ratio
-
-        for contour in contours:
-            x, y, w, h = cv2.boundingRect(contour)
-            # Filter for lines that are wide enough and thin enough
-            if w >= min_width and h < 20:  # Line should be at least 70% page width and less than 20px tall
-                # Convert from image coordinates (150 DPI) back to PDF coordinates (72 DPI)
-                pdf_y = (y / pix.height) * page.rect.height
-                line_positions.append(int(pdf_y))
-
-        # Sort lines from top to bottom
-        line_positions.sort()
-
-        log.info(f"Detected {len(line_positions)} horizontal divider lines at positions: {line_positions}")
-        return line_positions
-
     def split_page_by_lines(
         self,
         page: fitz.Page,
@@ -414,9 +376,10 @@ class ExamProcessor:
         log.info(f"Split page into {len(regions)} regions (filtered by min height {min_region_height})")
         return regions
 
-    def redact_and_split_auto(
+    def redact_and_split_with_consensus(
         self,
         pdf_path: Path,
+        consensus_break_points: Dict[int, List[int]],
         detect_blank: bool = False,
         blank_confidence_threshold: float = 0.8,
         use_ai_for_borderline: bool = False,
@@ -424,13 +387,16 @@ class ExamProcessor:
         extract_max_points_enabled: bool = False
     ) -> List[Dict]:
         """
-        Redact names and automatically split PDF into problems based on horizontal line detection.
+        Redact names and split PDF into problems using consensus break points.
 
         Args:
             pdf_path: Path to PDF file
+            consensus_break_points: Dict mapping page_number -> list of y-positions
             detect_blank: Whether to detect blank/unanswered problems
             blank_confidence_threshold: Confidence threshold (0-1) for using AI verification
             use_ai_for_borderline: Whether to use AI for low-confidence detections
+            problem_max_points: Shared dict for caching max points by problem number
+            extract_max_points_enabled: Whether to extract max points from images
 
         Returns:
             List of problem dicts with {problem_number, page_number, image_base64, is_blank, blank_confidence}
@@ -448,12 +414,10 @@ class ExamProcessor:
             if page_num == 0:
                 page.draw_rect(self.fitz_name_rect, color=(0, 0, 0), fill=(0, 0, 0))
 
-            # Detect horizontal lines
-            line_positions = self.detect_horizontal_lines(page)
+            # Get consensus break points for this page
+            line_positions = consensus_break_points.get(page_num, [])
 
             # Split page into regions
-            # On first page, don't include top margin (that's the name area)
-            # On subsequent pages, include top margin (in case there's content above first line)
             regions = self.split_page_by_lines(page, line_positions, include_top_margin=False)
 
             # Create a problem for each region
@@ -522,10 +486,9 @@ class ExamProcessor:
         pdf_document.close()
 
         # Filter out blank trailing page if present
-        # Check if the last problem is an entirely blank page (not just an unanswered question)
         if problems and detect_blank:
             last_problem = problems[-1]
-            # Re-check the last problem using full-page blank detection (not just answer area)
+            # Re-check the last problem using full-page blank detection
             full_page_check = self.is_blank_heuristic(last_problem["image_base64"], crop_to_answer_area=False, threshold=0.015)
 
             if full_page_check["is_blank"] and full_page_check["confidence"] > 0.85:
@@ -534,9 +497,9 @@ class ExamProcessor:
 
         if detect_blank:
             blank_count = sum(1 for p in problems if p["is_blank"])
-            log.info(f"Auto-split PDF into {len(problems)} problems ({blank_count} detected as blank) across {total_pages} pages")
+            log.info(f"Split PDF into {len(problems)} problems ({blank_count} detected as blank) using consensus break points")
         else:
-            log.info(f"Auto-split PDF into {len(problems)} problems across {total_pages} pages")
+            log.info(f"Split PDF into {len(problems)} problems using consensus break points")
 
         return problems
 

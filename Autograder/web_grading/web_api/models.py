@@ -10,6 +10,7 @@ from enum import Enum
 class SessionStatus(str, Enum):
     """Session status states"""
     PREPROCESSING = "preprocessing"
+    AWAITING_ALIGNMENT = "awaiting_alignment"
     NAME_MATCHING_NEEDED = "name_matching_needed"
     READY = "ready"
     GRADING = "grading"
@@ -150,3 +151,6 @@ class UploadResponse(BaseModel):
     files_uploaded: int
     status: str
     message: str
+    composites: Optional[dict] = None  # page_num -> base64 image
+    page_dimensions: Optional[dict] = None  # page_num -> {width, height}
+    num_exams: Optional[int] = None
