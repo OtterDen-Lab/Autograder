@@ -210,11 +210,11 @@ class ExamProcessor:
                 if problem_max_points is None:
                     problem_max_points = {}
 
-                # Use consensus-based splitting (all exams split at same positions)
+                # Use manual split points to extract problem regions
                 # Returns (pdf_base64, problems_list) where problems contain region metadata
-                pdf_data, problems = self.redact_and_split_with_consensus(
+                pdf_data, problems = self.redact_and_extract_regions(
                     pdf_path,
-                    consensus_break_points=consensus_break_points,
+                    split_points=consensus_break_points,
                     detect_blank=detect_blank,
                     blank_confidence_threshold=blank_confidence_threshold,
                     use_ai_for_borderline=use_ai_for_borderline,
@@ -403,10 +403,10 @@ class ExamProcessor:
 
         return pdf_base64
 
-    def redact_and_split_with_consensus(
+    def redact_and_extract_regions(
         self,
         pdf_path: Path,
-        consensus_break_points: Dict[int, List[int]],
+        split_points: Dict[int, List[int]],
         detect_blank: bool = False,
         blank_confidence_threshold: float = 0.8,
         use_ai_for_borderline: bool = False,
@@ -414,12 +414,12 @@ class ExamProcessor:
         extract_max_points_enabled: bool = False
     ) -> Tuple[str, List[Dict]]:
         """
-        Redact names and identify problem regions using consensus break points.
+        Redact names and extract problem regions using manual split points.
         Returns PDF data once and region metadata for each problem.
 
         Args:
             pdf_path: Path to PDF file
-            consensus_break_points: Dict mapping page_number -> list of y-positions
+            split_points: Dict mapping page_number -> list of y-positions (manual split points from alignment UI)
             detect_blank: Whether to detect blank/unanswered problems
             blank_confidence_threshold: Confidence threshold (0-1) for using AI verification
             use_ai_for_borderline: Whether to use AI for low-confidence detections
@@ -448,8 +448,8 @@ class ExamProcessor:
         for page_num in range(total_pages):
             page = pdf_document[page_num]
 
-            # Get consensus break points for this page
-            line_positions = consensus_break_points.get(page_num, [])
+            # Get manual split points for this page
+            line_positions = split_points.get(page_num, [])
 
             # Split page into regions
             regions = self.split_page_by_lines(page, line_positions, include_top_margin=False)
