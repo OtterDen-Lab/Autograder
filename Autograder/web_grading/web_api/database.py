@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 
 
 def get_db_path() -> Path:
@@ -241,6 +241,10 @@ def run_migrations(cursor, from_version: int):
         migrate_to_v14(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (14)")
 
+    if from_version < 15:
+        migrate_to_v15(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (15)")
+
 
 def migrate_to_v2(cursor):
     """Add progress tracking columns to grading_sessions"""
@@ -432,6 +436,13 @@ def migrate_to_v14(cursor):
     cursor.execute("DROP TABLE problems_backup")
 
     log.info("Successfully made image_data nullable in problems table")
+
+
+def migrate_to_v15(cursor):
+    """Add grading_rubric column to problem_metadata for AI-assisted rubric generation"""
+    log.info("Migrating to schema version 15: adding grading_rubric to problem_metadata")
+
+    cursor.execute("ALTER TABLE problem_metadata ADD COLUMN grading_rubric TEXT")
 
 
 def update_problem_stats(session_id: int):

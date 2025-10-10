@@ -44,12 +44,41 @@
                     <textarea id="autograding-question-text" rows="10" style="width: 100%; padding: 10px; font-family: inherit; border: 1px solid var(--gray-300); border-radius: 4px; margin-top: 5px;"></textarea>
                 </label>
 
+                <div style="background: #f0fdf4; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #86efac;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <strong style="color: var(--gray-800);">📋 Grading Rubric (Optional)</strong>
+                        <button id="generate-rubric-btn" class="btn btn-small" style="font-size: 13px; padding: 5px 12px;">Generate with AI</button>
+                    </div>
+                    <div id="rubric-loading" style="display: none; padding: 10px; text-align: center; color: var(--gray-600);">
+                        <div style="animation: pulse 1.5s infinite;">Generating rubric from your graded examples...</div>
+                    </div>
+                    <div id="rubric-table-container" style="margin-top: 10px; display: none;">
+                        <table style="width: 100%; border-collapse: collapse; background: white;">
+                            <thead>
+                                <tr style="background: var(--gray-100);">
+                                    <th style="padding: 8px; text-align: left; border: 1px solid var(--gray-300); width: 80px;">Points</th>
+                                    <th style="padding: 8px; text-align: left; border: 1px solid var(--gray-300);">Description</th>
+                                    <th style="padding: 8px; text-align: center; border: 1px solid var(--gray-300); width: 60px;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rubric-table-body"></tbody>
+                        </table>
+                        <button id="add-rubric-row-btn" class="btn btn-small" style="margin-top: 10px; font-size: 13px; padding: 5px 12px;">+ Add Row</button>
+                    </div>
+                    <div id="rubric-placeholder" style="padding: 20px; text-align: center; color: var(--gray-600); border: 2px dashed var(--gray-300); border-radius: 4px; margin-top: 10px;">
+                        Click "Generate with AI" to create a rubric based on your manually graded examples
+                    </div>
+                    <small style="color: var(--gray-600); display: block; margin-top: 5px;">
+                        ℹ️ The rubric will be used to grade all student answers consistently. AI can generate one based on 3-5 manually graded examples.
+                    </small>
+                </div>
+
                 <div style="background: #eff6ff; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
                     <p style="margin: 0; font-size: 14px; color: var(--gray-700);">
                         <strong>ℹ️ How Autograding Works:</strong><br>
-                        1. This question will be used for all submissions of this problem<br>
+                        1. This question and rubric will be used for all submissions of this problem<br>
                         2. Each student's handwritten answer will be extracted<br>
-                        3. AI will grade each answer and suggest a score<br>
+                        3. AI will grade each answer using the rubric and suggest a score<br>
                         4. You'll review and approve AI suggestions before finalizing
                     </p>
                 </div>
@@ -350,5 +379,6 @@
     <script src="/js/app.js"></script>
     <script src="/js/matching.js"></script>
     <script src="/js/grading.js"></script>
+    <script src="/js/rubric-table.js"></script>
 </body>
 </html>
