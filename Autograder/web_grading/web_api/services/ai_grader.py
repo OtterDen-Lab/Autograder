@@ -89,25 +89,20 @@ class AIGraderService:
                 )
 
         message = (
-            f"You are creating a grading rubric for an exam problem worth {max_points} points.\n\n"
+            f"Create a grading rubric for this {max_points}-point exam problem.\n\n"
             f"Question:\n{question_text}"
-            f"{examples_section}\n"
-            f"Please create a detailed grading rubric that breaks down how to award points. "
-            f"The rubric should:\n"
-            f"1. List key concepts, steps, or components required for a complete answer\n"
-            f"2. Specify point values for each component\n"
-            f"3. Be clear and objective enough for consistent grading\n"
-            f"4. Account for partial credit where appropriate\n"
-            f"5. Align with the grading standards shown in the example answers above\n\n"
-            f"IMPORTANT: Return ONLY valid JSON (no markdown, no code blocks, no commentary) in this exact format:\n"
+            f"{examples_section}\n\n"
+            f"Requirements:\n"
+            f"- Break down into key components with integer point values (sum = {max_points})\n"
+            f"- Be concise and specific (brief descriptions, no extra commentary)\n"
+            f"- Align with the grading standards in the examples above\n"
+            f"- Return ONLY valid JSON (no markdown, no code blocks):\n\n"
             f"{{\n"
             f'  "items": [\n'
             f'    {{"points": 2, "description": "Correct identification of X"}},\n'
-            f'    {{"points": 3, "description": "Proper calculation showing Y"}},\n'
-            f'    {{"points": 3, "description": "Clear explanation of Z"}}\n'
+            f'    {{"points": 3, "description": "Shows calculation for Y"}}\n'
             f"  ]\n"
-            f"}}\n\n"
-            f"The sum of all points should equal {max_points}. Return only the JSON object."
+            f"}}"
         )
 
         response, usage = self.ai_helper.query_ai(message, [], max_response_tokens=2000)
