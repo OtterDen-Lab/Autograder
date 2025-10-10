@@ -272,8 +272,8 @@ function displayCurrentProblem() {
     // Populate form based on whether it's graded or blank
     if (currentProblem.graded) {
         // Already graded - show existing grade
-        document.getElementById('score-input').value = currentProblem.score || '';
-        document.getElementById('score-slider').value = currentProblem.score || 0;
+        document.getElementById('score-input').value = currentProblem.score != null ? currentProblem.score : '';
+        document.getElementById('score-slider').value = currentProblem.score != null ? currentProblem.score : 0;
         document.getElementById('feedback-input').value = currentProblem.feedback || '';
 
         // Remove blank indicator
@@ -315,8 +315,8 @@ function displayCurrentProblem() {
         // Check if this is an AI-graded problem (has score and feedback but not yet graded)
         if (currentProblem.score != null && currentProblem.feedback) {
             // Auto-populate both score and feedback for review
-            document.getElementById('score-input').value = currentProblem.score || '';
-            document.getElementById('score-slider').value = currentProblem.score || 0;
+            document.getElementById('score-input').value = currentProblem.score != null ? currentProblem.score : '';
+            document.getElementById('score-slider').value = currentProblem.score != null ? currentProblem.score : 0;
             document.getElementById('feedback-input').value = currentProblem.feedback || '';
 
             // Show AI-graded indicator
@@ -1173,6 +1173,19 @@ startAutogradeBtn.addEventListener('click', async () => {
         const questionTextArea = document.getElementById('autograding-question-text');
         questionTextArea.value = data.question_text;
 
+        // Try to load existing rubric if available
+        try {
+            const rubricResponse = await fetch(`${API_BASE}/ai-grader/${currentSession.id}/rubric/${currentProblemNumber}`);
+            if (rubricResponse.ok) {
+                const rubricData = await rubricResponse.json();
+                if (rubricData.rubric) {
+                    document.getElementById('autograding-rubric-text').value = rubricData.rubric;
+                }
+            }
+        } catch (error) {
+            console.log('No existing rubric found, starting fresh');
+        }
+
     } catch (error) {
         console.error('Failed to extract question:', error);
         modal.style.display = 'none';
@@ -1186,9 +1199,63 @@ document.getElementById('autograding-cancel-btn').onclick = () => {
     modal.style.display = 'none';
 };
 
+// Generate rubric button
+document.getElementById('generate-rubric-btn').onclick = async () => {
+    const questionText = document.getElementById('autograding-question-text').value;
+
+    if (!questionText.trim()) {
+        alert('Please enter the question text first');
+        return;
+    }
+
+    // Get max points from the UI
+    const maxPointsInput = document.getElementById('max-points-input');
+    const maxPoints = parseFloat(maxPointsInput.value) || 8;
+
+    // Show loading state
+    const rubricTextarea = document.getElementById('autograding-rubric-text');
+    const rubricLoading = document.getElementById('rubric-loading');
+    const generateBtn = document.getElementById('generate-rubric-btn');
+
+    rubricLoading.style.display = 'block';
+    rubricTextarea.style.display = 'none';
+    generateBtn.disabled = true;
+
+    try {
+        // Generate rubric
+        const response = await fetch(`${API_BASE}/ai-grader/${currentSession.id}/generate-rubric`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                problem_number: currentProblemNumber,
+                question_text: questionText,
+                max_points: maxPoints,
+                num_examples: 3
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to generate rubric');
+        }
+
+        const data = await response.json();
+        rubricTextarea.value = data.rubric;
+
+    } catch (error) {
+        console.error('Failed to generate rubric:', error);
+        alert(`Failed to generate rubric: ${error.message}\n\nMake sure you have manually graded at least 3 submissions for this problem first.`);
+    } finally {
+        rubricLoading.style.display = 'none';
+        rubricTextarea.style.display = 'block';
+        generateBtn.disabled = false;
+    }
+};
+
 // Confirm and start autograding
 document.getElementById('autograding-confirm-btn').onclick = async () => {
     const questionText = document.getElementById('autograding-question-text').value;
+    const rubricText = document.getElementById('autograding-rubric-text').value;
 
     if (!questionText.trim()) {
         alert('Please enter the question text');
@@ -1209,6 +1276,18 @@ document.getElementById('autograding-confirm-btn').onclick = async () => {
     connectToAutogradingStream();
 
     try {
+        // Save rubric if provided
+        if (rubricText.trim()) {
+            await fetch(`${API_BASE}/ai-grader/${currentSession.id}/save-rubric`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    problem_number: currentProblemNumber,
+                    rubric: rubricText
+                })
+            });
+        }
+
         // Start autograding
         const response = await fetch(`${API_BASE}/ai-grader/${currentSession.id}/autograde`, {
             method: 'POST',
