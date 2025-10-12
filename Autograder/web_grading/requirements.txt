@@ -38,3 +38,8 @@ mypy==1.7.1
 # AI helpers
 # anthropic==0.7.1
 # openai==1.3.7
+
+# QR Code scanning for per-question metadata extraction
+pyzbar==0.1.9
+Pillow==10.1.0  # Required for image processing
+cryptography>=41.0.0  # Required for QR code decryption

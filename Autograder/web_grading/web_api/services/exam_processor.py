@@ -23,6 +23,9 @@ import cv2
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 import Autograder.ai_helper as ai_helper
 
+# Import QR scanner service
+from .qr_scanner import QRScanner
+
 log = logging.getLogger(__name__)
 
 NAME_SIMILARITY_THRESHOLD = 95  # Percentage threshold for fuzzy matching
@@ -54,6 +57,7 @@ class ExamProcessor:
             self.name_rect["x"] + self.name_rect["width"],
             self.name_rect["y"] + self.name_rect["height"],
         ])
+        self.qr_scanner = QRScanner()
 
     def process_exams(
         self,
@@ -467,8 +471,11 @@ class ExamProcessor:
                     "blank_confidence": 0.0
                 }
 
-                # For blank detection, we still need to extract the region temporarily
-                if detect_blank or extract_max_points_enabled:
+                # Always extract region temporarily if we need to do any analysis
+                # QR scanning should always run if available (even if other flags are False)
+                needs_extraction = detect_blank or extract_max_points_enabled or self.qr_scanner.available
+
+                if needs_extraction:
                     # Extract region as image for analysis
                     problem_pdf = fitz.open()
                     problem_page = problem_pdf.new_page(width=region.width, height=region.height)
@@ -477,6 +484,20 @@ class ExamProcessor:
                     pix = problem_page.get_pixmap(dpi=150)
                     img_bytes = pix.tobytes("png")
                     img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+
+                    # Try to scan QR code first (highest priority for max points)
+                    qr_data = self.qr_scanner.scan_qr_from_image(img_base64)
+                    if qr_data:
+                        log.info(f"Problem {problem_number}: Found QR code with max_points={qr_data['max_points']}")
+                        problem_dict["max_points"] = qr_data["max_points"]
+                        # Store QR metadata for potential future use (e.g., regenerating answers)
+                        problem_dict["qr_question_type"] = qr_data.get("question_type")
+                        problem_dict["qr_seed"] = qr_data.get("seed")
+                        problem_dict["qr_version"] = qr_data.get("version")
+
+                        # Cache the max points for this problem number
+                        if problem_max_points is not None:
+                            problem_max_points[problem_number] = qr_data["max_points"]
 
                     # Detect blank if requested
                     if detect_blank:
@@ -493,15 +514,16 @@ class ExamProcessor:
                             problem_dict["blank_method"] = "ai"
                             problem_dict["blank_reasoning"] = ai_result.get("reasoning", "")
 
-                    # Extract max points from score box
-                    if problem_max_points and problem_number in problem_max_points:
-                        problem_dict["max_points"] = problem_max_points[problem_number]
-                    elif extract_max_points_enabled:
-                        max_points = self.extract_max_points(img_base64)
-                        if max_points is not None:
-                            problem_dict["max_points"] = max_points
-                            if problem_max_points is not None:
-                                problem_max_points[problem_number] = max_points
+                    # Extract max points from score box if not already found via QR code
+                    if not qr_data:
+                        if problem_max_points and problem_number in problem_max_points:
+                            problem_dict["max_points"] = problem_max_points[problem_number]
+                        elif extract_max_points_enabled:
+                            max_points = self.extract_max_points(img_base64)
+                            if max_points is not None:
+                                problem_dict["max_points"] = max_points
+                                if problem_max_points is not None:
+                                    problem_max_points[problem_number] = max_points
 
                     problem_pdf.close()
 
