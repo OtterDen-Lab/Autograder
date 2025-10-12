@@ -168,7 +168,10 @@ async def get_next_problem(session_id: int, problem_number: int):
             blank_confidence=row["blank_confidence"] or 0.0,
             blank_method=row["blank_method"],
             blank_reasoning=row["blank_reasoning"],
-            ai_reasoning=row["ai_reasoning"]
+            ai_reasoning=row["ai_reasoning"],
+            qr_question_type=row["qr_question_type"],
+            qr_seed=row["qr_seed"],
+            qr_version=row["qr_version"]
         )
 
 
@@ -231,7 +234,10 @@ async def get_previous_problem(session_id: int, problem_number: int):
             blank_confidence=row["blank_confidence"] or 0.0,
             blank_method=row["blank_method"],
             blank_reasoning=row["blank_reasoning"],
-            ai_reasoning=row["ai_reasoning"]
+            ai_reasoning=row["ai_reasoning"],
+            qr_question_type=row["qr_question_type"],
+            qr_seed=row["qr_seed"],
+            qr_version=row["qr_version"]
         )
 
 
@@ -303,7 +309,10 @@ async def get_problem(problem_id: int):
             blank_confidence=row["blank_confidence"] or 0.0,
             blank_method=row["blank_method"],
             blank_reasoning=row["blank_reasoning"],
-            ai_reasoning=row["ai_reasoning"]
+            ai_reasoning=row["ai_reasoning"],
+            qr_question_type=row["qr_question_type"],
+            qr_seed=row["qr_seed"],
+            qr_version=row["qr_version"]
         )
 
 
@@ -467,3 +476,91 @@ Respond with just the transcribed text."""
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+
+@router.get("/{problem_id}/regenerate-answer")
+async def regenerate_answer(problem_id: int):
+    """
+    Regenerate the correct answer from QR code metadata.
+
+    This endpoint uses the question_type, seed, and version stored from
+    the QR code to regenerate the original correct answer.
+
+    Args:
+        problem_id: ID of the problem
+
+    Returns:
+        JSON with regenerated answers or error if QR metadata not available
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT qr_question_type, qr_seed, qr_version, max_points, problem_number
+            FROM problems
+            WHERE id = ?
+        """, (problem_id,))
+        row = cursor.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Problem not found")
+
+        # Check if QR metadata is available
+        if not row["qr_question_type"] or row["qr_seed"] is None:
+            raise HTTPException(
+                status_code=400,
+                detail="QR code metadata not available for this problem"
+            )
+
+    # Import QuizGeneration regeneration function
+    try:
+        from grade_from_qr import regenerate_from_metadata
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="QuizGeneration module not available. Please install it to use answer regeneration."
+        )
+
+    try:
+        # Regenerate the answer using QR metadata
+        result = regenerate_from_metadata(
+            question_type=row["qr_question_type"],
+            seed=row["qr_seed"],
+            version=row["qr_version"],
+            points=row["max_points"] or 0.0
+        )
+
+        # Format answers for display
+        answers = []
+        for key, answer_obj in result['answer_objects'].items():
+            answer_dict = {
+                "key": key,
+                "value": str(answer_obj.value)
+            }
+
+            # Include tolerance for numerical answers
+            if hasattr(answer_obj, 'tolerance') and answer_obj.tolerance is not None:
+                answer_dict['tolerance'] = answer_obj.tolerance
+
+            answers.append(answer_dict)
+
+        return {
+            "problem_id": problem_id,
+            "problem_number": row["problem_number"],
+            "question_type": row["qr_question_type"],
+            "seed": row["qr_seed"],
+            "version": row["qr_version"],
+            "max_points": row["max_points"],
+            "answers": answers
+        }
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to regenerate answer: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error during answer regeneration: {str(e)}"
+        )

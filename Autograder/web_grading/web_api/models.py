@@ -108,6 +108,11 @@ class ProblemResponse(BaseModel):
     # AI grading metadata
     ai_reasoning: Optional[str] = None
 
+    # QR code metadata (for answer regeneration)
+    qr_question_type: Optional[str] = None
+    qr_seed: Optional[int] = None
+    qr_version: Optional[str] = None
+
     class Config:
         from_attributes = True
 
