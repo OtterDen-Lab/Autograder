@@ -91,6 +91,7 @@ Please analyze this submission and return a JSON response with:
   "explanation_effort_score": "2, 1, or 0 based on attempt to explain vs. just list facts",
   "topics_covered": ["list", "of", "general", "class", "topics", "that", "relate", "to", "student", "content"],
   "topics_missing": ["list", "of", "general", "class", "topics", "not", "addressed"],
+  "questions_asked": ["list", "of", "questions", "the", "student", "asked", "in", "their", "submission"],
   "needs_support": "true/false - student shows significant confusion or struggle that warrants office hours suggestion",
   "support_reason": "brief explanation if needs_support is true, empty string if false",
   "feedback": "supportive guidance to help the student write more reflectively for better studying"
@@ -100,6 +101,7 @@ SCORING GUIDELINES:
 - Completion: Reward genuine engagement with learning, even if confused. Penalize only minimal effort.
 - Explanation Effort: Full points for trying to work through concepts in their own words, even if incorrect.
 - A confused student genuinely trying to understand should get high completion and explanation scores.
+- IMPORTANT: Questions are a sign of engagement and should NOT be penalized. Students asking questions often shows they are thinking critically about the material.
 
 IMPORTANT:
 - If the student wrote about completely unrelated topics (different subject area), note this gently in feedback
@@ -958,6 +960,19 @@ class TextSubmissionGrader(Grader):
       sentences = [s.strip() for s in teaching_feedback.split('.') if s.strip()]
       for sentence in sentences:
         lines.append(f"• {sentence}")  # Don't add period since we split on periods
+
+    # Add questions section - collect all unique questions from students
+    all_questions = []
+    individual_results = report_data.get("individual_results", [])
+    for result in individual_results:
+      questions = result.get("questions_asked", [])
+      if questions:
+        all_questions.extend(questions)
+
+    if all_questions:
+      lines.append(f"\n*Questions Students Asked ({len(all_questions)} total):*")
+      for i, question in enumerate(all_questions, 1):
+        lines.append(f"{i}. {question}")
 
     return "\n".join(lines)
 
