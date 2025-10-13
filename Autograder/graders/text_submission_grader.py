@@ -91,11 +91,17 @@ Please analyze this submission and return a JSON response with:
   "explanation_effort_score": "2, 1, or 0 based on attempt to explain vs. just list facts",
   "topics_covered": ["list", "of", "general", "class", "topics", "that", "relate", "to", "student", "content"],
   "topics_missing": ["list", "of", "general", "class", "topics", "not", "addressed"],
-  "questions_asked": ["list", "of", "questions", "the", "student", "asked", "in", "their", "submission"],
+  "questions_asked": ["list", "of", "actual", "questions", "with", "question", "marks", "or", "clear", "interrogative", "statements"],
   "needs_support": "true/false - student shows significant confusion or struggle that warrants office hours suggestion",
   "support_reason": "brief explanation if needs_support is true, empty string if false",
   "feedback": "supportive guidance to help the student write more reflectively for better studying"
 }}
+
+IMPORTANT - For questions_asked:
+- Only include actual questions that seek answers (should have '?' or be clearly interrogative like "I wonder why...")
+- Do NOT include statements about curiosity, interest, or things to study further (e.g. "I should study X more", "I am curious about Y")
+- Do NOT include rhetorical questions or self-answered questions
+- Include the question exactly as written by the student
 
 SCORING GUIDELINES:
 - Completion: Reward genuine engagement with learning, even if confused. Penalize only minimal effort.
@@ -457,6 +463,7 @@ class TextSubmissionGrader(Grader):
       # Calculate length score (separate from AI analysis) and store accurate word count
       result["length_score"] = 2 if word_count >= 250 else 0
       result["accurate_word_count"] = word_count  # Store our accurate count
+      result["student_name"] = student_name  # Store student name for reporting
 
       # Calculate total grade (ensure all scores are integers)
       total_grade = (
@@ -961,18 +968,33 @@ class TextSubmissionGrader(Grader):
       for sentence in sentences:
         lines.append(f"• {sentence}")  # Don't add period since we split on periods
 
-    # Add questions section - collect all unique questions from students
-    all_questions = []
+    # Add questions section - group questions by student for context
+    questions_by_student = []
     individual_results = report_data.get("individual_results", [])
+    total_questions = 0
     for result in individual_results:
       questions = result.get("questions_asked", [])
       if questions:
-        all_questions.extend(questions)
+        student_name = result.get("student_name", "Unknown Student")
+        questions_by_student.append({
+          "student_name": student_name,
+          "questions": questions
+        })
+        total_questions += len(questions)
 
-    if all_questions:
-      lines.append(f"\n*Questions Students Asked ({len(all_questions)} total):*")
-      for i, question in enumerate(all_questions, 1):
-        lines.append(f"{i}. {question}")
+    if questions_by_student:
+      lines.append(f"\n*Questions Students Asked ({total_questions} total):*")
+      for student_info in questions_by_student:
+        student_name = student_info["student_name"]
+        questions = student_info["questions"]
+        if len(questions) == 1:
+          # Single question: format inline
+          lines.append(f"• `{student_name}`: {questions[0]}")
+        else:
+          # Multiple questions: format as sub-list
+          lines.append(f"• `{student_name}`:")
+          for question in questions:
+            lines.append(f"  - {question}")
 
     return "\n".join(lines)
 
