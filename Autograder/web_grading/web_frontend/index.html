@@ -270,6 +270,7 @@
                         <button id="next-problem-btn" class="btn">Skip</button>
                         <button id="show-context-btn" class="btn btn-secondary">Show in Context</button>
                         <button id="decipher-btn" class="btn btn-secondary">Decipher Handwriting</button>
+                        <button id="show-answer-btn" class="btn btn-secondary" style="display: none;">Show Answer</button>
                         <button id="start-autograde-btn" class="btn btn-success">Start Autograding</button>
                     </div>
                     <div style="text-align: center; padding: 5px 0;">
@@ -374,6 +375,30 @@
                 <div id="context-highlight" style="position: absolute; border: 3px solid red; pointer-events: none;"></div>
             </div>
         </div>
+    </div>
+
+    <!-- Answer Display Dialog -->
+    <div id="answer-dialog" class="answer-dialog" style="display: none;">
+        <div class="answer-header">
+            <span class="answer-title">Correct Answer</span>
+            <button id="close-answer-x" class="answer-close">&times;</button>
+        </div>
+        <div class="answer-content-wrapper">
+            <div id="answer-metadata" style="background: #f3f4f6; padding: 15px; border-radius: 6px; margin-bottom: 15px; font-size: 14px;">
+                <div style="margin-bottom: 8px;"><strong>Question Type:</strong> <span id="answer-question-type"></span></div>
+                <div style="margin-bottom: 8px;"><strong>Seed:</strong> <span id="answer-seed"></span></div>
+                <div style="margin-bottom: 8px;"><strong>Version:</strong> <span id="answer-version"></span></div>
+                <div><strong>Max Points:</strong> <span id="answer-max-points"></span></div>
+            </div>
+
+            <div id="answer-content" style="background: #eff6ff; padding: 20px; border-radius: 6px; border: 2px solid #3b82f6;">
+                <h3 style="margin-top: 0; color: #1e40af; font-size: 16px;">Answer(s):</h3>
+                <div id="answer-list"></div>
+            </div>
+
+            <div id="answer-error" style="display: none; background: #fee; padding: 15px; border-radius: 6px; border: 1px solid #f88; color: #c00; margin-top: 15px;"></div>
+        </div>
+        <div class="answer-resize-handle"></div>
     </div>
 
     <script src="/js/app.js"></script>

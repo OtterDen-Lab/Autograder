@@ -274,6 +274,14 @@ function displayCurrentProblem() {
     // Re-attach event listeners
     setupScoreSync();
 
+    // Show/hide "Show Answer" button based on QR metadata availability
+    const showAnswerBtn = document.getElementById('show-answer-btn');
+    if (currentProblem.qr_question_type && currentProblem.qr_seed !== null) {
+        showAnswerBtn.style.display = 'inline-block';
+    } else {
+        showAnswerBtn.style.display = 'none';
+    }
+
     // Populate form based on whether it's graded or blank
     if (currentProblem.graded) {
         // Already graded - show existing grade
@@ -1131,6 +1139,117 @@ retryPremiumBtn.addEventListener('click', async () => {
     } catch (error) {
         console.error('Failed to decipher with premium model:', error);
         transcriptionText.innerHTML = '<div style="color: var(--danger-color);">Failed to transcribe with premium model. Please try again.</div>';
+    }
+});
+
+// =============================================================================
+// SHOW ANSWER FUNCTIONALITY
+// =============================================================================
+
+const showAnswerBtn = document.getElementById('show-answer-btn');
+const answerDialog = document.getElementById('answer-dialog');
+const closeAnswerX = document.getElementById('close-answer-x');
+
+// Make answer dialog draggable
+let isAnswerDragging = false;
+let answerDragOffsetX = 0;
+let answerDragOffsetY = 0;
+
+document.querySelector('.answer-header').addEventListener('mousedown', (e) => {
+    if (e.target.classList.contains('answer-close')) return;
+    isAnswerDragging = true;
+    const rect = answerDialog.getBoundingClientRect();
+    answerDragOffsetX = e.clientX - rect.left;
+    answerDragOffsetY = e.clientY - rect.top;
+    answerDialog.style.transform = 'none';
+});
+
+document.addEventListener('mousemove', (e) => {
+    if (!isAnswerDragging) return;
+    answerDialog.style.left = (e.clientX - answerDragOffsetX) + 'px';
+    answerDialog.style.top = (e.clientY - answerDragOffsetY) + 'px';
+});
+
+document.addEventListener('mouseup', () => {
+    isAnswerDragging = false;
+});
+
+// Show answer button
+showAnswerBtn.addEventListener('click', async () => {
+    if (!currentProblem) {
+        alert('No problem loaded');
+        return;
+    }
+
+    // Show dialog with loading state
+    const answerContent = document.getElementById('answer-content');
+    const answerList = document.getElementById('answer-list');
+    const answerError = document.getElementById('answer-error');
+    const answerMetadata = document.getElementById('answer-metadata');
+
+    answerDialog.style.display = 'flex';
+    answerContent.style.display = 'block';
+    answerError.style.display = 'none';
+    answerList.innerHTML = '<div style="text-align: center; padding: 20px;">Loading answer...</div>';
+    answerMetadata.style.display = 'none';
+
+    try {
+        const response = await fetch(`${API_BASE}/problems/${currentProblem.id}/regenerate-answer`);
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to load answer');
+        }
+
+        const data = await response.json();
+
+        // Display metadata
+        document.getElementById('answer-question-type').textContent = data.question_type;
+        document.getElementById('answer-seed').textContent = data.seed;
+        document.getElementById('answer-version').textContent = data.version;
+        document.getElementById('answer-max-points').textContent = data.max_points;
+        answerMetadata.style.display = 'block';
+
+        // Display answers
+        if (data.answers && data.answers.length > 0) {
+            answerList.innerHTML = data.answers.map(answer => {
+                let html = `<div style="margin-bottom: 15px; padding: 10px; background: white; border-radius: 4px;">`;
+                html += `<div style="font-weight: 600; color: #1e40af; margin-bottom: 5px;">${answer.key}:</div>`;
+
+                // Use HTML rendering if available, otherwise fall back to plain text
+                if (answer.html) {
+                    html += `<div style="font-size: 18px; font-family: 'Courier New', monospace;">${answer.html}</div>`;
+                } else {
+                    html += `<div style="font-size: 18px; font-family: 'Courier New', monospace;">${answer.value}</div>`;
+                }
+
+                if (answer.tolerance !== undefined && answer.tolerance !== null) {
+                    html += `<div style="font-size: 12px; color: #6b7280; margin-top: 5px;">Tolerance: ±${answer.tolerance}</div>`;
+                }
+                html += `</div>`;
+                return html;
+            }).join('');
+        } else {
+            answerList.innerHTML = '<div style="color: #6b7280;">No answers available</div>';
+        }
+
+    } catch (error) {
+        console.error('Failed to load answer:', error);
+        answerContent.style.display = 'none';
+        answerError.style.display = 'block';
+        answerError.textContent = error.message;
+    }
+});
+
+// Close answer dialog
+closeAnswerX.addEventListener('click', () => {
+    answerDialog.style.display = 'none';
+});
+
+// Close on background click
+answerDialog.addEventListener('click', (e) => {
+    if (e.target === answerDialog) {
+        answerDialog.style.display = 'none';
     }
 });
 
