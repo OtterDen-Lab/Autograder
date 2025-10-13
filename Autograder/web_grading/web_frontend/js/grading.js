@@ -1215,7 +1215,14 @@ showAnswerBtn.addEventListener('click', async () => {
             answerList.innerHTML = data.answers.map(answer => {
                 let html = `<div style="margin-bottom: 15px; padding: 10px; background: white; border-radius: 4px;">`;
                 html += `<div style="font-weight: 600; color: #1e40af; margin-bottom: 5px;">${answer.key}:</div>`;
-                html += `<div style="font-size: 18px; font-family: 'Courier New', monospace;">${answer.value}</div>`;
+
+                // Use HTML rendering if available, otherwise fall back to plain text
+                if (answer.html) {
+                    html += `<div style="font-size: 18px; font-family: 'Courier New', monospace;">${answer.html}</div>`;
+                } else {
+                    html += `<div style="font-size: 18px; font-family: 'Courier New', monospace;">${answer.value}</div>`;
+                }
+
                 if (answer.tolerance !== undefined && answer.tolerance !== null) {
                     html += `<div style="font-size: 12px; color: #6b7280; margin-top: 5px;">Tolerance: ±${answer.tolerance}</div>`;
                 }
