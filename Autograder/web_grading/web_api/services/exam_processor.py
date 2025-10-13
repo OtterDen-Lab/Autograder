@@ -435,10 +435,51 @@ class ExamProcessor:
             - pdf_base64: Base64 encoded redacted PDF
             - problems_list: List of problem dicts with region metadata
         """
+        # IMPORTANT: Open PDF TWICE - once for QR scanning (unredacted), once for final output (redacted)
+        # This ensures QR codes on the first page aren't covered by the name redaction box
+        pdf_document_original = fitz.open(str(pdf_path))
         pdf_document = fitz.open(str(pdf_path))
         total_pages = pdf_document.page_count
 
-        # Redact name area on first page
+        # Pre-scan QR codes on the ORIGINAL unredacted PDF before applying redaction
+        # This is crucial because the redaction box may cover QR codes on the first page
+        qr_data_by_region = {}  # Will map (page_num, region_index) -> qr_data
+
+        if self.qr_scanner.available:
+            log.info("Pre-scanning QR codes from original unredacted PDF...")
+            problem_number_temp = 1
+
+            for page_num in range(total_pages):
+                page_original = pdf_document_original[page_num]
+                line_positions = split_points.get(page_num, [])
+                regions = self.split_page_by_lines(page_original, line_positions, include_top_margin=False)
+
+                for region_index, region in enumerate(regions):
+                    # Extract region from ORIGINAL PDF
+                    problem_pdf = fitz.open()
+                    problem_page = problem_pdf.new_page(width=region.width, height=region.height)
+                    problem_page.show_pdf_page(problem_page.rect, pdf_document_original, page_num, clip=region)
+
+                    pix = problem_page.get_pixmap(dpi=150)
+                    img_bytes = pix.tobytes("png")
+                    img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+
+                    # Scan for QR code
+                    qr_data = self.qr_scanner.scan_qr_from_image(img_base64)
+                    if qr_data:
+                        log.info(f"Pre-scan: Problem {problem_number_temp} (page {page_num}, region {region_index}): "
+                                f"Found QR code with max_points={qr_data['max_points']}")
+                        qr_data_by_region[(page_num, region_index)] = qr_data
+
+                    problem_pdf.close()
+                    problem_number_temp += 1
+
+            log.info(f"Pre-scan complete: Found {len(qr_data_by_region)} QR codes")
+
+        # Close original PDF - we're done with it
+        pdf_document_original.close()
+
+        # Now redact name area on first page
         if total_pages > 0:
             pdf_document[0].draw_rect(self.fitz_name_rect, color=(0, 0, 0), fill=(0, 0, 0))
 
@@ -459,7 +500,7 @@ class ExamProcessor:
             regions = self.split_page_by_lines(page, line_positions, include_top_margin=False)
 
             # Create metadata for each region
-            for region in regions:
+            for region_index, region in enumerate(regions):
                 # Initialize problem dict with region coordinates
                 problem_dict = {
                     "problem_number": problem_number,
@@ -471,9 +512,23 @@ class ExamProcessor:
                     "blank_confidence": 0.0
                 }
 
-                # Always extract region temporarily if we need to do any analysis
-                # QR scanning should always run if available (even if other flags are False)
-                needs_extraction = detect_blank or extract_max_points_enabled or self.qr_scanner.available
+                # Check if we have pre-scanned QR data for this region
+                region_key = (page_num, region_index)
+                qr_data = qr_data_by_region.get(region_key)
+
+                if qr_data:
+                    log.info(f"Problem {problem_number}: Using pre-scanned QR code with max_points={qr_data['max_points']}")
+                    problem_dict["max_points"] = qr_data["max_points"]
+                    problem_dict["qr_question_type"] = qr_data.get("question_type")
+                    problem_dict["qr_seed"] = qr_data.get("seed")
+                    problem_dict["qr_version"] = qr_data.get("version")
+
+                    # Cache the max points for this problem number
+                    if problem_max_points is not None:
+                        problem_max_points[problem_number] = qr_data["max_points"]
+
+                # Check if we still need to extract image for other analysis
+                needs_extraction = detect_blank or (extract_max_points_enabled and not qr_data)
 
                 if needs_extraction:
                     # Extract region as image for analysis
@@ -484,20 +539,6 @@ class ExamProcessor:
                     pix = problem_page.get_pixmap(dpi=150)
                     img_bytes = pix.tobytes("png")
                     img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-                    # Try to scan QR code first (highest priority for max points)
-                    qr_data = self.qr_scanner.scan_qr_from_image(img_base64)
-                    if qr_data:
-                        log.info(f"Problem {problem_number}: Found QR code with max_points={qr_data['max_points']}")
-                        problem_dict["max_points"] = qr_data["max_points"]
-                        # Store QR metadata for potential future use (e.g., regenerating answers)
-                        problem_dict["qr_question_type"] = qr_data.get("question_type")
-                        problem_dict["qr_seed"] = qr_data.get("seed")
-                        problem_dict["qr_version"] = qr_data.get("version")
-
-                        # Cache the max points for this problem number
-                        if problem_max_points is not None:
-                            problem_max_points[problem_number] = qr_data["max_points"]
 
                     # Detect blank if requested
                     if detect_blank:

@@ -1148,8 +1148,31 @@ retryPremiumBtn.addEventListener('click', async () => {
 
 const showAnswerBtn = document.getElementById('show-answer-btn');
 const answerDialog = document.getElementById('answer-dialog');
-const closeAnswerBtn = document.getElementById('close-answer-btn');
-const closeAnswerX = document.getElementById('close-answer');
+const closeAnswerX = document.getElementById('close-answer-x');
+
+// Make answer dialog draggable
+let isAnswerDragging = false;
+let answerDragOffsetX = 0;
+let answerDragOffsetY = 0;
+
+document.querySelector('.answer-header').addEventListener('mousedown', (e) => {
+    if (e.target.classList.contains('answer-close')) return;
+    isAnswerDragging = true;
+    const rect = answerDialog.getBoundingClientRect();
+    answerDragOffsetX = e.clientX - rect.left;
+    answerDragOffsetY = e.clientY - rect.top;
+    answerDialog.style.transform = 'none';
+});
+
+document.addEventListener('mousemove', (e) => {
+    if (!isAnswerDragging) return;
+    answerDialog.style.left = (e.clientX - answerDragOffsetX) + 'px';
+    answerDialog.style.top = (e.clientY - answerDragOffsetY) + 'px';
+});
+
+document.addEventListener('mouseup', () => {
+    isAnswerDragging = false;
+});
 
 // Show answer button
 showAnswerBtn.addEventListener('click', async () => {
@@ -1212,10 +1235,6 @@ showAnswerBtn.addEventListener('click', async () => {
 });
 
 // Close answer dialog
-closeAnswerBtn.addEventListener('click', () => {
-    answerDialog.style.display = 'none';
-});
-
 closeAnswerX.addEventListener('click', () => {
     answerDialog.style.display = 'none';
 });
