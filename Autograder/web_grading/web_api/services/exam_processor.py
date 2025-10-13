@@ -452,7 +452,8 @@ class ExamProcessor:
             for page_num in range(total_pages):
                 page_original = pdf_document_original[page_num]
                 line_positions = split_points.get(page_num, [])
-                regions = self.split_page_by_lines(page_original, line_positions, include_top_margin=False)
+                # Include top margin to capture QR codes that may be above the question
+                regions = self.split_page_by_lines(page_original, line_positions, include_top_margin=True)
 
                 for region_index, region in enumerate(regions):
                     # Extract region from ORIGINAL PDF
@@ -460,9 +461,11 @@ class ExamProcessor:
                     problem_page = problem_pdf.new_page(width=region.width, height=region.height)
                     problem_page.show_pdf_page(problem_page.rect, pdf_document_original, page_num, clip=region)
 
-                    pix = problem_page.get_pixmap(dpi=150)
+                    # Use higher DPI (300) for QR code scanning to improve detection
+                    pix = problem_page.get_pixmap(dpi=300)
                     img_bytes = pix.tobytes("png")
                     img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+                    log.debug(f"Page {page_num}, region {region_index}: Extracted image size {pix.width}x{pix.height} at 300 DPI")
 
                     # Scan for QR code
                     qr_data = self.qr_scanner.scan_qr_from_image(img_base64)
@@ -496,8 +499,8 @@ class ExamProcessor:
             # Get manual split points for this page
             line_positions = split_points.get(page_num, [])
 
-            # Split page into regions
-            regions = self.split_page_by_lines(page, line_positions, include_top_margin=False)
+            # Split page into regions - use same logic as pre-scan to ensure region indices match
+            regions = self.split_page_by_lines(page, line_positions, include_top_margin=True)
 
             # Create metadata for each region
             for region_index, region in enumerate(regions):
