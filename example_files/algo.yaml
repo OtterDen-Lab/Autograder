@@ -1,0 +1,24 @@
+prod: True
+push: False
+
+# Define assignment types with default graders and settings
+assignment_types:
+  programming:
+    kind: ProgrammingAssignment
+    grader: template-grader
+    settings:
+      record_retention: true
+
+courses:
+  - name: CST370
+    id: 29324
+
+    assignment_groups:
+      - name: Programming Assignments
+        type: programming
+        settings:
+          source_repo: "https://github.com/CSUMB-SCD-instructors/CST370"
+        assignments:
+          - id: 480061
+            repo_path: HW3
+
