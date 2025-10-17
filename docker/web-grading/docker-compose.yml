@@ -1,0 +1,36 @@
+services:
+  web:
+    build:
+      context: ../../../  # Build from teaching directory to access both Autograder and LMSInterface
+      dockerfile: Autograder/docker/web-grading/Dockerfile
+    image: autograder-web-grading:latest
+    container_name: autograder-web-grading
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env  # Load environment variables from .env file
+    environment:
+      # Override database path to use Docker volume
+      - GRADING_DB_PATH=/data/grading.db
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Persistent storage for database
+      - grading-data:/data
+      # Optional: Mount config files (uncomment if needed)
+      # - ./config:/app/config:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/health', timeout=2)"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  grading-data:
+    driver: local
+    # Optional: Specify custom location
+    # driver_opts:
+    #   type: none
+    #   device: /path/to/your/data
+    #   o: bind

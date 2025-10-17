@@ -1,0 +1,87 @@
+# Docker ignore file for Autograder
+# Excludes files from Docker build context for faster builds and smaller images
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files (sensitive)
+.env
+*.env
+!.env.example
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!README.md
+docs/
+example_files/
+
+# Test files
+tests/
+*_test.py
+test_*.py
+
+# Logs
+*.log
+logs/
+
+# Database files (don't include in image)
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Project-specific
+docker/
+.github/
+*.yaml
+*.yml
+!docker-compose.yml
