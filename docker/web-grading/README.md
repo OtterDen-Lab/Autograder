@@ -41,18 +41,29 @@ This directory contains Docker configuration for deploying the Web Grading Inter
 
 4. **Build and start the application:**
    ```bash
+   docker-compose build  # First build takes 2-3 minutes
    docker-compose up -d
    ```
 
-5. **Access the application:**
-
-   Open your browser to: http://localhost:8000
-
-6. **Check status:**
+5. **Verify it's running:**
    ```bash
-   docker-compose ps
-   docker-compose logs -f web
+   # Wait a few seconds for startup, then check:
+   curl http://localhost:8000/api/health
+   # Should return: {"status":"healthy","version":"..."}
+
+   # Or check the logs:
+   docker-compose logs web
+   # Should see: "Uvicorn running on http://0.0.0.0:8000"
    ```
+
+6. **Access the application:**
+
+   Open your browser to: **http://localhost:8000**
+
+   You should see the Web Grading Interface home screen with options to:
+   - Create a new grading session
+   - Resume an existing session
+   - Import a saved session
 
 ## Getting API Keys
 
