@@ -16,6 +16,7 @@ function initializeGrading() {
     loadProblemNumbers();
     setupGradingControls();
     updateOverallProgress();
+    setupProblemImageResize();
 }
 
 // Load max points metadata for all problems
@@ -1507,6 +1508,72 @@ function connectToAutogradingStream() {
             autogradingEventSource = null;
         } else {
             progressMessage.textContent = 'Connection error - autograding may still be running';
+        }
+    });
+}
+
+// =============================================================================
+// PROBLEM IMAGE RESIZE FUNCTIONALITY
+// =============================================================================
+
+function setupProblemImageResize() {
+    const scrollContainer = document.getElementById('problem-scroll-container');
+    const resizeHandle = document.getElementById('problem-resize-handle');
+
+    if (!scrollContainer || !resizeHandle) {
+        console.warn('Problem scroll container or resize handle not found');
+        return;
+    }
+
+    // Load saved height from localStorage
+    const savedHeight = localStorage.getItem('problemScrollContainerHeight');
+    if (savedHeight) {
+        scrollContainer.style.height = savedHeight;
+    }
+
+    let isResizing = false;
+    let startY = 0;
+    let startHeight = 0;
+
+    // Mouse down on resize handle
+    resizeHandle.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startY = e.clientY;
+        startHeight = scrollContainer.offsetHeight;
+
+        // Prevent text selection during resize
+        e.preventDefault();
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'ns-resize';
+    });
+
+    // Mouse move - resize
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+
+        const deltaY = e.clientY - startY;
+        const newHeight = startHeight + deltaY;
+
+        // Enforce minimum and maximum height
+        const minHeight = 200; // Minimum 200px
+        const maxHeight = window.innerHeight * 0.9; // Max 90% of viewport height
+
+        if (newHeight >= minHeight && newHeight <= maxHeight) {
+            scrollContainer.style.height = `${newHeight}px`;
+        }
+    });
+
+    // Mouse up - stop resizing and save height
+    document.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+
+            // Save the height to localStorage
+            const currentHeight = scrollContainer.style.height;
+            localStorage.setItem('problemScrollContainerHeight', currentHeight);
+            console.log('Saved problem container height:', currentHeight);
         }
     });
 }

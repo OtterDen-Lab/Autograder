@@ -237,23 +237,60 @@ header h1 {
 
 .problem-container {
     margin: 20px 0;
-    text-align: center;
     background-color: var(--gray-100);
     padding: 20px;
     border-radius: 8px;
-    min-height: 400px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    position: relative;
+}
+
+.problem-scroll-container {
+    overflow-y: auto;
+    overflow-x: hidden;
+    text-align: center;
+    background-color: white;
+    border: 2px solid var(--gray-200);
+    border-radius: 4px;
+    position: relative;
+    /* Default height - about 1 page worth */
+    height: 800px;
+    max-height: 80vh;
 }
 
 .problem-container img {
     max-width: 100%;
-    /* Removed max-height to allow multi-page questions to display at full height */
     height: auto;
-    border: 1px solid var(--gray-200);
+    display: block;
+    margin: 0 auto;
     border-radius: 4px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.problem-resize-handle {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 12px;
+    background: linear-gradient(to bottom, transparent, rgba(37, 99, 235, 0.1));
+    border-top: 2px solid var(--primary-color);
+    cursor: ns-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+
+.problem-resize-handle:hover {
+    opacity: 1;
+    background: linear-gradient(to bottom, transparent, rgba(37, 99, 235, 0.2));
+}
+
+.problem-resize-handle::after {
+    content: '⋮';
+    color: var(--primary-color);
+    font-size: 16px;
+    font-weight: bold;
+    letter-spacing: 2px;
 }
 
 .grading-form {
