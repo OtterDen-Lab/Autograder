@@ -249,7 +249,7 @@ header h1 {
 
 .problem-container img {
     max-width: 100%;
-    max-height: 800px;
+    /* Removed max-height to allow multi-page questions to display at full height */
     height: auto;
     border: 1px solid var(--gray-200);
     border-radius: 4px;
