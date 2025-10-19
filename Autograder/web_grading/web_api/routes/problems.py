@@ -343,17 +343,47 @@ async def get_previous_problem(session_id: int, problem_number: int):
 
 @router.post("/{problem_id}/grade")
 async def grade_problem(problem_id: int, grade: GradeSubmission):
-    """Submit a grade for a problem"""
+    """Submit a grade for a problem
+
+    Special handling: If score is exactly "-" (dash), mark the problem as blank
+    and set score to 0. This allows manual blank detection alongside AI heuristics.
+    Feedback can still be provided normally for context.
+    """
     # Get session_id first
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
-        # Update problem
-        cursor.execute("""
-            UPDATE problems
-            SET score = ?, feedback = ?, graded = 1, graded_at = ?
-            WHERE id = ?
-        """, (grade.score, grade.feedback, datetime.now(), problem_id))
+        # Check if score indicates manual blank marking (dash)
+        is_manual_blank = isinstance(grade.score, str) and grade.score.strip() == "-"
+
+        if is_manual_blank:
+            # Mark as blank with score 0
+            cursor.execute("""
+                UPDATE problems
+                SET score = 0,
+                    feedback = ?,
+                    graded = 1,
+                    graded_at = ?,
+                    is_blank = 1,
+                    blank_method = 'manual',
+                    blank_reasoning = 'Manually marked as blank by grader (dash in score field)'
+                WHERE id = ?
+            """, (grade.feedback, datetime.now(), problem_id))
+        else:
+            # Normal grading - convert score to float and save
+            try:
+                score_value = float(grade.score)
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid score value: {grade.score}. Must be a number or '-' for blank."
+                )
+
+            cursor.execute("""
+                UPDATE problems
+                SET score = ?, feedback = ?, graded = 1, graded_at = ?
+                WHERE id = ?
+            """, (score_value, grade.feedback, datetime.now(), problem_id))
 
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Problem not found")
@@ -366,7 +396,7 @@ async def grade_problem(problem_id: int, grade: GradeSubmission):
     # Update statistics after connection is closed to avoid database lock
     update_problem_stats(session_id)
 
-    return {"status": "graded", "problem_id": problem_id}
+    return {"status": "graded", "problem_id": problem_id, "is_blank": is_manual_blank}
 
 
 @router.get("/{problem_id}", response_model=ProblemResponse)
