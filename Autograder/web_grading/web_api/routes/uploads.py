@@ -501,12 +501,17 @@ async def process_exam_files(
                     if (problem.get("page_number") is not None and
                         problem.get("region_y_start") is not None and
                         problem.get("region_y_end") is not None):
-                        region_coords = json.dumps({
+                        coords_dict = {
                             "page_number": problem["page_number"],
                             "region_y_start": problem["region_y_start"],
                             "region_y_end": problem["region_y_end"],
                             "region_height": problem.get("region_height")
-                        })
+                        }
+                        # Add cross-page fields if present
+                        if problem.get("end_page_number") is not None:
+                            coords_dict["end_page_number"] = problem["end_page_number"]
+                            coords_dict["end_region_y"] = problem["end_region_y"]
+                        region_coords = json.dumps(coords_dict)
 
                     # Insert problem with region metadata and QR metadata if available
                     cursor.execute("""
