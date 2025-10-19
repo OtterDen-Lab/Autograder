@@ -1,45 +1,14 @@
-# Web Grading Interface Dependencies
-
-# FastAPI and ASGI server
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-python-multipart==0.0.6  # For file uploads
-
-# Database
-aiosqlite==0.19.0  # Async SQLite support
-
-# Utilities
-python-dotenv==1.0.0  # Environment variable management
-
-# Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-httpx==0.25.2  # For async HTTP testing
-
-# Code quality (optional, for development)
-black==23.12.0
-flake8==6.1.0
-mypy==1.7.1
-
-# Dependencies from parent project (if not already installed)
-# These may already be in the main Autograder requirements
-# Uncomment if needed:
-
-# PyMuPDF (fitz) for PDF processing
-# PyMuPDF==1.23.8
-
-# Name matching
-# fuzzywuzzy==0.18.0
-# python-Levenshtein==0.23.0
-
-# Canvas/LMS interface
-# canvasapi==3.2.0
-
-# AI helpers
-# anthropic==0.7.1
-# openai==1.3.7
-
-# QR Code scanning for per-question metadata extraction
-pyzbar==0.1.9
-Pillow==10.1.0  # Required for image processing
-cryptography>=41.0.0  # Required for QR code decryption
+# =============================================================================
+# DEPRECATED: This file is no longer used
+# =============================================================================
+#
+# All dependencies have been moved to ../../pyproject.toml
+#
+# The Dockerfile and Docker Compose setup use pyproject.toml exclusively.
+# This file is kept for reference only and may be removed in the future.
+#
+# To install dependencies:
+#   - For local development: `uv sync` or `pip install -e .` from repo root
+#   - For Docker: Dependencies are automatically installed during image build
+#
+# =============================================================================

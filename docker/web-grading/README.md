@@ -316,6 +316,19 @@ volumes:
 - 50 GB disk space (for large numbers of PDFs)
 - SSD for better performance
 
+## Dependencies
+
+All Python dependencies are managed through `pyproject.toml` in the repository root. The Docker image automatically installs:
+
+- **Core dependencies**: FastAPI, uvicorn, PyMuPDF, Pillow, opencv-python
+- **LMS integration**: lms-interface (local path dependency)
+- **AI services**: anthropic, openai
+- **Database**: aiosqlite for async SQLite
+- **Image processing**: opencv-python, pyzbar, Pillow
+- **Text matching**: fuzzywuzzy with python-Levenshtein for performance
+
+System libraries for OpenCV are automatically installed in the Docker image.
+
 ## Platform-Specific Notes
 
 ### macOS

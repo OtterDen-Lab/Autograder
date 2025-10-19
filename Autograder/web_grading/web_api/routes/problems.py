@@ -478,6 +478,74 @@ Respond with just the transcribed text."""
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 
+@router.get("/{session_id}/{problem_number}/graded")
+async def get_graded_problems(session_id: int, problem_number: int, offset: int = 0, limit: int = 20):
+    """
+    Get graded problems for a specific problem number for review.
+
+    Args:
+        session_id: Grading session ID
+        problem_number: Problem number to fetch
+        offset: Pagination offset (default 0)
+        limit: Max number of problems to return (default 20)
+
+    Returns:
+        List of graded problems with metadata
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get total count
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM problems
+            WHERE session_id = ? AND problem_number = ? AND graded = 1
+        """, (session_id, problem_number))
+
+        total_count = cursor.fetchone()["count"]
+
+        if total_count == 0:
+            return {
+                "problems": [],
+                "total": 0,
+                "offset": offset,
+                "limit": limit
+            }
+
+        # Get graded problems, ordered by graded_at
+        cursor.execute("""
+            SELECT p.*, s.student_name
+            FROM problems p
+            LEFT JOIN submissions s ON p.submission_id = s.id
+            WHERE p.session_id = ? AND p.problem_number = ? AND p.graded = 1
+            ORDER BY p.graded_at DESC
+            LIMIT ? OFFSET ?
+        """, (session_id, problem_number, limit, offset))
+
+        rows = cursor.fetchall()
+
+        problems = []
+        for row in rows:
+            problems.append({
+                "id": row["id"],
+                "problem_number": row["problem_number"],
+                "submission_id": row["submission_id"],
+                "student_name": row["student_name"],
+                "score": row["score"],
+                "feedback": row["feedback"],
+                "max_points": row["max_points"],
+                "graded_at": row["graded_at"],
+                "is_blank": bool(row["is_blank"])
+            })
+
+        return {
+            "problems": problems,
+            "total": total_count,
+            "offset": offset,
+            "limit": limit
+        }
+
+
 @router.get("/{problem_id}/regenerate-answer")
 async def regenerate_answer(problem_id: int):
     """

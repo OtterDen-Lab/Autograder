@@ -272,6 +272,7 @@
                         <button id="decipher-btn" class="btn btn-secondary">Decipher Handwriting</button>
                         <button id="show-answer-btn" class="btn btn-secondary" style="display: none;">Show Answer</button>
                         <button id="start-autograde-btn" class="btn btn-success">Start Autograding</button>
+                        <button id="review-grades-btn" class="btn btn-secondary">Review Graded</button>
                     </div>
                     <div style="text-align: center; padding: 5px 0;">
                         <small style="color: var(--gray-600);">Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit | <strong>Shift+Tab</strong> to skip</small>
@@ -300,6 +301,76 @@
                 </div>
             </section>
         </main>
+    </div>
+
+    <!-- Review Grades Dialog -->
+    <div id="review-dialog" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div style="background: white; border-radius: 8px; padding: 30px; max-width: 90vw; width: 1200px; max-height: 90vh; display: flex; flex-direction: column;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0;">Review Graded Submissions - Problem <span id="review-problem-number"></span></h2>
+                <button id="close-review-btn" class="btn" style="padding: 5px 15px;">&times;</button>
+            </div>
+
+            <!-- Review Navigation and Summary -->
+            <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <div style="font-weight: 600; color: var(--gray-700);">
+                        Viewing: <span id="review-current-index">0</span> of <span id="review-total-count">0</span> submissions
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button id="review-prev-btn" class="btn btn-small">← Previous</button>
+                        <button id="review-next-btn" class="btn btn-small">Next →</button>
+                    </div>
+                </div>
+                <div style="font-size: 14px; color: var(--gray-600);">
+                    Student: <strong id="review-student-name">-</strong> |
+                    Score: <strong id="review-current-score">-</strong>/<strong id="review-current-max">-</strong> |
+                    Graded: <span id="review-graded-at">-</span>
+                </div>
+            </div>
+
+            <!-- Review Content (image and edit form) -->
+            <div style="flex: 1; overflow-y: auto; display: flex; gap: 20px;">
+                <!-- Left: Problem Image -->
+                <div style="flex: 1; display: flex; flex-direction: column;">
+                    <h3 style="margin-top: 0; margin-bottom: 10px;">Submission</h3>
+                    <div style="flex: 1; overflow-y: auto; border: 1px solid var(--gray-300); border-radius: 6px; background: var(--gray-100); display: flex; align-items: center; justify-content: center;">
+                        <img id="review-problem-image" alt="Problem to review" style="max-width: 100%; max-height: 100%; display: block;">
+                    </div>
+                </div>
+
+                <!-- Right: Edit Form -->
+                <div style="width: 400px; display: flex; flex-direction: column;">
+                    <h3 style="margin-top: 0; margin-bottom: 10px;">Edit Grade</h3>
+
+                    <label style="margin-bottom: 15px;">
+                        Score:
+                        <div style="display: flex; gap: 10px; align-items: center; margin-top: 5px;">
+                            <input type="range" id="review-score-slider" min="0" max="8" step="1" value="0" style="flex: 1;">
+                            <input type="number" id="review-score-input" min="0" max="8" step="0.5" placeholder="Score" style="width: 80px;">
+                        </div>
+                    </label>
+
+                    <label style="margin-bottom: 15px;">
+                        Feedback:
+                        <textarea id="review-feedback-input" rows="6" style="margin-top: 5px; width: 100%; padding: 8px; font-family: inherit; border: 1px solid var(--gray-300); border-radius: 4px;"></textarea>
+                    </label>
+
+                    <div id="review-blank-info" style="display: none; background: #fef3c7; padding: 10px; border-radius: 6px; margin-bottom: 15px; font-size: 14px;">
+                        <strong>⚠️ Marked as Blank</strong>
+                    </div>
+
+                    <div style="display: flex; gap: 10px; margin-top: auto;">
+                        <button id="review-save-btn" class="btn btn-primary" style="flex: 1;">Save Changes</button>
+                        <button id="review-decipher-btn" class="btn btn-secondary">Decipher</button>
+                    </div>
+
+                    <div style="margin-top: 10px; font-size: 13px; color: var(--gray-600); text-align: center;">
+                        Use ← → arrow keys to navigate
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Canvas Target Change Dialog -->
@@ -405,5 +476,6 @@
     <script src="/js/matching.js"></script>
     <script src="/js/grading.js"></script>
     <script src="/js/rubric-table.js"></script>
+    <script src="/js/review.js"></script>
 </body>
 </html>
