@@ -203,7 +203,8 @@ class AIGraderService:
             f"1. An INTEGER score out of {max_points} points (no decimals, round to nearest integer)\n"
             f"2. Clear and constructive feedback for the student\n\n"
             f"IMPORTANT: The score must be a whole number (integer) between 0 and {int(max_points)}.\n"
-            f"IMPORTANT: The feedback should be concise, direct, constructive, and helpful for the student to understand what they did well and what could be improved.\n\n"
+            f"IMPORTANT: The feedback should be concise, direct, constructive, and helpful for the student to understand what they did well and what could be improved.\n"
+            f"IMPORTANT: If the answer is blank, minimal, or shows no understanding, score it 0 and provide constructive feedback on how to approach the problem correctly. Focus on what a correct answer would include.\n\n"
             f"Format your response as:\n"
             f"SCORE: [integer]\n"
             f"FEEDBACK: [clear and constructive feedback for the student]"
@@ -437,11 +438,11 @@ class AIGraderService:
                 if not max_points:
                     raise ValueError(f"Max points not set for problem {problem_number}")
 
-            # Get all ungraded problems for this problem number
+            # Get all ungraded problems for this problem number (include blanks for feedback)
             cursor.execute("""
-                SELECT id, image_data, region_coords, submission_id
+                SELECT id, image_data, region_coords, submission_id, is_blank
                 FROM problems
-                WHERE session_id = ? AND problem_number = ? AND graded = 0 AND is_blank = 0
+                WHERE session_id = ? AND problem_number = ? AND graded = 0
                 ORDER BY id
             """, (session_id, problem_number))
 
@@ -571,8 +572,13 @@ class AIGraderService:
                         log.warning(f"No image data available for problem {problem['id']}, skipping")
                         continue
 
-                    # Decipher handwriting
-                    student_answer = self.decipher_handwriting(image_data)
+                    # For blank submissions, use placeholder text instead of deciphering
+                    if problem["is_blank"]:
+                        student_answer = "[No answer provided]"
+                        log.info(f"Problem {problem['id']} marked as blank, skipping handwriting extraction")
+                    else:
+                        # Decipher handwriting for non-blank submissions
+                        student_answer = self.decipher_handwriting(image_data)
 
                     # Grade the answer with rubric and examples
                     score, feedback = self.grade_problem(
