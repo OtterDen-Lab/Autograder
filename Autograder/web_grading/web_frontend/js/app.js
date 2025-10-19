@@ -566,6 +566,15 @@ function showAlignmentInterface(composites, pageDimensions, numExams) {
             <li><strong>Click</strong> a red line to remove it</li>
             <li>Split lines mark the <strong>top</strong> of each question</li>
         </ul>
+        <div style="background: #eff6ff; padding: 10px; border-radius: 6px; margin: 10px 0;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="skip-first-region-checkbox" checked>
+                <span style="color: var(--gray-700);">Skip first region (header/name area)</span>
+            </label>
+            <small style="display: block; margin-top: 5px; color: var(--gray-600);">
+                ℹ️ The first split line usually marks the header/title area, not a question. Leave this checked to skip it.
+            </small>
+        </div>
         <div style="display: flex; gap: 10px; margin-top: 15px;">
             <button id="submit-alignment-btn" class="btn btn-primary">Submit Split Points & Process Exams</button>
             <button id="cancel-alignment-btn" class="btn btn-secondary">Cancel</button>
@@ -750,11 +759,17 @@ async function submitAlignment() {
         document.getElementById('submit-alignment-bottom-btn').disabled = true;
         document.getElementById('submit-alignment-bottom-btn').textContent = 'Submitting...';
 
+        // Check if we should skip the first region
+        const skipFirstRegion = document.getElementById('skip-first-region-checkbox').checked;
+
         // Submit split points to backend
         const response = await fetch(`${API_BASE}/uploads/${currentSession.id}/submit-alignment`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ split_points: splitPoints })
+            body: JSON.stringify({
+                split_points: splitPoints,
+                skip_first_region: skipFirstRegion
+            })
         });
 
         if (!response.ok) {

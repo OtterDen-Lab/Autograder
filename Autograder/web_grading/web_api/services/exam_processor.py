@@ -73,7 +73,8 @@ class ExamProcessor:
         file_metadata: Optional[Dict[Path, Dict]] = None,
         problem_max_points: Optional[Dict[int, float]] = None,
         extract_max_points_enabled: bool = False,
-        manual_split_points: Optional[Dict[int, List[int]]] = None
+        manual_split_points: Optional[Dict[int, List[int]]] = None,
+        skip_first_region: bool = True
     ) -> Tuple[List[Dict], List[Dict]]:
         """
         Process exam PDFs.
@@ -89,6 +90,10 @@ class ExamProcessor:
             progress_callback: Optional callback function(processed, matched, message) for progress updates
             document_id_offset: Starting document_id (useful when adding more exams to existing session)
             file_metadata: Optional dict mapping file_path -> {hash, original_filename}
+            problem_max_points: Optional dict mapping problem_number -> max_points
+            extract_max_points_enabled: Whether to extract max points from images
+            manual_split_points: Optional dict mapping page_number -> list of y-positions for manual splits
+            skip_first_region: Whether to skip the first region (header/title area) when splitting (default True)
 
         Returns:
             Tuple of (matched_submissions, unmatched_submissions)
@@ -223,7 +228,8 @@ class ExamProcessor:
                     blank_confidence_threshold=blank_confidence_threshold,
                     use_ai_for_borderline=use_ai_for_borderline,
                     problem_max_points=problem_max_points,
-                    extract_max_points_enabled=extract_max_points_enabled
+                    extract_max_points_enabled=extract_max_points_enabled,
+                    skip_first_region=skip_first_region
                 )
             else:
                 # Use manual page ranges (old path - still stores individual PNGs for backwards compatibility)
@@ -415,7 +421,8 @@ class ExamProcessor:
         blank_confidence_threshold: float = 0.8,
         use_ai_for_borderline: bool = False,
         problem_max_points: Dict[int, float] = None,
-        extract_max_points_enabled: bool = False
+        extract_max_points_enabled: bool = False,
+        skip_first_region: bool = True
     ) -> Tuple[str, List[Dict]]:
         """
         Redact names and extract problem regions using manual split points.
@@ -429,6 +436,7 @@ class ExamProcessor:
             use_ai_for_borderline: Whether to use AI for low-confidence detections
             problem_max_points: Shared dict for caching max points by problem number
             extract_max_points_enabled: Whether to extract max points from images
+            skip_first_region: Whether to skip the first region (header/title area) on page 0
 
         Returns:
             Tuple of (pdf_base64, problems_list)
@@ -456,6 +464,11 @@ class ExamProcessor:
                 regions = self.split_page_by_lines(page_original, line_positions, include_top_margin=True)
 
                 for region_index, region in enumerate(regions):
+                    # Skip first region on page 0 if requested (must match main processing logic)
+                    if skip_first_region and page_num == 0 and region_index == 0:
+                        log.debug(f"Pre-scan: Skipping first region on page 0 (header/title area)")
+                        continue
+
                     # Extract region from ORIGINAL PDF
                     problem_pdf = fitz.open()
                     problem_page = problem_pdf.new_page(width=region.width, height=region.height)
@@ -504,6 +517,11 @@ class ExamProcessor:
 
             # Create metadata for each region
             for region_index, region in enumerate(regions):
+                # Skip first region on page 0 if requested (header/title area)
+                if skip_first_region and page_num == 0 and region_index == 0:
+                    log.info(f"Skipping first region on page 0 (header/title area)")
+                    continue
+
                 # Initialize problem dict with region coordinates
                 problem_dict = {
                     "problem_number": problem_number,
