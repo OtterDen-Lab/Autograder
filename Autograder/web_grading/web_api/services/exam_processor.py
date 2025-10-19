@@ -335,6 +335,152 @@ class ExamProcessor:
         pdf_document.close()
         return problem_pdfs
 
+    def _extract_cross_page_region(
+        self,
+        pdf_document: fitz.Document,
+        start_page: int,
+        start_y: float,
+        end_page: int,
+        end_y: float
+    ) -> Tuple[str, int]:
+        """
+        Extract a region that may span multiple pages and return as merged image.
+
+        Args:
+            pdf_document: PyMuPDF document
+            start_page: Starting page number (0-indexed)
+            start_y: Starting y-position on start page
+            end_page: Ending page number (0-indexed)
+            end_y: Ending y-position on end page
+
+        Returns:
+            Tuple of (base64_image, total_height)
+        """
+        from PIL import Image
+        import io
+
+        page_images = []
+
+        if start_page == end_page:
+            # Single page region - simple case
+            page = pdf_document[start_page]
+            region = fitz.Rect(0, start_y, page.rect.width, end_y)
+
+            # Validate region is not empty
+            if region.is_empty or region.height <= 0:
+                log.warning(f"Empty region on page {start_page}: y={start_y} to y={end_y}")
+                # Create a minimal white image
+                img = Image.new('RGB', (int(page.rect.width), 1), color='white')
+                buffer = io.BytesIO()
+                img.save(buffer, format='PNG')
+                img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                return img_base64, 1
+
+            problem_pdf = fitz.open()
+            problem_page = problem_pdf.new_page(width=region.width, height=region.height)
+            problem_page.show_pdf_page(problem_page.rect, pdf_document, start_page, clip=region)
+
+            pix = problem_page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+
+            problem_pdf.close()
+
+            return img_base64, int(region.height)
+
+        else:
+            # Multi-page region - extract each page's portion and merge vertically
+            log.info(f"Extracting cross-page region from page {start_page} (y={start_y}) to page {end_page} (y={end_y})")
+
+            # Extract first page (from start_y to bottom)
+            first_page = pdf_document[start_page]
+            first_region = fitz.Rect(0, start_y, first_page.rect.width, first_page.rect.height)
+
+            log.debug(f"First page region: height={first_region.height}, is_empty={first_region.is_empty}, page_height={first_page.rect.height}")
+
+            # Skip first page if region is empty (start_y is at page boundary)
+            if not first_region.is_empty and first_region.height > 0:
+                problem_pdf = fitz.open()
+                problem_page = problem_pdf.new_page(width=first_region.width, height=first_region.height)
+                problem_page.show_pdf_page(problem_page.rect, pdf_document, start_page, clip=first_region)
+
+                pix = problem_page.get_pixmap(dpi=150)
+                img_bytes = pix.tobytes("png")
+                img = Image.open(io.BytesIO(img_bytes))
+                page_images.append(img)
+                problem_pdf.close()
+            else:
+                log.debug(f"Skipping empty region on first page {start_page} (y={start_y} to bottom)")
+
+            # Extract middle pages (full pages)
+            for page_num in range(start_page + 1, end_page):
+                page = pdf_document[page_num]
+                region = fitz.Rect(0, 0, page.rect.width, page.rect.height)
+
+                problem_pdf = fitz.open()
+                problem_page = problem_pdf.new_page(width=region.width, height=region.height)
+                problem_page.show_pdf_page(problem_page.rect, pdf_document, page_num, clip=region)
+
+                pix = problem_page.get_pixmap(dpi=150)
+                img_bytes = pix.tobytes("png")
+                img = Image.open(io.BytesIO(img_bytes))
+                page_images.append(img)
+                problem_pdf.close()
+
+            # Extract last page (from top to end_y)
+            last_page = pdf_document[end_page]
+            last_region = fitz.Rect(0, 0, last_page.rect.width, end_y)
+
+            # Skip last page if region is empty (end_y is at page top)
+            if not last_region.is_empty and last_region.height > 0:
+                problem_pdf = fitz.open()
+                problem_page = problem_pdf.new_page(width=last_region.width, height=last_region.height)
+                problem_page.show_pdf_page(problem_page.rect, pdf_document, end_page, clip=last_region)
+
+                pix = problem_page.get_pixmap(dpi=150)
+                img_bytes = pix.tobytes("png")
+                img = Image.open(io.BytesIO(img_bytes))
+                page_images.append(img)
+                problem_pdf.close()
+            else:
+                log.debug(f"Skipping empty region on last page {end_page} (top to y={end_y})")
+
+            # Handle case where we have no images (all regions were empty)
+            if not page_images:
+                log.warning(f"No valid regions extracted from page {start_page} to {end_page}")
+                # Create a minimal white image
+                width = int(pdf_document[start_page].rect.width)
+                img = Image.new('RGB', (width, 1), color='white')
+                buffer = io.BytesIO()
+                img.save(buffer, format='PNG')
+                img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                return img_base64, 1
+
+            # Merge images vertically
+            log.info(f"Merging {len(page_images)} page regions vertically")
+
+            # Get dimensions (assume all have same width)
+            width = page_images[0].width
+            total_height = sum(img.height for img in page_images)
+
+            # Create merged image
+            merged = Image.new('RGB', (width, total_height), color='white')
+
+            # Paste each image
+            current_y = 0
+            for img in page_images:
+                merged.paste(img, (0, current_y))
+                current_y += img.height
+
+            # Convert to base64
+            buffer = io.BytesIO()
+            merged.save(buffer, format='PNG')
+            merged_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+            log.info(f"Merged image size: {width}x{total_height}")
+
+            return merged_base64, total_height
+
     def split_page_by_lines(
         self,
         page: fitz.Page,
@@ -427,6 +573,7 @@ class ExamProcessor:
         """
         Redact names and extract problem regions using manual split points.
         Returns PDF data once and region metadata for each problem.
+        Supports cross-page regions by linearizing split points across all pages.
 
         Args:
             pdf_path: Path to PDF file
@@ -503,94 +650,137 @@ class ExamProcessor:
         pdf_bytes = pdf_document.tobytes()
         pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
-        problems = []
-        problem_number = 1
+        # Create a linear list of all split points across pages
+        # Each split point is (page_num, y_position)
+        # Only add splits that were explicitly provided by the user
+        linear_splits = []
 
         for page_num in range(total_pages):
             page = pdf_document[page_num]
+            page_height = page.rect.height
 
-            # Get manual split points for this page
+            # Add manual split points for this page
             line_positions = split_points.get(page_num, [])
+            for y_pos in sorted(line_positions):
+                # Normalize splits at page boundaries:
+                # If a split is at the very bottom of a page (within 1pt tolerance),
+                # treat it as being at the top of the next page instead
+                if abs(y_pos - page_height) < 1.0 and page_num < total_pages - 1:
+                    # This is a page boundary split - move it to start of next page
+                    log.debug(f"Normalizing page boundary split: ({page_num}, {y_pos}) -> ({page_num + 1}, 0)")
+                    linear_splits.append((page_num + 1, 0))
+                else:
+                    linear_splits.append((page_num, y_pos))
 
-            # Split page into regions - use same logic as pre-scan to ensure region indices match
-            regions = self.split_page_by_lines(page, line_positions, include_top_margin=True)
+        # Sort splits chronologically (by page, then by y-position)
+        linear_splits.sort(key=lambda x: (x[0], x[1]))
 
-            # Create metadata for each region
-            for region_index, region in enumerate(regions):
-                # Skip first region on page 0 if requested (header/title area)
-                if skip_first_region and page_num == 0 and region_index == 0:
-                    log.info(f"Skipping first region on page 0 (header/title area)")
-                    continue
+        # Remove duplicate splits (can happen if user manually added a split at y=0 of next page)
+        unique_splits = []
+        for split in linear_splits:
+            if not unique_splits or split != unique_splits[-1]:
+                unique_splits.append(split)
+        linear_splits = unique_splits
 
-                # Initialize problem dict with region coordinates
-                problem_dict = {
-                    "problem_number": problem_number,
-                    "page_number": page_num,  # 0-indexed for PDF access
-                    "region_y_start": int(region.y0),
-                    "region_y_end": int(region.y1),
-                    "region_height": int(region.height),
-                    "is_blank": False,
-                    "blank_confidence": 0.0
-                }
+        # If no splits were provided, use the entire PDF as one problem
+        if not linear_splits:
+            log.warning("No split points found, treating entire PDF as one problem")
+            linear_splits = [(0, 0), (total_pages - 1, pdf_document[total_pages - 1].rect.height)]
 
-                # Check if we have pre-scanned QR data for this region
-                region_key = (page_num, region_index)
-                qr_data = qr_data_by_region.get(region_key)
+        # Add a split at the start if not present (problems start from top of page 0)
+        if linear_splits[0] != (0, 0):
+            linear_splits.insert(0, (0, 0))
+            log.debug("Inserted starting split at (0, 0)")
 
-                if qr_data:
-                    log.info(f"Problem {problem_number}: Using pre-scanned QR code with max_points={qr_data['max_points']}")
-                    problem_dict["max_points"] = qr_data["max_points"]
-                    problem_dict["qr_question_type"] = qr_data.get("question_type")
-                    problem_dict["qr_seed"] = qr_data.get("seed")
-                    problem_dict["qr_version"] = qr_data.get("version")
+        # Add final split at end of last page if not present
+        last_page = pdf_document[total_pages - 1]
+        last_split = (total_pages - 1, last_page.rect.height)
+        if linear_splits[-1] != last_split:
+            linear_splits.append(last_split)
+            log.debug(f"Inserted ending split at {last_split}")
 
-                    # Cache the max points for this problem number
+        log.info(f"Created linear split list with {len(linear_splits)} splits across {total_pages} pages")
+        log.info(f"Linear splits: {linear_splits}")
+
+        # Determine starting index for problem extraction
+        # If skip_first_region is True, skip the first split pair (header region)
+        start_index = 1 if skip_first_region else 0
+
+        if skip_first_region and len(linear_splits) > 1:
+            log.info(f"Skipping first region (header/title area): from {linear_splits[0]} to {linear_splits[1]}")
+
+        # Now create problems from consecutive split pairs
+        problems = []
+        problem_number = 1
+
+        for i in range(start_index, len(linear_splits) - 1):
+            start_page, start_y = linear_splits[i]
+            end_page, end_y = linear_splits[i + 1]
+
+            # Special case: if end_y is 0 (top of page), the region actually ends
+            # at the bottom of the PREVIOUS page, not at the top of end_page
+            if end_y == 0 and end_page > start_page:
+                end_page = end_page - 1
+                end_y = pdf_document[end_page].rect.height
+                log.debug(f"Adjusted end point from top of page {end_page + 1} to bottom of page {end_page}")
+
+            log.debug(f"Problem {problem_number}: from ({start_page}, {start_y}) to ({end_page}, {end_y})")
+
+            # Extract region(s) and create merged image
+            problem_image_base64, region_height = self._extract_cross_page_region(
+                pdf_document,
+                start_page, start_y,
+                end_page, end_y
+            )
+
+            # Initialize problem dict with region coordinates
+            problem_dict = {
+                "problem_number": problem_number,
+                "page_number": start_page,  # Start page for backwards compatibility
+                "region_y_start": int(start_y),
+                "region_y_end": int(end_y) if start_page == end_page else int(pdf_document[start_page].rect.height),
+                "region_height": region_height,
+                "is_blank": False,
+                "blank_confidence": 0.0
+            }
+
+            # For cross-page problems, add end page info
+            if end_page != start_page:
+                problem_dict["end_page_number"] = end_page
+                problem_dict["end_region_y"] = int(end_y)
+                log.info(f"Problem {problem_number} spans multiple pages: {start_page} to {end_page}")
+
+            # TODO: Update QR scanning to work with linearized regions
+            # For now, skip QR scanning for cross-page regions
+            qr_data = None
+
+            # Detect blank if requested
+            if detect_blank:
+                heuristic_result = self.is_blank_heuristic(problem_image_base64)
+                problem_dict["is_blank"] = heuristic_result["is_blank"]
+                problem_dict["blank_confidence"] = heuristic_result["confidence"]
+                problem_dict["blank_method"] = "heuristic"
+
+                if use_ai_for_borderline and heuristic_result["confidence"] < blank_confidence_threshold:
+                    log.info(f"Problem {problem_number}: Low confidence ({heuristic_result['confidence']:.2f}), using AI verification")
+                    ai_result = self.is_blank_ai(problem_image_base64)
+                    problem_dict["is_blank"] = ai_result["is_blank"]
+                    problem_dict["blank_confidence"] = ai_result["confidence"]
+                    problem_dict["blank_method"] = "ai"
+                    problem_dict["blank_reasoning"] = ai_result.get("reasoning", "")
+
+            # Extract max points from score box
+            if problem_max_points and problem_number in problem_max_points:
+                problem_dict["max_points"] = problem_max_points[problem_number]
+            elif extract_max_points_enabled:
+                max_points = self.extract_max_points(problem_image_base64)
+                if max_points is not None:
+                    problem_dict["max_points"] = max_points
                     if problem_max_points is not None:
-                        problem_max_points[problem_number] = qr_data["max_points"]
+                        problem_max_points[problem_number] = max_points
 
-                # Check if we still need to extract image for other analysis
-                needs_extraction = detect_blank or (extract_max_points_enabled and not qr_data)
-
-                if needs_extraction:
-                    # Extract region as image for analysis
-                    problem_pdf = fitz.open()
-                    problem_page = problem_pdf.new_page(width=region.width, height=region.height)
-                    problem_page.show_pdf_page(problem_page.rect, pdf_document, page_num, clip=region)
-
-                    pix = problem_page.get_pixmap(dpi=150)
-                    img_bytes = pix.tobytes("png")
-                    img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-                    # Detect blank if requested
-                    if detect_blank:
-                        heuristic_result = self.is_blank_heuristic(img_base64)
-                        problem_dict["is_blank"] = heuristic_result["is_blank"]
-                        problem_dict["blank_confidence"] = heuristic_result["confidence"]
-                        problem_dict["blank_method"] = "heuristic"
-
-                        if use_ai_for_borderline and heuristic_result["confidence"] < blank_confidence_threshold:
-                            log.info(f"Problem {problem_number}: Low confidence ({heuristic_result['confidence']:.2f}), using AI verification")
-                            ai_result = self.is_blank_ai(img_base64)
-                            problem_dict["is_blank"] = ai_result["is_blank"]
-                            problem_dict["blank_confidence"] = ai_result["confidence"]
-                            problem_dict["blank_method"] = "ai"
-                            problem_dict["blank_reasoning"] = ai_result.get("reasoning", "")
-
-                    # Extract max points from score box if not already found via QR code
-                    if not qr_data:
-                        if problem_max_points and problem_number in problem_max_points:
-                            problem_dict["max_points"] = problem_max_points[problem_number]
-                        elif extract_max_points_enabled:
-                            max_points = self.extract_max_points(img_base64)
-                            if max_points is not None:
-                                problem_dict["max_points"] = max_points
-                                if problem_max_points is not None:
-                                    problem_max_points[problem_number] = max_points
-
-                    problem_pdf.close()
-
-                problems.append(problem_dict)
-                problem_number += 1
+            problems.append(problem_dict)
+            problem_number += 1
 
         pdf_document.close()
 

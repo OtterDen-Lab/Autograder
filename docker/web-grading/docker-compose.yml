@@ -16,6 +16,9 @@ services:
     volumes:
       # Persistent storage for database
       - grading-data:/data
+      # Mount code for live development (no rebuild needed for code changes)
+      - ../../Autograder:/app/Autograder
+      - ../../../LMSInterface:/app/LMSInterface
       # Optional: Mount config files (uncomment if needed)
       # - ./config:/app/config:ro
     restart: unless-stopped

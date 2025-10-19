@@ -575,6 +575,12 @@ function showAlignmentInterface(composites, pageDimensions, numExams) {
                 ℹ️ The first split line usually marks the header/title area, not a question. Leave this checked to skip it.
             </small>
         </div>
+        <div style="background: #fef3c7; padding: 10px; border-radius: 6px; margin: 10px 0;">
+            <strong style="color: var(--gray-800);">📄 Multi-page questions:</strong>
+            <p style="color: var(--gray-700); margin: 5px 0; font-size: 14px;">
+                Questions can span multiple pages. Use the checkboxes between pages to explicitly break questions at page boundaries when needed.
+            </p>
+        </div>
         <div style="display: flex; gap: 10px; margin-top: 15px;">
             <button id="submit-alignment-btn" class="btn btn-primary">Submit Split Points & Process Exams</button>
             <button id="cancel-alignment-btn" class="btn btn-secondary">Cancel</button>
@@ -589,9 +595,21 @@ function showAlignmentInterface(composites, pageDimensions, numExams) {
     pagesContainer.id = 'alignment-pages-container';
     pagesContainer.style.marginTop = '20px';
 
-    for (const [pageNum, imageBase64] of Object.entries(composites)) {
-        const pageSection = createAlignmentPageSection(parseInt(pageNum), imageBase64);
+    const pageNumbers = Object.keys(composites).map(n => parseInt(n)).sort((a, b) => a - b);
+
+    for (let i = 0; i < pageNumbers.length; i++) {
+        const pageNum = pageNumbers[i];
+        const imageBase64 = composites[pageNum];
+
+        const pageSection = createAlignmentPageSection(pageNum, imageBase64);
         pagesContainer.appendChild(pageSection);
+
+        // Add page boundary control between pages (not after last page)
+        if (i < pageNumbers.length - 1) {
+            const nextPageNum = pageNumbers[i + 1];
+            const boundaryControl = createPageBoundaryControl(pageNum, nextPageNum);
+            pagesContainer.appendChild(boundaryControl);
+        }
     }
 
     container.appendChild(pagesContainer);
@@ -616,10 +634,73 @@ function showAlignmentInterface(composites, pageDimensions, numExams) {
     };
 }
 
+function createPageBoundaryControl(currentPageNum, nextPageNum) {
+    const control = document.createElement('div');
+    control.style.cssText = 'background: #f3f4f6; border: 2px dashed var(--gray-300); padding: 15px; margin: 20px 0; text-align: center; border-radius: 8px;';
+
+    const label = document.createElement('label');
+    label.style.cssText = 'display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 500; color: var(--gray-800);';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = `page-boundary-${currentPageNum}-${nextPageNum}`;
+    checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer;';
+
+    const labelText = document.createElement('span');
+    labelText.textContent = `Break question at page boundary (between Page ${currentPageNum + 1} and Page ${nextPageNum + 1})`;
+
+    // Handle checkbox change
+    checkbox.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            // Add split at end of current page (which is same as start of next page)
+            const pageDims = compositeData.page_dimensions[currentPageNum];
+            const pageHeight = pageDims.height;
+
+            // Add to current page at the very bottom
+            if (!splitPoints[currentPageNum]) {
+                splitPoints[currentPageNum] = [];
+            }
+
+            // Check if split already exists at page boundary
+            if (!splitPoints[currentPageNum].includes(pageHeight)) {
+                splitPoints[currentPageNum].push(pageHeight);
+                splitPoints[currentPageNum].sort((a, b) => a - b);
+
+                // Update visual lines for this page
+                const canvas = document.getElementById(`alignment-canvas-${currentPageNum}`);
+                const canvasContainer = canvas.parentElement;
+                updateSplitLines(currentPageNum, canvasContainer, canvas);
+            }
+        } else {
+            // Remove split at page boundary
+            const pageDims = compositeData.page_dimensions[currentPageNum];
+            const pageHeight = pageDims.height;
+
+            if (splitPoints[currentPageNum]) {
+                splitPoints[currentPageNum] = splitPoints[currentPageNum].filter(y => y !== pageHeight);
+                if (splitPoints[currentPageNum].length === 0) {
+                    delete splitPoints[currentPageNum];
+                }
+
+                // Update visual lines
+                const canvas = document.getElementById(`alignment-canvas-${currentPageNum}`);
+                const canvasContainer = canvas.parentElement;
+                updateSplitLines(currentPageNum, canvasContainer, canvas);
+            }
+        }
+    });
+
+    label.appendChild(checkbox);
+    label.appendChild(labelText);
+    control.appendChild(label);
+
+    return control;
+}
+
 function createAlignmentPageSection(pageNum, imageBase64) {
     const section = document.createElement('div');
     section.className = 'alignment-page-section';
-    section.style.cssText = 'margin-bottom: 40px; border: 1px solid var(--gray-200); border-radius: 8px; overflow: hidden;';
+    section.style.cssText = 'margin-bottom: 20px; border: 1px solid var(--gray-200); border-radius: 8px; overflow: hidden;';
 
     const header = document.createElement('div');
     header.style.cssText = 'background: var(--primary-color); color: white; padding: 15px; font-weight: bold;';

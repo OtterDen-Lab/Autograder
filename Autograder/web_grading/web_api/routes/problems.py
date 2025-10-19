@@ -33,6 +33,9 @@ def extract_problem_image(pdf_data: str, page_number: int, region_y_start: int,
     Returns:
         Base64 encoded PNG image of the problem region
     """
+    from PIL import Image
+    import io
+
     # Decode PDF from base64
     pdf_bytes = base64.b64decode(pdf_data)
     pdf_document = fitz.open("pdf", pdf_bytes)
@@ -42,6 +45,16 @@ def extract_problem_image(pdf_data: str, page_number: int, region_y_start: int,
 
     # Create region rectangle
     region = fitz.Rect(0, region_y_start, page.rect.width, region_y_end)
+
+    # Validate region is not empty
+    if region.is_empty or region.height <= 0:
+        # Create a minimal white image for empty regions
+        img = Image.new('RGB', (int(page.rect.width), 1), color='white')
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        pdf_document.close()
+        return img_base64
 
     # Extract region as new PDF page
     problem_pdf = fitz.open()
