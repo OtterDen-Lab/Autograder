@@ -74,7 +74,8 @@ class ExamProcessor:
         problem_max_points: Optional[Dict[int, float]] = None,
         extract_max_points_enabled: bool = False,
         manual_split_points: Optional[Dict[int, List[int]]] = None,
-        skip_first_region: bool = True
+        skip_first_region: bool = True,
+        last_page_blank: bool = False
     ) -> Tuple[List[Dict], List[Dict]]:
         """
         Process exam PDFs.
@@ -83,7 +84,7 @@ class ExamProcessor:
             input_files: List of PDF file paths
             canvas_students: List of student dicts with name and user_id
             page_ranges: Optional list of (start, end) page ranges to merge
-            use_ai: Whether to use AI for name extraction
+            use_ai: bool Whether to use AI for name extraction
             detect_blank: Whether to detect blank/unanswered problems
             blank_confidence_threshold: Confidence threshold for using AI verification on blanks
             use_ai_for_borderline: Whether to use AI for low-confidence blank detections
@@ -94,6 +95,7 @@ class ExamProcessor:
             extract_max_points_enabled: Whether to extract max points from images
             manual_split_points: Optional dict mapping page_number -> list of y-positions for manual splits
             skip_first_region: Whether to skip the first region (header/title area) when splitting (default True)
+            last_page_blank: Whether to skip the last page (common with odd-numbered page counts, default False)
 
         Returns:
             Tuple of (matched_submissions, unmatched_submissions)
@@ -229,7 +231,8 @@ class ExamProcessor:
                     use_ai_for_borderline=use_ai_for_borderline,
                     problem_max_points=problem_max_points,
                     extract_max_points_enabled=extract_max_points_enabled,
-                    skip_first_region=skip_first_region
+                    skip_first_region=skip_first_region,
+                    last_page_blank=last_page_blank
                 )
             else:
                 # Use manual page ranges (old path - still stores individual PNGs for backwards compatibility)
@@ -568,7 +571,8 @@ class ExamProcessor:
         use_ai_for_borderline: bool = False,
         problem_max_points: Dict[int, float] = None,
         extract_max_points_enabled: bool = False,
-        skip_first_region: bool = True
+        skip_first_region: bool = True,
+        last_page_blank: bool = False
     ) -> Tuple[str, List[Dict]]:
         """
         Redact names and extract problem regions using manual split points.
@@ -584,6 +588,7 @@ class ExamProcessor:
             problem_max_points: Shared dict for caching max points by problem number
             extract_max_points_enabled: Whether to extract max points from images
             skip_first_region: Whether to skip the first region (header/title area) on page 0
+            last_page_blank: Whether to skip the last page (common with odd-numbered page counts)
 
         Returns:
             Tuple of (pdf_base64, problems_list)
@@ -701,6 +706,25 @@ class ExamProcessor:
 
         log.info(f"Created linear split list with {len(linear_splits)} splits across {total_pages} pages")
         log.info(f"Linear splits: {linear_splits}")
+
+        # Filter out last page if requested (common with odd-numbered page counts)
+        if last_page_blank and total_pages > 0:
+            last_page_num = total_pages - 1
+            # Remove all splits that reference the last page
+            splits_before_filter = len(linear_splits)
+            linear_splits = [(page, y) for page, y in linear_splits if page < last_page_num]
+
+            # Ensure we have an ending split at the bottom of the second-to-last page
+            if total_pages > 1 and linear_splits:
+                second_to_last_page = pdf_document[last_page_num - 1]
+                expected_end = (last_page_num - 1, second_to_last_page.rect.height)
+                if linear_splits[-1] != expected_end:
+                    linear_splits.append(expected_end)
+                    log.debug(f"Added ending split at bottom of page {last_page_num - 1}")
+
+            splits_removed = splits_before_filter - len(linear_splits)
+            log.info(f"Skipping last page (page {last_page_num}) - removed {splits_removed} split(s)")
+            log.info(f"Updated linear splits: {linear_splits}")
 
         # Determine starting index for problem extraction
         # If skip_first_region is True, skip the first split pair (header region)
