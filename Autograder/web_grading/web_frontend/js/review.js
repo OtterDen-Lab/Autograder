@@ -5,12 +5,10 @@ let reviewProblems = [];
 let reviewCurrentIndex = 0;
 let reviewProblemNumber = null;
 
-// Open review dialog
-document.getElementById('review-grades-btn').addEventListener('click', async () => {
-    if (!currentSession || !currentProblemNumber) return;
-
-    reviewProblemNumber = currentProblemNumber;
-    const maxPoints = problemMaxPoints[currentProblemNumber] || 8;
+// Helper function to open review for a specific problem number
+async function openReviewForProblem(problemNumber) {
+    reviewProblemNumber = problemNumber;
+    const maxPoints = problemMaxPoints[problemNumber] || 8;
 
     // Update modal title and max points
     document.getElementById('review-problem-number').textContent = reviewProblemNumber;
@@ -46,7 +44,72 @@ document.getElementById('review-grades-btn').addEventListener('click', async () 
         console.error('Failed to open review mode:', error);
         alert('Failed to load graded problems: ' + error.message);
     }
+}
+
+// Open review dialog from grading section (uses current problem number)
+document.getElementById('review-grades-btn').addEventListener('click', async () => {
+    if (!currentSession || !currentProblemNumber) return;
+    await openReviewForProblem(currentProblemNumber);
 });
+
+// Open review dialog from stats section (shows problem selector modal)
+document.getElementById('review-grades-stats-btn').addEventListener('click', async () => {
+    if (!currentSession) return;
+
+    // Load available problem numbers if not already loaded
+    if (!availableProblemNumbers || availableProblemNumbers.length === 0) {
+        try {
+            const response = await fetch(`${API_BASE}/sessions/${currentSession.id}/problem-numbers`);
+            const data = await response.json();
+            availableProblemNumbers = data.problem_numbers;
+        } catch (error) {
+            console.error('Failed to load problem numbers:', error);
+            alert('Failed to load problem numbers');
+            return;
+        }
+    }
+
+    // Populate the dropdown
+    const dropdown = document.getElementById('problem-selector-dropdown');
+    dropdown.innerHTML = '<option value="">-- Select a problem --</option>';
+    availableProblemNumbers.forEach(num => {
+        const option = document.createElement('option');
+        option.value = num;
+        option.textContent = `Problem ${num}`;
+        dropdown.appendChild(option);
+    });
+
+    // Show the modal
+    document.getElementById('problem-selector-modal').style.display = 'flex';
+});
+
+// Problem selector modal - Cancel button
+document.getElementById('problem-selector-cancel-btn').addEventListener('click', () => {
+    document.getElementById('problem-selector-modal').style.display = 'none';
+});
+
+// Problem selector modal - Review button
+document.getElementById('problem-selector-review-btn').addEventListener('click', async () => {
+    const dropdown = document.getElementById('problem-selector-dropdown');
+    const selectedProblem = parseInt(dropdown.value);
+
+    if (isNaN(selectedProblem)) {
+        alert('Please select a problem number');
+        return;
+    }
+
+    // Hide the selector modal
+    document.getElementById('problem-selector-modal').style.display = 'none';
+
+    // Open the review dialog for the selected problem
+    await openReviewForProblem(selectedProblem);
+});
+
+// Function to open review directly from stat card click
+function reviewProblemFromStats(problemNumber) {
+    if (!currentSession) return;
+    openReviewForProblem(problemNumber);
+}
 
 // Close review dialog
 document.getElementById('close-review-btn').addEventListener('click', () => {

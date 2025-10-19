@@ -298,12 +298,35 @@
 
                 <div style="display: flex; gap: 10px; margin-top: 20px;">
                     <button id="continue-grading-btn" class="btn btn-primary">← Continue Grading</button>
+                    <button id="review-grades-stats-btn" class="btn btn-secondary">Review Graded Problems</button>
                     <button id="finalize-btn" class="btn btn-success">Finalize & Upload to Canvas</button>
                     <button id="export-session-btn" class="btn btn-secondary">Export Session (Checkpoint)</button>
                     <button id="change-canvas-target-btn" class="btn btn-secondary">Change Canvas Target</button>
                 </div>
             </section>
         </main>
+    </div>
+
+    <!-- Problem Selector Modal -->
+    <div id="problem-selector-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div style="background: white; border-radius: 8px; padding: 30px; max-width: 500px; width: 90%;">
+            <h2 style="margin-top: 0;">Select Problem to Review</h2>
+            <p style="color: var(--gray-700); margin-bottom: 20px;">
+                Choose which problem number you'd like to review:
+            </p>
+
+            <label style="display: block; margin-bottom: 20px;">
+                <strong>Problem Number:</strong>
+                <select id="problem-selector-dropdown" style="display: block; width: 100%; padding: 10px; margin-top: 8px; border: 1px solid var(--gray-300); border-radius: 4px; font-size: 16px;">
+                    <option value="">-- Select a problem --</option>
+                </select>
+            </label>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="problem-selector-cancel-btn" class="btn">Cancel</button>
+                <button id="problem-selector-review-btn" class="btn btn-primary">Review Graded Submissions</button>
+            </div>
+        </div>
     </div>
 
     <!-- Review Grades Dialog -->

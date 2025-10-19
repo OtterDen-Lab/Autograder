@@ -602,14 +602,17 @@ async function loadStatistics() {
 
         // Add per-problem stats
         if (stats.problem_stats.length > 0) {
-            container.innerHTML += '<h3 style="margin-top: 30px;">Per-Problem Statistics</h3>';
+            container.innerHTML += '<h3 style="margin-top: 30px;">Per-Problem Statistics <small style="font-size: 14px; font-weight: normal; color: var(--gray-600);">(click a card to review)</small></h3>';
             const problemStatsHtml = stats.problem_stats.map(ps => {
                 const problemProgress = ps.num_total > 0 ? (ps.num_graded / ps.num_total * 100) : 0;
                 const avgText = ps.avg_score ? ps.avg_score.toFixed(2) : 'N/A';
                 const minText = ps.min_score !== null && ps.min_score !== undefined ? ps.min_score.toFixed(2) : 'N/A';
                 const maxText = ps.max_score !== null && ps.max_score !== undefined ? ps.max_score.toFixed(2) : 'N/A';
                 return `
-                    <div class="stat-card">
+                    <div class="stat-card" data-problem-number="${ps.problem_number}" style="cursor: pointer; transition: all 0.2s;"
+                         onmouseenter="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.15)';"
+                         onmouseleave="this.style.transform=''; this.style.boxShadow='';"
+                         onclick="reviewProblemFromStats(${ps.problem_number})">
                         <h3>Problem ${ps.problem_number}</h3>
                         <div>Avg: ${avgText} | Min: ${minText} | Max: ${maxText}</div>
                         <div>Graded: ${ps.num_graded} / ${ps.num_total} (${problemProgress.toFixed(0)}%)</div>
