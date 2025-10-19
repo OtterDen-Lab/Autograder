@@ -73,8 +73,10 @@ async function loadReviewProblem(index) {
     nameElement.classList.remove('revealed');
     nameElement.title = 'Click to reveal student name';
 
+    // Display score with max points (fallback to global problemMaxPoints)
+    const maxPoints = problemMeta.max_points || problemMaxPoints[reviewProblemNumber] || 8;
     document.getElementById('review-current-score').textContent = problemMeta.score;
-    document.getElementById('review-current-max').textContent = problemMeta.max_points;
+    document.getElementById('review-current-max').textContent = maxPoints;
 
     // Format graded_at timestamp
     const gradedAt = new Date(problemMeta.graded_at);
