@@ -840,3 +840,22 @@ header h1 {
     background: linear-gradient(135deg, transparent 50%, #3b82f6 50%);
     border-bottom-right-radius: 8px;
 }
+
+/* Spoiler - Student Name Reveal */
+.spoiler {
+    background-color: #374151;
+    color: transparent;
+    padding: 2px 8px;
+    border-radius: 4px;
+    transition: all 0.3s ease;
+    display: inline-block;
+}
+
+.spoiler.revealed {
+    background-color: transparent;
+    color: var(--gray-900);
+}
+
+.spoiler:hover:not(.revealed) {
+    background-color: #4b5563;
+}

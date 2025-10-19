@@ -65,7 +65,14 @@ async function loadReviewProblem(index) {
     // Update navigation info
     document.getElementById('review-current-index').textContent = index + 1;
     document.getElementById('review-total-count').textContent = reviewProblems.length;
-    document.getElementById('review-student-name').textContent = problemMeta.student_name || 'Unknown';
+
+    // Setup spoiler for student name
+    const nameElement = document.getElementById('review-student-name');
+    nameElement.dataset.studentName = problemMeta.student_name || 'Unknown';
+    nameElement.textContent = '████████';
+    nameElement.classList.remove('revealed');
+    nameElement.title = 'Click to reveal student name';
+
     document.getElementById('review-current-score').textContent = problemMeta.score;
     document.getElementById('review-current-max').textContent = problemMeta.max_points;
 
@@ -266,5 +273,20 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.id !== 'review-feedback-input') {
         e.preventDefault();
         document.getElementById('review-save-btn').click();
+    }
+});
+
+// Student name spoiler click handler
+document.getElementById('review-student-name').addEventListener('click', function() {
+    if (this.classList.contains('revealed')) {
+        // Hide the name again
+        this.textContent = '████████';
+        this.classList.remove('revealed');
+        this.title = 'Click to reveal student name';
+    } else {
+        // Reveal the name
+        this.textContent = this.dataset.studentName || 'Unknown';
+        this.classList.add('revealed');
+        this.title = 'Click to hide student name';
     }
 });
