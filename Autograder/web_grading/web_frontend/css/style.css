@@ -353,6 +353,7 @@ header h1 {
     text-align: center;
     border: 7px solid transparent;
     transition: all 0.2s;
+    position: relative;
 }
 
 /* Completion indicator - darker background when fully graded */
@@ -381,18 +382,21 @@ header h1 {
     border-color: #ef4444;
 }
 
-/* High skip rate indicator - inner shadow/border for high blank percentage */
-.stat-card.high-skip-rate {
-    box-shadow:
-        inset 0 0 0 3px #000000,
-        inset 0 0 0 9px #f97316;
+/* High skip rate indicator - dashed border around blank % value */
+.stat-card .blank-pct-highlight {
+    border: 3px dashed #f97316;
+    border-radius: 4px;
+    padding: 2px 6px;
+    display: inline-block;
+    font-weight: 600;
+    font-size: 16px;
 }
 
-/* If both performance border and skip rate, make the inner border more visible */
-.stat-card.high-skip-rate:not(.performance-verypoor):not(.performance-poor) {
-    box-shadow:
-        inset 0 0 0 3px #000000,
-        inset 0 0 0 11px #dc2626;
+/* Make it more visible for good-performing problems */
+.stat-card.performance-excellent .blank-pct-highlight,
+.stat-card.performance-good .blank-pct-highlight {
+    border-color: #dc2626;
+    border-width: 3px;
 }
 
 .stat-card h3 {

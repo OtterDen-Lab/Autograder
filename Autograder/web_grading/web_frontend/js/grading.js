@@ -635,8 +635,21 @@ async function loadStatistics() {
                     ? `${(ps.mean_normalized * 100).toFixed(1)}% ± ${(ps.stddev_normalized * 100).toFixed(1)}%`
                     : 'N/A';
 
-                const pctBlankText = ps.pct_blank !== null && ps.pct_blank !== undefined ? ps.pct_blank.toFixed(1) + '%' : 'N/A';
                 const maxPointsText = ps.max_points !== null && ps.max_points !== undefined ? ps.max_points.toFixed(1) : 'N/A';
+
+                // Format blank % with highlight if high skip rate
+                let pctBlankDisplay;
+                const hasHighSkipRate = ps.pct_blank !== null && ps.pct_blank !== undefined && ps.pct_blank > 25;
+                if (ps.pct_blank !== null && ps.pct_blank !== undefined) {
+                    const blankValue = ps.pct_blank.toFixed(1) + '%';
+                    if (hasHighSkipRate) {
+                        pctBlankDisplay = `<div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Blank %</div><div class="blank-pct-highlight">${blankValue}</div>`;
+                    } else {
+                        pctBlankDisplay = `<div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Blank %</div><div style="font-weight: 600; font-size: 16px;">${blankValue}</div>`;
+                    }
+                } else {
+                    pctBlankDisplay = '<div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Blank %</div><div style="font-weight: 600; font-size: 16px;">N/A</div>';
+                }
 
                 // Determine CSS classes for visual indicators
                 let cssClasses = 'stat-card';
@@ -662,12 +675,6 @@ async function loadStatistics() {
                     }
                 }
 
-                // High skip rate indicator - add class if blank % is high
-                // Consider >25% as high skip rate
-                if (ps.pct_blank !== null && ps.pct_blank !== undefined && ps.pct_blank > 25) {
-                    cssClasses += ' high-skip-rate';
-                }
-
                 return `
                     <div class="${cssClasses}" data-problem-number="${ps.problem_number}" style="cursor: pointer; transition: all 0.2s;"
                          onmouseenter="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.15)';"
@@ -691,8 +698,7 @@ async function loadStatistics() {
                                 <div style="font-weight: 600; font-size: 16px;">${meanNormPlusMinusText}</div>
                             </div>
                             <div style="text-align: right;">
-                                <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Blank %</div>
-                                <div style="font-weight: 600; font-size: 16px;">${pctBlankText}</div>
+                                ${pctBlankDisplay}
                             </div>
                         </div>
 
@@ -711,13 +717,9 @@ async function loadStatistics() {
                             </div>
                         </div>
 
-                        <div style="padding-top: 8px; border-top: 1px solid var(--gray-200);">
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                                <span style="color: var(--gray-600); font-size: 12px;">Blank: ${pctBlankText}</span>
-                                <span style="color: var(--gray-600); font-size: 12px;">Progress: ${problemProgress.toFixed(0)}%</span>
-                            </div>
+                        <div style="padding-top: 8px; border-top: 1px solid var(--gray-200); text-align: center;">
                             <div style="color: var(--gray-700); font-size: 13px; font-weight: 500;">
-                                Graded: ${ps.num_graded} / ${ps.num_total}
+                                Graded: ${ps.num_graded} / ${ps.num_total} (${problemProgress.toFixed(0)}%)
                             </div>
                         </div>
                     </div>
