@@ -662,6 +662,12 @@ async function loadStatistics() {
                     }
                 }
 
+                // High skip rate indicator - add class if blank % is high
+                // Consider >25% as high skip rate
+                if (ps.pct_blank !== null && ps.pct_blank !== undefined && ps.pct_blank > 25) {
+                    cssClasses += ' high-skip-rate';
+                }
+
                 return `
                     <div class="${cssClasses}" data-problem-number="${ps.problem_number}" style="cursor: pointer; transition: all 0.2s;"
                          onmouseenter="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.15)';"
