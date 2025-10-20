@@ -351,6 +351,34 @@ header h1 {
     padding: 20px;
     border-radius: 8px;
     text-align: center;
+    border: 7px solid transparent;
+    transition: all 0.2s;
+}
+
+/* Completion indicator - darker background when fully graded */
+.stat-card.fully-graded {
+    background-color: #d1d5db;
+}
+
+/* Performance indicators - border color based on normalized mean */
+.stat-card.performance-excellent {
+    border-color: #10b981;
+}
+
+.stat-card.performance-good {
+    border-color: #84cc16;
+}
+
+.stat-card.performance-moderate {
+    border-color: #eab308;
+}
+
+.stat-card.performance-poor {
+    border-color: #f97316;
+}
+
+.stat-card.performance-verypoor {
+    border-color: #ef4444;
 }
 
 .stat-card h3 {

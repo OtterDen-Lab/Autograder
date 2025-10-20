@@ -638,8 +638,32 @@ async function loadStatistics() {
                 const pctBlankText = ps.pct_blank !== null && ps.pct_blank !== undefined ? ps.pct_blank.toFixed(1) + '%' : 'N/A';
                 const maxPointsText = ps.max_points !== null && ps.max_points !== undefined ? ps.max_points.toFixed(1) : 'N/A';
 
+                // Determine CSS classes for visual indicators
+                let cssClasses = 'stat-card';
+
+                // Completion indicator - add 'fully-graded' class if all problems graded
+                if (ps.num_graded >= ps.num_total && ps.num_total > 0) {
+                    cssClasses += ' fully-graded';
+                }
+
+                // Performance indicator - add class based on normalized mean
+                // Only add if we have valid data
+                if (ps.mean_normalized !== null && ps.mean_normalized !== undefined) {
+                    if (ps.mean_normalized >= 0.9) {
+                        cssClasses += ' performance-excellent';  // 90%+
+                    } else if (ps.mean_normalized >= 0.75) {
+                        cssClasses += ' performance-good';       // 75-89%
+                    } else if (ps.mean_normalized >= 0.6) {
+                        cssClasses += ' performance-moderate';   // 60-74%
+                    } else if (ps.mean_normalized >= 0.5) {
+                        cssClasses += ' performance-poor';       // 50-59%
+                    } else {
+                        cssClasses += ' performance-verypoor';   // <50%
+                    }
+                }
+
                 return `
-                    <div class="stat-card" data-problem-number="${ps.problem_number}" style="cursor: pointer; transition: all 0.2s;"
+                    <div class="${cssClasses}" data-problem-number="${ps.problem_number}" style="cursor: pointer; transition: all 0.2s;"
                          onmouseenter="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.15)';"
                          onmouseleave="this.style.transform=''; this.style.boxShadow='';"
                          onclick="reviewProblemFromStats(${ps.problem_number})">
