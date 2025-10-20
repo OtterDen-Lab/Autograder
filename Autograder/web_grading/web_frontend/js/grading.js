@@ -645,12 +645,12 @@ async function loadStatistics() {
                          onclick="reviewProblemFromStats(${ps.problem_number})">
                         <h3 style="margin-bottom: 12px; border-bottom: 2px solid var(--primary-color); padding-bottom: 8px;">Problem ${ps.problem_number}</h3>
 
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+                        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 8px;">
                             <div style="text-align: left;">
                                 <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Mean ± Std Dev</div>
                                 <div style="font-weight: 600; font-size: 16px;">${meanPlusMinusText}</div>
                             </div>
-                            <div style="text-align: left;">
+                            <div style="text-align: right;">
                                 <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Median</div>
                                 <div style="font-weight: 600; font-size: 16px;">${medianText}</div>
                             </div>
@@ -660,7 +660,7 @@ async function loadStatistics() {
                                 <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Normalized</div>
                                 <div style="font-weight: 600; font-size: 16px;">${meanNormPlusMinusText}</div>
                             </div>
-                            <div style="text-align: left;">
+                            <div style="text-align: right;">
                                 <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Blank %</div>
                                 <div style="font-weight: 600; font-size: 16px;">${pctBlankText}</div>
                             </div>
