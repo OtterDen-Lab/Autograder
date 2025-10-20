@@ -624,7 +624,17 @@ async function loadStatistics() {
                 const maxText = ps.max_score !== null && ps.max_score !== undefined ? ps.max_score.toFixed(2) : 'N/A';
                 const medianText = ps.median_score !== null && ps.median_score !== undefined ? ps.median_score.toFixed(2) : 'N/A';
                 const stddevText = ps.stddev_score !== null && ps.stddev_score !== undefined ? ps.stddev_score.toFixed(2) : 'N/A';
-                const meanNormText = ps.mean_normalized !== null && ps.mean_normalized !== undefined ? (ps.mean_normalized * 100).toFixed(1) + '%' : 'N/A';
+
+                // Format mean ± stddev
+                const meanPlusMinusText = (ps.avg_score !== null && ps.avg_score !== undefined && ps.stddev_score !== null && ps.stddev_score !== undefined)
+                    ? `${ps.avg_score.toFixed(2)} ± ${ps.stddev_score.toFixed(2)}`
+                    : 'N/A';
+
+                // Format normalized mean ± normalized stddev (as percentages)
+                const meanNormPlusMinusText = (ps.mean_normalized !== null && ps.mean_normalized !== undefined && ps.stddev_normalized !== null && ps.stddev_normalized !== undefined)
+                    ? `${(ps.mean_normalized * 100).toFixed(1)}% ± ${(ps.stddev_normalized * 100).toFixed(1)}%`
+                    : 'N/A';
+
                 const pctBlankText = ps.pct_blank !== null && ps.pct_blank !== undefined ? ps.pct_blank.toFixed(1) + '%' : 'N/A';
                 const maxPointsText = ps.max_points !== null && ps.max_points !== undefined ? ps.max_points.toFixed(1) : 'N/A';
 
@@ -635,22 +645,24 @@ async function loadStatistics() {
                          onclick="reviewProblemFromStats(${ps.problem_number})">
                         <h3 style="margin-bottom: 12px; border-bottom: 2px solid var(--primary-color); padding-bottom: 8px;">Problem ${ps.problem_number}</h3>
 
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
                             <div style="text-align: left;">
-                                <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Mean</div>
-                                <div style="font-weight: 600; font-size: 16px;">${avgText}</div>
-                            </div>
-                            <div style="text-align: left;">
-                                <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Std Dev</div>
-                                <div style="font-weight: 600; font-size: 16px;">${stddevText}</div>
+                                <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Mean ± Std Dev</div>
+                                <div style="font-weight: 600; font-size: 16px;">${meanPlusMinusText}</div>
                             </div>
                             <div style="text-align: left;">
                                 <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Median</div>
                                 <div style="font-weight: 600; font-size: 16px;">${medianText}</div>
                             </div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 12px;">
                             <div style="text-align: left;">
-                                <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Normalized Mean</div>
-                                <div style="font-weight: 600; font-size: 16px;">${meanNormText}</div>
+                                <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Normalized</div>
+                                <div style="font-weight: 600; font-size: 16px;">${meanNormPlusMinusText}</div>
+                            </div>
+                            <div style="text-align: left;">
+                                <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Blank %</div>
+                                <div style="font-weight: 600; font-size: 16px;">${pctBlankText}</div>
                             </div>
                         </div>
 

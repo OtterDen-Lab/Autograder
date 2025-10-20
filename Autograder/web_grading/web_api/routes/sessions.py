@@ -202,10 +202,13 @@ async def get_session_stats(session_id: int):
             median_score = statistics.median(scores) if scores else None
             stddev_score = statistics.stdev(scores) if len(scores) > 1 else None
 
-            # Calculate normalized mean (0-1 scale based on max_points)
+            # Calculate normalized mean and stddev (0-1 scale based on max_points)
             mean_normalized = None
+            stddev_normalized = None
             if avg_score is not None and max_points is not None and max_points > 0:
                 mean_normalized = avg_score / max_points
+            if stddev_score is not None and max_points is not None and max_points > 0:
+                stddev_normalized = stddev_score / max_points
 
             # Calculate percentage blank
             pct_blank = (num_blank / num_graded * 100) if num_graded > 0 else None
@@ -218,6 +221,7 @@ async def get_session_stats(session_id: int):
                 median_score=median_score,
                 stddev_score=stddev_score,
                 mean_normalized=mean_normalized,
+                stddev_normalized=stddev_normalized,
                 pct_blank=pct_blank,
                 num_graded=num_graded,
                 num_total=num_total,
