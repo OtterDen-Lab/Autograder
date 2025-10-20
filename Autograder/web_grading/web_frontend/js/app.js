@@ -566,6 +566,34 @@ function showAlignmentInterface(composites, pageDimensions, numExams) {
             <li><strong>Click</strong> a red line to remove it</li>
             <li>Split lines mark the <strong>top</strong> of each question</li>
         </ul>
+        <div style="background: #eff6ff; padding: 10px; border-radius: 6px; margin: 10px 0;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="skip-first-region-checkbox" checked>
+                <span style="color: var(--gray-700);">Skip first region (header/name area)</span>
+            </label>
+            <small style="display: block; margin-top: 5px; color: var(--gray-600);">
+                ℹ️ The first split line usually marks the header/title area, not a question. Leave this checked to skip it.
+            </small>
+        </div>
+        <div style="background: #eff6ff; padding: 10px; border-radius: 6px; margin: 10px 0;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="last-page-blank-checkbox">
+                <span style="color: var(--gray-700);">Last page is blank</span>
+            </label>
+            <small style="display: block; margin-top: 5px; color: var(--gray-600);">
+                ℹ️ Check this if the last page is blank (common with odd-numbered page counts). The last page will be skipped during processing.
+            </small>
+        </div>
+        <div style="background: #fef3c7; padding: 10px; border-radius: 6px; margin: 10px 0;">
+            <strong style="color: var(--gray-800);">📄 Multi-page questions:</strong>
+            <p style="color: var(--gray-700); margin: 5px 0; font-size: 14px;">
+                Questions can span multiple pages. Use the checkboxes between pages to explicitly break questions at page boundaries when needed.
+            </p>
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-top: 10px;">
+                <input type="checkbox" id="break-all-boundaries-checkbox">
+                <span style="color: var(--gray-800); font-weight: 500;">Break all page boundaries (questions don't span pages)</span>
+            </label>
+        </div>
         <div style="display: flex; gap: 10px; margin-top: 15px;">
             <button id="submit-alignment-btn" class="btn btn-primary">Submit Split Points & Process Exams</button>
             <button id="cancel-alignment-btn" class="btn btn-secondary">Cancel</button>
@@ -580,18 +608,39 @@ function showAlignmentInterface(composites, pageDimensions, numExams) {
     pagesContainer.id = 'alignment-pages-container';
     pagesContainer.style.marginTop = '20px';
 
-    for (const [pageNum, imageBase64] of Object.entries(composites)) {
-        const pageSection = createAlignmentPageSection(parseInt(pageNum), imageBase64);
+    const pageNumbers = Object.keys(composites).map(n => parseInt(n)).sort((a, b) => a - b);
+
+    for (let i = 0; i < pageNumbers.length; i++) {
+        const pageNum = pageNumbers[i];
+        const imageBase64 = composites[pageNum];
+
+        const pageSection = createAlignmentPageSection(pageNum, imageBase64);
         pagesContainer.appendChild(pageSection);
+
+        // Add page boundary control between pages (not after last page)
+        if (i < pageNumbers.length - 1) {
+            const nextPageNum = pageNumbers[i + 1];
+            const boundaryControl = createPageBoundaryControl(pageNum, nextPageNum);
+            pagesContainer.appendChild(boundaryControl);
+        }
     }
 
     container.appendChild(pagesContainer);
 
-    // Add "Go to Top" button at the bottom
+    // Add bottom controls with second "last page blank" checkbox
     const bottomControls = document.createElement('div');
     bottomControls.style.cssText = 'margin: 20px; text-align: center;';
     bottomControls.innerHTML = `
-        <div style="display: flex; gap: 10px; justify-content: center;">
+        <div style="background: #eff6ff; padding: 10px; border-radius: 6px; margin: 10px auto; max-width: 600px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="last-page-blank-checkbox-bottom">
+                <span style="color: var(--gray-700);">Last page is blank</span>
+            </label>
+            <small style="display: block; margin-top: 5px; color: var(--gray-600);">
+                ℹ️ Check this if the last page is blank (common with odd-numbered page counts). The last page will be skipped during processing.
+            </small>
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: center; margin-top: 15px;">
             <button id="submit-alignment-bottom-btn" class="btn btn-primary">Submit Split Points & Process Exams</button>
             <button id="go-to-top-btn" class="btn btn-secondary">↑ Go to Top</button>
         </div>
@@ -605,12 +654,133 @@ function showAlignmentInterface(composites, pageDimensions, numExams) {
     document.getElementById('go-to-top-btn').onclick = () => {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
+
+    // Sync the two "last page blank" checkboxes
+    const topCheckbox = document.getElementById('last-page-blank-checkbox');
+    const bottomCheckbox = document.getElementById('last-page-blank-checkbox-bottom');
+
+    topCheckbox.addEventListener('change', (e) => {
+        bottomCheckbox.checked = e.target.checked;
+    });
+
+    bottomCheckbox.addEventListener('change', (e) => {
+        topCheckbox.checked = e.target.checked;
+    });
+
+    // Handle "break all boundaries" checkbox
+    const breakAllCheckbox = document.getElementById('break-all-boundaries-checkbox');
+    breakAllCheckbox.addEventListener('change', (e) => {
+        const shouldBreak = e.target.checked;
+
+        // Loop through all page boundary checkboxes and set their state
+        for (let i = 0; i < pageNumbers.length - 1; i++) {
+            const currentPageNum = pageNumbers[i];
+            const nextPageNum = pageNumbers[i + 1];
+            const boundaryCheckbox = document.getElementById(`page-boundary-${currentPageNum}-${nextPageNum}`);
+
+            if (boundaryCheckbox && boundaryCheckbox.checked !== shouldBreak) {
+                boundaryCheckbox.checked = shouldBreak;
+                // Trigger the change event to update the visual lines
+                boundaryCheckbox.dispatchEvent(new Event('change'));
+            }
+        }
+    });
+}
+
+function createPageBoundaryControl(currentPageNum, nextPageNum) {
+    const control = document.createElement('div');
+    control.style.cssText = 'background: #f3f4f6; border: 2px dashed var(--gray-300); padding: 15px; margin: 20px 0; text-align: center; border-radius: 8px;';
+
+    const label = document.createElement('label');
+    label.style.cssText = 'display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 500; color: var(--gray-800);';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = `page-boundary-${currentPageNum}-${nextPageNum}`;
+    checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer;';
+
+    const labelText = document.createElement('span');
+    labelText.textContent = `Break question at page boundary (between Page ${currentPageNum + 1} and Page ${nextPageNum + 1})`;
+
+    // Handle checkbox change
+    checkbox.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            // Add split at end of current page (which is same as start of next page)
+            const pageDims = compositeData.page_dimensions[currentPageNum];
+            const pageHeight = pageDims.height;
+
+            // Add to current page at the very bottom
+            if (!splitPoints[currentPageNum]) {
+                splitPoints[currentPageNum] = [];
+            }
+
+            // Check if split already exists at page boundary
+            if (!splitPoints[currentPageNum].includes(pageHeight)) {
+                splitPoints[currentPageNum].push(pageHeight);
+                splitPoints[currentPageNum].sort((a, b) => a - b);
+
+                // Update visual lines for current page (bottom)
+                const canvas = document.getElementById(`alignment-canvas-${currentPageNum}`);
+                const canvasContainer = canvas.parentElement;
+                updateSplitLines(currentPageNum, canvasContainer, canvas);
+
+                // Also add a cosmetic split at the top of the next page (y=0)
+                if (!splitPoints[nextPageNum]) {
+                    splitPoints[nextPageNum] = [];
+                }
+                if (!splitPoints[nextPageNum].includes(0)) {
+                    splitPoints[nextPageNum].push(0);
+                    splitPoints[nextPageNum].sort((a, b) => a - b);
+
+                    // Update visual lines for next page (top)
+                    const nextCanvas = document.getElementById(`alignment-canvas-${nextPageNum}`);
+                    const nextCanvasContainer = nextCanvas.parentElement;
+                    updateSplitLines(nextPageNum, nextCanvasContainer, nextCanvas);
+                }
+            }
+        } else {
+            // Remove split at page boundary
+            const pageDims = compositeData.page_dimensions[currentPageNum];
+            const pageHeight = pageDims.height;
+
+            if (splitPoints[currentPageNum]) {
+                splitPoints[currentPageNum] = splitPoints[currentPageNum].filter(y => y !== pageHeight);
+                if (splitPoints[currentPageNum].length === 0) {
+                    delete splitPoints[currentPageNum];
+                }
+
+                // Update visual lines for current page
+                const canvas = document.getElementById(`alignment-canvas-${currentPageNum}`);
+                const canvasContainer = canvas.parentElement;
+                updateSplitLines(currentPageNum, canvasContainer, canvas);
+            }
+
+            // Also remove the split at the top of next page (y=0)
+            if (splitPoints[nextPageNum]) {
+                splitPoints[nextPageNum] = splitPoints[nextPageNum].filter(y => y !== 0);
+                if (splitPoints[nextPageNum].length === 0) {
+                    delete splitPoints[nextPageNum];
+                }
+
+                // Update visual lines for next page
+                const nextCanvas = document.getElementById(`alignment-canvas-${nextPageNum}`);
+                const nextCanvasContainer = nextCanvas.parentElement;
+                updateSplitLines(nextPageNum, nextCanvasContainer, nextCanvas);
+            }
+        }
+    });
+
+    label.appendChild(checkbox);
+    label.appendChild(labelText);
+    control.appendChild(label);
+
+    return control;
 }
 
 function createAlignmentPageSection(pageNum, imageBase64) {
     const section = document.createElement('div');
     section.className = 'alignment-page-section';
-    section.style.cssText = 'margin-bottom: 40px; border: 1px solid var(--gray-200); border-radius: 8px; overflow: hidden;';
+    section.style.cssText = 'margin-bottom: 20px; border: 1px solid var(--gray-200); border-radius: 8px; overflow: hidden;';
 
     const header = document.createElement('div');
     header.style.cssText = 'background: var(--primary-color); color: white; padding: 15px; font-weight: bold;';
@@ -750,11 +920,21 @@ async function submitAlignment() {
         document.getElementById('submit-alignment-bottom-btn').disabled = true;
         document.getElementById('submit-alignment-bottom-btn').textContent = 'Submitting...';
 
+        // Check if we should skip the first region
+        const skipFirstRegion = document.getElementById('skip-first-region-checkbox').checked;
+
+        // Check if last page is blank
+        const lastPageBlank = document.getElementById('last-page-blank-checkbox').checked;
+
         // Submit split points to backend
         const response = await fetch(`${API_BASE}/uploads/${currentSession.id}/submit-alignment`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ split_points: splitPoints })
+            body: JSON.stringify({
+                split_points: splitPoints,
+                skip_first_region: skipFirstRegion,
+                last_page_blank: lastPageBlank
+            })
         });
 
         if (!response.ok) {

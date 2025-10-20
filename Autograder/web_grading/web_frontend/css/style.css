@@ -237,23 +237,60 @@ header h1 {
 
 .problem-container {
     margin: 20px 0;
-    text-align: center;
     background-color: var(--gray-100);
     padding: 20px;
     border-radius: 8px;
-    min-height: 400px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    position: relative;
+}
+
+.problem-scroll-container {
+    overflow-y: auto;
+    overflow-x: hidden;
+    text-align: center;
+    background-color: white;
+    border: 2px solid var(--gray-200);
+    border-radius: 4px;
+    position: relative;
+    /* Default height - about 1 page worth */
+    height: 800px;
+    max-height: 80vh;
 }
 
 .problem-container img {
     max-width: 100%;
-    max-height: 800px;
     height: auto;
-    border: 1px solid var(--gray-200);
+    display: block;
+    margin: 0 auto;
     border-radius: 4px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.problem-resize-handle {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 12px;
+    background: linear-gradient(to bottom, transparent, rgba(37, 99, 235, 0.1));
+    border-top: 2px solid var(--primary-color);
+    cursor: ns-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+
+.problem-resize-handle:hover {
+    opacity: 1;
+    background: linear-gradient(to bottom, transparent, rgba(37, 99, 235, 0.2));
+}
+
+.problem-resize-handle::after {
+    content: '⋮';
+    color: var(--primary-color);
+    font-size: 16px;
+    font-weight: bold;
+    letter-spacing: 2px;
 }
 
 .grading-form {
@@ -314,6 +351,52 @@ header h1 {
     padding: 20px;
     border-radius: 8px;
     text-align: center;
+    border: 7px solid transparent;
+    transition: all 0.2s;
+    position: relative;
+}
+
+/* Completion indicator - darker background when fully graded */
+.stat-card.fully-graded {
+    background-color: #d1d5db;
+}
+
+/* Performance indicators - border color based on normalized mean */
+.stat-card.performance-excellent {
+    border-color: #10b981;
+}
+
+.stat-card.performance-good {
+    border-color: #84cc16;
+}
+
+.stat-card.performance-moderate {
+    border-color: #eab308;
+}
+
+.stat-card.performance-poor {
+    border-color: #f97316;
+}
+
+.stat-card.performance-verypoor {
+    border-color: #ef4444;
+}
+
+/* High skip rate indicator - dashed border around blank % value */
+.stat-card .blank-pct-highlight {
+    border: 3px dashed #f97316;
+    border-radius: 4px;
+    padding: 2px 6px;
+    display: inline-block;
+    font-weight: 600;
+    font-size: 16px;
+}
+
+/* Make it more visible for good-performing problems */
+.stat-card.performance-excellent .blank-pct-highlight,
+.stat-card.performance-good .blank-pct-highlight {
+    border-color: #dc2626;
+    border-width: 3px;
 }
 
 .stat-card h3 {
@@ -839,4 +922,23 @@ header h1 {
     cursor: nwse-resize;
     background: linear-gradient(135deg, transparent 50%, #3b82f6 50%);
     border-bottom-right-radius: 8px;
+}
+
+/* Spoiler - Student Name Reveal */
+.spoiler {
+    background-color: #374151;
+    color: transparent;
+    padding: 2px 8px;
+    border-radius: 4px;
+    transition: all 0.3s ease;
+    display: inline-block;
+}
+
+.spoiler.revealed {
+    background-color: transparent;
+    color: var(--gray-900);
+}
+
+.spoiler:hover:not(.revealed) {
+    background-color: #4b5563;
 }

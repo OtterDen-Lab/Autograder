@@ -20,44 +20,142 @@ router = APIRouter()
 
 
 def extract_problem_image(pdf_data: str, page_number: int, region_y_start: int,
-                         region_y_end: int) -> str:
+                         region_y_end: int, end_page_number: int = None, end_region_y: int = None) -> str:
     """
     Extract a problem image from stored PDF data using region coordinates.
+    Supports cross-page regions.
 
     Args:
         pdf_data: Base64 encoded PDF
-        page_number: 0-indexed page number
-        region_y_start: Y coordinate of region start
-        region_y_end: Y coordinate of region end
+        page_number: 0-indexed start page number
+        region_y_start: Y coordinate of region start on start page
+        region_y_end: Y coordinate of region end on start page (or end page if cross-page)
+        end_page_number: Optional end page number for cross-page regions
+        end_region_y: Optional end y-coordinate for cross-page regions
 
     Returns:
         Base64 encoded PNG image of the problem region
     """
+    from PIL import Image
+    import io
+
     # Decode PDF from base64
     pdf_bytes = base64.b64decode(pdf_data)
     pdf_document = fitz.open("pdf", pdf_bytes)
 
-    # Get the page
-    page = pdf_document[page_number]
+    # Determine if this is a cross-page region
+    is_cross_page = (end_page_number is not None and end_page_number != page_number)
 
-    # Create region rectangle
-    region = fitz.Rect(0, region_y_start, page.rect.width, region_y_end)
+    if not is_cross_page:
+        # Single page extraction (original logic)
+        page = pdf_document[page_number]
+        region = fitz.Rect(0, region_y_start, page.rect.width, region_y_end)
 
-    # Extract region as new PDF page
-    problem_pdf = fitz.open()
-    problem_page = problem_pdf.new_page(width=region.width, height=region.height)
-    problem_page.show_pdf_page(problem_page.rect, pdf_document, page_number, clip=region)
+        # Validate region is not empty
+        if region.is_empty or region.height <= 0:
+            img = Image.new('RGB', (int(page.rect.width), 1), color='white')
+            buffer = io.BytesIO()
+            img.save(buffer, format='PNG')
+            img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            pdf_document.close()
+            return img_base64
 
-    # Convert to PNG
-    pix = problem_page.get_pixmap(dpi=150)
-    img_bytes = pix.tobytes("png")
-    img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+        # Extract region as new PDF page
+        problem_pdf = fitz.open()
+        problem_page = problem_pdf.new_page(width=region.width, height=region.height)
+        problem_page.show_pdf_page(problem_page.rect, pdf_document, page_number, clip=region)
 
-    # Cleanup
-    problem_pdf.close()
-    pdf_document.close()
+        # Convert to PNG
+        pix = problem_page.get_pixmap(dpi=150)
+        img_bytes = pix.tobytes("png")
+        img_base64 = base64.b64encode(img_bytes).decode("utf-8")
 
-    return img_base64
+        problem_pdf.close()
+        pdf_document.close()
+
+        return img_base64
+
+    else:
+        # Cross-page extraction - merge multiple pages
+        page_images = []
+        start_page = page_number
+        end_page = end_page_number
+        start_y = region_y_start
+        end_y = end_region_y
+
+        # Extract first page (from start_y to bottom)
+        first_page = pdf_document[start_page]
+        first_region = fitz.Rect(0, start_y, first_page.rect.width, first_page.rect.height)
+
+        if not first_region.is_empty and first_region.height > 0:
+            problem_pdf = fitz.open()
+            problem_page = problem_pdf.new_page(width=first_region.width, height=first_region.height)
+            problem_page.show_pdf_page(problem_page.rect, pdf_document, start_page, clip=first_region)
+
+            pix = problem_page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            img = Image.open(io.BytesIO(img_bytes))
+            page_images.append(img)
+            problem_pdf.close()
+
+        # Extract middle pages (full pages)
+        for page_num in range(start_page + 1, end_page):
+            page = pdf_document[page_num]
+            region = fitz.Rect(0, 0, page.rect.width, page.rect.height)
+
+            problem_pdf = fitz.open()
+            problem_page = problem_pdf.new_page(width=region.width, height=region.height)
+            problem_page.show_pdf_page(problem_page.rect, pdf_document, page_num, clip=region)
+
+            pix = problem_page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            img = Image.open(io.BytesIO(img_bytes))
+            page_images.append(img)
+            problem_pdf.close()
+
+        # Extract last page (from top to end_y)
+        last_page = pdf_document[end_page]
+        last_region = fitz.Rect(0, 0, last_page.rect.width, end_y)
+
+        if not last_region.is_empty and last_region.height > 0:
+            problem_pdf = fitz.open()
+            problem_page = problem_pdf.new_page(width=last_region.width, height=last_region.height)
+            problem_page.show_pdf_page(problem_page.rect, pdf_document, end_page, clip=last_region)
+
+            pix = problem_page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            img = Image.open(io.BytesIO(img_bytes))
+            page_images.append(img)
+            problem_pdf.close()
+
+        # Handle case where we have no images
+        if not page_images:
+            width = int(pdf_document[start_page].rect.width)
+            img = Image.new('RGB', (width, 1), color='white')
+            buffer = io.BytesIO()
+            img.save(buffer, format='PNG')
+            img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            pdf_document.close()
+            return img_base64
+
+        # Merge images vertically
+        width = page_images[0].width
+        total_height = sum(img.height for img in page_images)
+
+        merged = Image.new('RGB', (width, total_height), color='white')
+        current_y = 0
+        for img in page_images:
+            merged.paste(img, (0, current_y))
+            current_y += img.height
+
+        # Convert to base64
+        buffer = io.BytesIO()
+        merged.save(buffer, format='PNG')
+        merged_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+        pdf_document.close()
+
+        return merged_base64
 
 
 def get_problem_image_data(problem_row, cursor) -> str:
@@ -94,7 +192,9 @@ def get_problem_image_data(problem_row, cursor) -> str:
                     submission_row["exam_pdf_data"],
                     region_data["page_number"],
                     region_data["region_y_start"],
-                    region_data["region_y_end"]
+                    region_data["region_y_end"],
+                    region_data.get("end_page_number"),  # Optional: for cross-page regions
+                    region_data.get("end_region_y")  # Optional: for cross-page regions
                 )
         except (json.JSONDecodeError, KeyError) as e:
             raise HTTPException(
@@ -243,17 +343,47 @@ async def get_previous_problem(session_id: int, problem_number: int):
 
 @router.post("/{problem_id}/grade")
 async def grade_problem(problem_id: int, grade: GradeSubmission):
-    """Submit a grade for a problem"""
+    """Submit a grade for a problem
+
+    Special handling: If score is exactly "-" (dash), mark the problem as blank
+    and set score to 0. This allows manual blank detection alongside AI heuristics.
+    Feedback can still be provided normally for context.
+    """
     # Get session_id first
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
-        # Update problem
-        cursor.execute("""
-            UPDATE problems
-            SET score = ?, feedback = ?, graded = 1, graded_at = ?
-            WHERE id = ?
-        """, (grade.score, grade.feedback, datetime.now(), problem_id))
+        # Check if score indicates manual blank marking (dash)
+        is_manual_blank = isinstance(grade.score, str) and grade.score.strip() == "-"
+
+        if is_manual_blank:
+            # Mark as blank with score 0
+            cursor.execute("""
+                UPDATE problems
+                SET score = 0,
+                    feedback = ?,
+                    graded = 1,
+                    graded_at = ?,
+                    is_blank = 1,
+                    blank_method = 'manual',
+                    blank_reasoning = 'Manually marked as blank by grader (dash in score field)'
+                WHERE id = ?
+            """, (grade.feedback, datetime.now(), problem_id))
+        else:
+            # Normal grading - convert score to float and save
+            try:
+                score_value = float(grade.score)
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid score value: {grade.score}. Must be a number or '-' for blank."
+                )
+
+            cursor.execute("""
+                UPDATE problems
+                SET score = ?, feedback = ?, graded = 1, graded_at = ?
+                WHERE id = ?
+            """, (score_value, grade.feedback, datetime.now(), problem_id))
 
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Problem not found")
@@ -266,7 +396,7 @@ async def grade_problem(problem_id: int, grade: GradeSubmission):
     # Update statistics after connection is closed to avoid database lock
     update_problem_stats(session_id)
 
-    return {"status": "graded", "problem_id": problem_id}
+    return {"status": "graded", "problem_id": problem_id, "is_blank": is_manual_blank}
 
 
 @router.get("/{problem_id}", response_model=ProblemResponse)
@@ -476,6 +606,74 @@ Respond with just the transcribed text."""
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+
+@router.get("/{session_id}/{problem_number}/graded")
+async def get_graded_problems(session_id: int, problem_number: int, offset: int = 0, limit: int = 20):
+    """
+    Get graded problems for a specific problem number for review.
+
+    Args:
+        session_id: Grading session ID
+        problem_number: Problem number to fetch
+        offset: Pagination offset (default 0)
+        limit: Max number of problems to return (default 20)
+
+    Returns:
+        List of graded problems with metadata
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get total count
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM problems
+            WHERE session_id = ? AND problem_number = ? AND graded = 1
+        """, (session_id, problem_number))
+
+        total_count = cursor.fetchone()["count"]
+
+        if total_count == 0:
+            return {
+                "problems": [],
+                "total": 0,
+                "offset": offset,
+                "limit": limit
+            }
+
+        # Get graded problems, ordered by graded_at
+        cursor.execute("""
+            SELECT p.*, s.student_name
+            FROM problems p
+            LEFT JOIN submissions s ON p.submission_id = s.id
+            WHERE p.session_id = ? AND p.problem_number = ? AND p.graded = 1
+            ORDER BY p.graded_at DESC
+            LIMIT ? OFFSET ?
+        """, (session_id, problem_number, limit, offset))
+
+        rows = cursor.fetchall()
+
+        problems = []
+        for row in rows:
+            problems.append({
+                "id": row["id"],
+                "problem_number": row["problem_number"],
+                "submission_id": row["submission_id"],
+                "student_name": row["student_name"],
+                "score": row["score"],
+                "feedback": row["feedback"],
+                "max_points": row["max_points"],
+                "graded_at": row["graded_at"],
+                "is_blank": bool(row["is_blank"])
+            })
+
+        return {
+            "problems": problems,
+            "total": total_count,
+            "offset": offset,
+            "limit": limit
+        }
 
 
 @router.get("/{problem_id}/regenerate-answer")

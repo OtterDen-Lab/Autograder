@@ -2,7 +2,7 @@
 Pydantic models for request/response validation.
 """
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Union
 from pydantic import BaseModel, Field
 from enum import Enum
 
@@ -118,8 +118,13 @@ class ProblemResponse(BaseModel):
 
 
 class GradeSubmission(BaseModel):
-    """Request model for submitting a grade"""
-    score: float = Field(ge=0.0)
+    """Request model for submitting a grade
+
+    Score can be:
+    - A numeric value (float) for normal grading
+    - A dash string ("-") to mark as blank (sets score to 0 and is_blank flag)
+    """
+    score: Union[float, str]  # Accept float or "-" for blank
     feedback: Optional[str] = None
 
 
@@ -129,8 +134,14 @@ class ProblemStatsResponse(BaseModel):
     avg_score: Optional[float]
     min_score: Optional[float]
     max_score: Optional[float]
+    median_score: Optional[float]
+    stddev_score: Optional[float]
+    mean_normalized: Optional[float]  # Mean normalized to max_points (0-1 scale)
+    stddev_normalized: Optional[float]  # Stddev normalized to max_points (0-1 scale)
+    pct_blank: Optional[float]  # Percentage of submissions marked as blank
     num_graded: int
     num_total: int
+    max_points: Optional[float]
 
     class Config:
         from_attributes = True

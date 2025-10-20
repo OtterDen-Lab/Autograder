@@ -268,6 +268,7 @@ class Assignment__ProgrammingAssignment(Assignment):
           log.info(f"Renaming {f.name} to {new_name}")
           f.name = new_name
     
+    
     log.info(f"Total students to grade: {len(self.submissions)}")
     if limit is not None:
       log.warning(f"Limiting to {limit} students")

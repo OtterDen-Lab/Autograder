@@ -16,6 +16,7 @@ function initializeGrading() {
     loadProblemNumbers();
     setupGradingControls();
     updateOverallProgress();
+    setupProblemImageResize();
 }
 
 // Load max points metadata for all problems
@@ -217,6 +218,12 @@ function handleGradingKeyboard(e) {
         return;
     }
 
+    // Don't handle if notification overlay is visible
+    const notificationOverlay = document.getElementById('notification-overlay');
+    if (notificationOverlay && notificationOverlay.style.display === 'flex') {
+        return;
+    }
+
     // Don't handle if typing in textarea
     if (e.target.tagName === 'TEXTAREA') {
         return;
@@ -234,8 +241,8 @@ function handleGradingKeyboard(e) {
         loadNextProblem();
     }
 
-    // Number keys 0-9 - quick score entry (but not when typing in rubric table or other inputs)
-    if (/^[0-9]$/.test(e.key) &&
+    // Number keys 0-9 or dash (-) - quick score entry (but not when typing in rubric table or other inputs)
+    if ((/^[0-9]$/.test(e.key) || e.key === '-') &&
         e.target.id !== 'score-input' &&
         e.target.id !== 'feedback-input' &&
         e.target.id !== 'max-points-input' &&
@@ -513,18 +520,24 @@ async function loadNextProblem() {
 async function submitGrade() {
     if (!currentProblem) return;
 
-    const score = parseFloat(document.getElementById('score-input').value);
+    const scoreValue = document.getElementById('score-input').value.trim();
     const feedback = document.getElementById('feedback-input').value;
     const maxPoints = problemMaxPoints[currentProblemNumber] || 8;
 
-    if (isNaN(score)) {
-        alert('Please enter a valid score');
-        return;
-    }
-
-    if (score > maxPoints) {
-        alert(`Score cannot exceed ${maxPoints} points`);
-        return;
+    // Check if it's a dash (for blank marking) or a number
+    let score;
+    if (scoreValue === '-') {
+        score = '-';  // Send dash as-is to backend
+    } else {
+        score = parseFloat(scoreValue);
+        if (isNaN(score)) {
+            alert('Please enter a valid score or "-" to mark as blank');
+            return;
+        }
+        if (score > maxPoints) {
+            alert(`Score cannot exceed ${maxPoints} points`);
+            return;
+        }
     }
 
     // Show loading state
@@ -601,17 +614,114 @@ async function loadStatistics() {
 
         // Add per-problem stats
         if (stats.problem_stats.length > 0) {
-            container.innerHTML += '<h3 style="margin-top: 30px;">Per-Problem Statistics</h3>';
+            container.innerHTML += '<h3 style="margin-top: 30px;">Per-Problem Statistics <small style="font-size: 14px; font-weight: normal; color: var(--gray-600);">(click a card to review)</small></h3>';
             const problemStatsHtml = stats.problem_stats.map(ps => {
                 const problemProgress = ps.num_total > 0 ? (ps.num_graded / ps.num_total * 100) : 0;
-                const avgText = ps.avg_score ? ps.avg_score.toFixed(2) : 'N/A';
+
+                // Format statistics with fallbacks
+                const avgText = ps.avg_score !== null && ps.avg_score !== undefined ? ps.avg_score.toFixed(2) : 'N/A';
                 const minText = ps.min_score !== null && ps.min_score !== undefined ? ps.min_score.toFixed(2) : 'N/A';
                 const maxText = ps.max_score !== null && ps.max_score !== undefined ? ps.max_score.toFixed(2) : 'N/A';
+                const medianText = ps.median_score !== null && ps.median_score !== undefined ? ps.median_score.toFixed(2) : 'N/A';
+                const stddevText = ps.stddev_score !== null && ps.stddev_score !== undefined ? ps.stddev_score.toFixed(2) : 'N/A';
+
+                // Format mean ± stddev
+                const meanPlusMinusText = (ps.avg_score !== null && ps.avg_score !== undefined && ps.stddev_score !== null && ps.stddev_score !== undefined)
+                    ? `${ps.avg_score.toFixed(2)} ± ${ps.stddev_score.toFixed(2)}`
+                    : 'N/A';
+
+                // Format normalized mean ± normalized stddev (as percentages)
+                const meanNormPlusMinusText = (ps.mean_normalized !== null && ps.mean_normalized !== undefined && ps.stddev_normalized !== null && ps.stddev_normalized !== undefined)
+                    ? `${(ps.mean_normalized * 100).toFixed(1)}% ± ${(ps.stddev_normalized * 100).toFixed(1)}%`
+                    : 'N/A';
+
+                const maxPointsText = ps.max_points !== null && ps.max_points !== undefined ? ps.max_points.toFixed(1) : 'N/A';
+
+                // Format blank % with highlight if high skip rate
+                let pctBlankDisplay;
+                const hasHighSkipRate = ps.pct_blank !== null && ps.pct_blank !== undefined && ps.pct_blank > 25;
+                if (ps.pct_blank !== null && ps.pct_blank !== undefined) {
+                    const blankValue = ps.pct_blank.toFixed(1) + '%';
+                    if (hasHighSkipRate) {
+                        pctBlankDisplay = `<div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Blank %</div><div class="blank-pct-highlight">${blankValue}</div>`;
+                    } else {
+                        pctBlankDisplay = `<div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Blank %</div><div style="font-weight: 600; font-size: 16px;">${blankValue}</div>`;
+                    }
+                } else {
+                    pctBlankDisplay = '<div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Blank %</div><div style="font-weight: 600; font-size: 16px;">N/A</div>';
+                }
+
+                // Determine CSS classes for visual indicators
+                let cssClasses = 'stat-card';
+
+                // Completion indicator - add 'fully-graded' class if all problems graded
+                if (ps.num_graded >= ps.num_total && ps.num_total > 0) {
+                    cssClasses += ' fully-graded';
+                }
+
+                // Performance indicator - add class based on normalized mean
+                // Only add if we have valid data
+                if (ps.mean_normalized !== null && ps.mean_normalized !== undefined) {
+                    if (ps.mean_normalized >= 0.9) {
+                        cssClasses += ' performance-excellent';  // 90%+
+                    } else if (ps.mean_normalized >= 0.75) {
+                        cssClasses += ' performance-good';       // 75-89%
+                    } else if (ps.mean_normalized >= 0.6) {
+                        cssClasses += ' performance-moderate';   // 60-74%
+                    } else if (ps.mean_normalized >= 0.5) {
+                        cssClasses += ' performance-poor';       // 50-59%
+                    } else {
+                        cssClasses += ' performance-verypoor';   // <50%
+                    }
+                }
+
                 return `
-                    <div class="stat-card">
-                        <h3>Problem ${ps.problem_number}</h3>
-                        <div>Avg: ${avgText} | Min: ${minText} | Max: ${maxText}</div>
-                        <div>Graded: ${ps.num_graded} / ${ps.num_total} (${problemProgress.toFixed(0)}%)</div>
+                    <div class="${cssClasses}" data-problem-number="${ps.problem_number}" style="cursor: pointer; transition: all 0.2s;"
+                         onmouseenter="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.15)';"
+                         onmouseleave="this.style.transform=''; this.style.boxShadow='';"
+                         onclick="reviewProblemFromStats(${ps.problem_number})">
+                        <h3 style="margin-bottom: 12px; border-bottom: 2px solid var(--primary-color); padding-bottom: 8px;">Problem ${ps.problem_number}</h3>
+
+                        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 8px;">
+                            <div style="text-align: left;">
+                                <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Mean ± Std Dev</div>
+                                <div style="font-weight: 600; font-size: 16px;">${meanPlusMinusText}</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Median</div>
+                                <div style="font-weight: 600; font-size: 16px;">${medianText}</div>
+                            </div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 12px;">
+                            <div style="text-align: left;">
+                                <div style="color: var(--gray-600); font-size: 12px; margin-bottom: 2px;">Normalized</div>
+                                <div style="font-weight: 600; font-size: 16px;">${meanNormPlusMinusText}</div>
+                            </div>
+                            <div style="text-align: right;">
+                                ${pctBlankDisplay}
+                            </div>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; padding-top: 8px; border-top: 1px solid var(--gray-200);">
+                            <div style="text-align: center;">
+                                <div style="color: var(--gray-600); font-size: 11px;">Min</div>
+                                <div style="font-weight: 500;">${minText}</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="color: var(--gray-600); font-size: 11px;">Max</div>
+                                <div style="font-weight: 500;">${maxText}</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="color: var(--gray-600); font-size: 11px;">Out of</div>
+                                <div style="font-weight: 500;">${maxPointsText}</div>
+                            </div>
+                        </div>
+
+                        <div style="padding-top: 8px; border-top: 1px solid var(--gray-200); text-align: center;">
+                            <div style="color: var(--gray-700); font-size: 13px; font-weight: 500;">
+                                Graded: ${ps.num_graded} / ${ps.num_total} (${problemProgress.toFixed(0)}%)
+                            </div>
+                        </div>
                     </div>
                 `;
             }).join('');
@@ -1507,6 +1617,72 @@ function connectToAutogradingStream() {
             autogradingEventSource = null;
         } else {
             progressMessage.textContent = 'Connection error - autograding may still be running';
+        }
+    });
+}
+
+// =============================================================================
+// PROBLEM IMAGE RESIZE FUNCTIONALITY
+// =============================================================================
+
+function setupProblemImageResize() {
+    const scrollContainer = document.getElementById('problem-scroll-container');
+    const resizeHandle = document.getElementById('problem-resize-handle');
+
+    if (!scrollContainer || !resizeHandle) {
+        console.warn('Problem scroll container or resize handle not found');
+        return;
+    }
+
+    // Load saved height from localStorage
+    const savedHeight = localStorage.getItem('problemScrollContainerHeight');
+    if (savedHeight) {
+        scrollContainer.style.height = savedHeight;
+    }
+
+    let isResizing = false;
+    let startY = 0;
+    let startHeight = 0;
+
+    // Mouse down on resize handle
+    resizeHandle.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startY = e.clientY;
+        startHeight = scrollContainer.offsetHeight;
+
+        // Prevent text selection during resize
+        e.preventDefault();
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'ns-resize';
+    });
+
+    // Mouse move - resize
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+
+        const deltaY = e.clientY - startY;
+        const newHeight = startHeight + deltaY;
+
+        // Enforce minimum and maximum height
+        const minHeight = 200; // Minimum 200px
+        const maxHeight = window.innerHeight * 0.9; // Max 90% of viewport height
+
+        if (newHeight >= minHeight && newHeight <= maxHeight) {
+            scrollContainer.style.height = `${newHeight}px`;
+        }
+    });
+
+    // Mouse up - stop resizing and save height
+    document.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+
+            // Save the height to localStorage
+            const currentHeight = scrollContainer.style.height;
+            localStorage.setItem('problemScrollContainerHeight', currentHeight);
+            console.log('Saved problem container height:', currentHeight);
         }
     });
 }

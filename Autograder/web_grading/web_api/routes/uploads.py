@@ -20,6 +20,8 @@ router = APIRouter()
 class SplitPointsSubmission(BaseModel):
     """Model for manual split points submission"""
     split_points: Dict[str, List[int]]
+    skip_first_region: bool = True  # Default to skipping first region (header/title)
+    last_page_blank: bool = False  # Default to not skipping last page
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -200,7 +202,9 @@ async def submit_alignment(
         file_paths,
         file_metadata,
         stream_id,
-        manual_split_points  # Pass manual splits
+        manual_split_points,  # Pass manual splits
+        submission.skip_first_region,  # Pass skip_first_region flag
+        submission.last_page_blank  # Pass last_page_blank flag
     )
 
     # Update session status
@@ -228,7 +232,9 @@ async def process_exam_files(
     file_paths: List[Path],
     file_metadata: Dict[Path, Dict],
     stream_id: str,
-    manual_split_points: Dict[int, List[int]] = None
+    manual_split_points: Dict[int, List[int]] = None,
+    skip_first_region: bool = True,
+    last_page_blank: bool = False
 ):
     """
     Background task to process uploaded exam files.
@@ -238,6 +244,9 @@ async def process_exam_files(
         file_paths: List of PDF file paths
         file_metadata: Dict mapping file_path -> {hash, original_filename}
         stream_id: SSE stream ID for progress updates
+        manual_split_points: Manual split points (optional)
+        skip_first_region: Skip first region when splitting (default True, for header/title)
+        last_page_blank: Skip last page when splitting (default False)
     """
     import logging
     import json
@@ -432,7 +441,9 @@ async def process_exam_files(
                 file_metadata=file_metadata,
                 problem_max_points=problem_max_points,
                 extract_max_points_enabled=False,  # Disabled - use manual entry via UI
-                manual_split_points=manual_split_points  # Use manual alignment if provided
+                manual_split_points=manual_split_points,  # Use manual alignment if provided
+                skip_first_region=skip_first_region,  # Skip first region (header/title)
+                last_page_blank=last_page_blank  # Skip last page if blank
             )
         )
 
@@ -495,12 +506,17 @@ async def process_exam_files(
                     if (problem.get("page_number") is not None and
                         problem.get("region_y_start") is not None and
                         problem.get("region_y_end") is not None):
-                        region_coords = json.dumps({
+                        coords_dict = {
                             "page_number": problem["page_number"],
                             "region_y_start": problem["region_y_start"],
                             "region_y_end": problem["region_y_end"],
                             "region_height": problem.get("region_height")
-                        })
+                        }
+                        # Add cross-page fields if present
+                        if problem.get("end_page_number") is not None:
+                            coords_dict["end_page_number"] = problem["end_page_number"]
+                            coords_dict["end_region_y"] = problem["end_region_y"]
+                        region_coords = json.dumps(coords_dict)
 
                     # Insert problem with region metadata and QR metadata if available
                     cursor.execute("""

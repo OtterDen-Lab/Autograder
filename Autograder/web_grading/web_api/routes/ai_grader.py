@@ -185,11 +185,11 @@ async def start_autograde(session_id: int, request: AutogradeRequest, background
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Count ungraded problems
+        # Count ungraded problems (include blank submissions for feedback)
         cursor.execute("""
             SELECT COUNT(*) as count
             FROM problems
-            WHERE session_id = ? AND problem_number = ? AND graded = 0 AND is_blank = 0
+            WHERE session_id = ? AND problem_number = ? AND graded = 0
         """, (session_id, request.problem_number))
 
         ungraded_count = cursor.fetchone()["count"]

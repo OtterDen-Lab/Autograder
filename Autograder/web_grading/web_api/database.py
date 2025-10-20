@@ -118,6 +118,7 @@ def create_schema(cursor):
             graded_at TIMESTAMP,
             file_hash TEXT,
             original_filename TEXT,
+            exam_pdf_data TEXT,
             FOREIGN KEY (session_id) REFERENCES grading_sessions(id)
         )
     """)
@@ -129,7 +130,7 @@ def create_schema(cursor):
             session_id INTEGER NOT NULL,
             submission_id INTEGER NOT NULL,
             problem_number INTEGER NOT NULL,
-            image_data TEXT NOT NULL,
+            image_data TEXT,
             score REAL,
             feedback TEXT,
             graded INTEGER DEFAULT 0,
@@ -138,6 +139,12 @@ def create_schema(cursor):
             blank_confidence REAL DEFAULT 0.0,
             blank_method TEXT,
             blank_reasoning TEXT,
+            max_points REAL,
+            ai_reasoning TEXT,
+            region_coords TEXT,
+            qr_question_type TEXT,
+            qr_seed INTEGER,
+            qr_version TEXT,
             FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
             FOREIGN KEY (submission_id) REFERENCES submissions(id)
         )
@@ -171,8 +178,25 @@ def create_schema(cursor):
             session_id INTEGER NOT NULL,
             problem_number INTEGER NOT NULL,
             avg_score REAL,
+            min_score REAL,
+            max_score REAL,
             num_graded INTEGER,
             num_total INTEGER,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
+            UNIQUE(session_id, problem_number)
+        )
+    """)
+
+    # Problem metadata (for storing max_points, rubrics, etc. per problem number)
+    cursor.execute("""
+        CREATE TABLE problem_metadata (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            problem_number INTEGER NOT NULL,
+            max_points REAL,
+            question_text TEXT,
+            grading_rubric TEXT,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
             UNIQUE(session_id, problem_number)

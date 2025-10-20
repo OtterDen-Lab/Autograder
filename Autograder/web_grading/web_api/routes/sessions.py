@@ -151,30 +151,81 @@ async def get_session_stats(session_id: int):
         problems_remaining = total_problems - problems_graded
         progress = (problems_graded / total_problems * 100) if total_problems > 0 else 0
 
-        # Get per-problem stats (calculate min/max dynamically)
+        # Get per-problem stats (calculate comprehensive statistics)
         cursor.execute("""
-            SELECT
-                problem_number,
-                AVG(CASE WHEN graded = 1 THEN score END) as avg_score,
-                MIN(CASE WHEN graded = 1 THEN score END) as min_score,
-                MAX(CASE WHEN graded = 1 THEN score END) as max_score,
-                SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as num_graded,
-                COUNT(*) as num_total
+            SELECT DISTINCT problem_number
             FROM problems
             WHERE session_id = ?
-            GROUP BY problem_number
             ORDER BY problem_number
         """, (session_id,))
 
+        problem_numbers = [row["problem_number"] for row in cursor.fetchall()]
         problem_stats = []
-        for stat_row in cursor.fetchall():
+
+        for problem_num in problem_numbers:
+            # Get all scores for this problem (for median and stddev)
+            cursor.execute("""
+                SELECT score, is_blank
+                FROM problems
+                WHERE session_id = ? AND problem_number = ? AND graded = 1
+            """, (session_id, problem_num))
+
+            results = cursor.fetchall()
+            scores = [row["score"] for row in results if row["score"] is not None]
+            num_blank = sum(1 for row in results if row["is_blank"])
+
+            # Get max_points for this problem (default to 8 if not set)
+            cursor.execute("""
+                SELECT max_points
+                FROM problem_metadata
+                WHERE session_id = ? AND problem_number = ?
+            """, (session_id, problem_num))
+            max_points_row = cursor.fetchone()
+            max_points = max_points_row["max_points"] if max_points_row else 8.0
+
+            # Get total count (including ungraded)
+            cursor.execute("""
+                SELECT COUNT(*) as num_total,
+                       SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as num_graded
+                FROM problems
+                WHERE session_id = ? AND problem_number = ?
+            """, (session_id, problem_num))
+            count_row = cursor.fetchone()
+            num_total = count_row["num_total"]
+            num_graded = count_row["num_graded"]
+
+            # Calculate statistics
+            import statistics
+            avg_score = statistics.mean(scores) if scores else None
+            min_score = min(scores) if scores else None
+            max_score = max(scores) if scores else None
+            median_score = statistics.median(scores) if scores else None
+            stddev_score = statistics.stdev(scores) if len(scores) > 1 else None
+
+            # Calculate normalized mean and stddev (0-1 scale based on max_points)
+            mean_normalized = None
+            stddev_normalized = None
+            if avg_score is not None and max_points is not None and max_points > 0:
+                mean_normalized = avg_score / max_points
+            if stddev_score is not None and max_points is not None and max_points > 0:
+                stddev_normalized = stddev_score / max_points
+
+            # Calculate percentage blank
+            pct_blank = (num_blank / num_graded * 100) if num_graded > 0 else None
+
             problem_stats.append(ProblemStatsResponse(
-                problem_number=stat_row["problem_number"],
-                avg_score=stat_row["avg_score"],
-                min_score=stat_row["min_score"],
-                max_score=stat_row["max_score"],
-                num_graded=stat_row["num_graded"],
-                num_total=stat_row["num_total"],
+                problem_number=problem_num,
+                avg_score=avg_score,
+                min_score=min_score,
+                max_score=max_score,
+                median_score=median_score,
+                stddev_score=stddev_score,
+                mean_normalized=mean_normalized,
+                stddev_normalized=stddev_normalized,
+                pct_blank=pct_blank,
+                num_graded=num_graded,
+                num_total=num_total,
+                max_points=max_points,
             ))
 
         return SessionStatsResponse(

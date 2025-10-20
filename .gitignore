@@ -5,6 +5,7 @@ out/
 .DS_Store
 *.zip
 .env
+docker/**/.env
 output.csv
 imgs/
 debug.tex

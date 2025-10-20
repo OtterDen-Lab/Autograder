@@ -45,6 +45,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Health check endpoint (must be before static files mount)
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "version": __version__}
+
+
 # Include routers
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(problems.router, prefix="/api/problems", tags=["problems"])
@@ -55,16 +62,10 @@ app.include_router(finalize.router, prefix="/api/finalize", tags=["finalize"])
 app.include_router(ai_grader.router, prefix="/api/ai-grader", tags=["ai-grader"])
 app.include_router(alignment.router, prefix="/api/alignment", tags=["alignment"])
 
-# Mount static files (frontend)
+# Mount static files (frontend) - MUST BE LAST as it catches all routes
 frontend_path = Path(__file__).parent.parent / "web_frontend"
 if frontend_path.exists():
     app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="static")
-
-
-@app.get("/api/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "version": __version__}
 
 
 if __name__ == "__main__":
