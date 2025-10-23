@@ -28,7 +28,7 @@ from .qr_scanner import QRScanner
 
 log = logging.getLogger(__name__)
 
-NAME_SIMILARITY_THRESHOLD = 95  # Percentage threshold for fuzzy matching
+NAME_SIMILARITY_THRESHOLD = 100  # Percentage threshold for fuzzy matching (exact match required)
 
 
 class ExamProcessor:
