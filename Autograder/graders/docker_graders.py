@@ -407,18 +407,22 @@ class Grader__template_grader(Grader__docker):
       source_repo: str = "https://github.com/CSUMB-SCD-instructors/course-template",
       student_code_path: str = "",
       extra_installs=None, # todo: these will be tough, do later
+      extra_dockerfile_lines=None,
       *args, **kwargs
   ):
-    
+
     if extra_installs is None:
       extra_installs = []
-    
+    if extra_dockerfile_lines is None:
+      extra_dockerfile_lines = []
+
     self.course_name = course_name
     self.assignment_name = assignment_name
     self.base_image_name = base_image_name
     self.source_repo = source_repo
     self.student_code_path = student_code_path
     self.extra_installs = extra_installs
+    self.extra_dockerfile_lines = extra_dockerfile_lines
     
     # Potential includes
     self.golden_repo = kwargs.get("golden_repo", None)
@@ -491,13 +495,27 @@ class Grader__template_grader(Grader__docker):
       # Set up dockerfile
       dockerfile_lines = [
         f"FROM {self.base_image_name}",
+      ]
+
+      # Add any extra Dockerfile lines after FROM but before copying repo
+      # This allows for apt installs, user setup, etc.
+      if self.extra_dockerfile_lines:
+        # Handle both string (single line) and list (multiple lines)
+        if isinstance(self.extra_dockerfile_lines, str):
+          dockerfile_lines.append(self.extra_dockerfile_lines)
+        else:
+          dockerfile_lines.extend(self.extra_dockerfile_lines)
+
+      # Continue with the standard setup
+      dockerfile_lines.extend([
+        "",  # Empty line for readability
         "COPY repo /repo",
         "COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /bin/",
         "WORKDIR /repo",
         "RUN rm -rf .venv",
         "USER root",
         "RUN uv sync --locked"
-      ]
+      ])
       
       # Next, we want to save our dockerfile
       with open(os.path.join(temp_build_dir, "Dockerfile"), "w") as dockerfile_fid:
