@@ -926,12 +926,18 @@ async function submitAlignment() {
         // Check if last page is blank
         const lastPageBlank = document.getElementById('last-page-blank-checkbox').checked;
 
+        // Convert all split points to integers (they may be floats from page dimensions)
+        const splitPointsInt = {};
+        for (const [pageNum, points] of Object.entries(splitPoints)) {
+            splitPointsInt[pageNum] = points.map(y => Math.round(y));
+        }
+
         // Submit split points to backend
         const response = await fetch(`${API_BASE}/uploads/${currentSession.id}/submit-alignment`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                split_points: splitPoints,
+                split_points: splitPointsInt,
                 skip_first_region: skipFirstRegion,
                 last_page_blank: lastPageBlank
             })

@@ -1358,6 +1358,11 @@ showAnswerBtn.addEventListener('click', async () => {
             answerList.innerHTML = '<div style="color: #6b7280;">No answers available</div>';
         }
 
+        // Trigger MathJax typesetting for the answer content
+        if (typeof MathJax !== 'undefined') {
+            MathJax.typesetPromise([answerList]).catch((err) => console.error('MathJax typesetting failed:', err));
+        }
+
     } catch (error) {
         console.error('Failed to load answer:', error);
         answerContent.style.display = 'none';
