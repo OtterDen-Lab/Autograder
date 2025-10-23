@@ -584,8 +584,8 @@ async def import_session(file: UploadFile = File(...)):
                 cursor.execute("""
                     INSERT INTO submissions
                     (session_id, document_id, approximate_name, name_image_data, student_name, display_name,
-                     canvas_user_id, page_mappings, total_score, graded_at, file_hash, original_filename)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     canvas_user_id, page_mappings, total_score, graded_at, file_hash, original_filename, exam_pdf_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     new_session_id,
                     submission["document_id"],
@@ -598,7 +598,8 @@ async def import_session(file: UploadFile = File(...)):
                     submission.get("total_score"),
                     submission.get("graded_at"),
                     submission.get("file_hash"),
-                    submission.get("original_filename")
+                    submission.get("original_filename"),
+                    submission.get("exam_pdf_data")
                 ))
 
                 new_submission_id = cursor.lastrowid
@@ -609,13 +610,14 @@ async def import_session(file: UploadFile = File(...)):
                     cursor.execute("""
                         INSERT INTO problems
                         (session_id, submission_id, problem_number, image_data, score, feedback,
-                         graded, graded_at, is_blank, blank_confidence, blank_method, blank_reasoning, max_points)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         graded, graded_at, is_blank, blank_confidence, blank_method, blank_reasoning, max_points,
+                         region_coords, qr_encrypted_data, ai_reasoning)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         new_session_id,
                         new_submission_id,
                         problem["problem_number"],
-                        problem["image_data"],
+                        problem.get("image_data"),
                         problem.get("score"),
                         problem.get("feedback"),
                         problem.get("graded", 0),
@@ -624,7 +626,10 @@ async def import_session(file: UploadFile = File(...)):
                         problem.get("blank_confidence", 0.0),
                         problem.get("blank_method"),
                         problem.get("blank_reasoning"),
-                        problem.get("max_points")
+                        problem.get("max_points"),
+                        problem.get("region_coords"),
+                        problem.get("qr_encrypted_data"),
+                        problem.get("ai_reasoning")
                     ))
 
             # Import problem stats

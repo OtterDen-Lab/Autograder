@@ -16,6 +16,14 @@ from ..database import get_db_connection, update_problem_stats
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 import Autograder.ai_helper as ai_helper
 
+from PIL import Image
+import io
+
+import json
+import logging
+
+log = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -36,8 +44,6 @@ def extract_problem_image(pdf_data: str, page_number: int, region_y_start: int,
     Returns:
         Base64 encoded PNG image of the problem region
     """
-    from PIL import Image
-    import io
 
     # Decode PDF from base64
     pdf_bytes = base64.b64decode(pdf_data)
@@ -169,7 +175,6 @@ def get_problem_image_data(problem_row, cursor) -> str:
     Returns:
         Base64 encoded PNG image
     """
-    import json
 
     # If image_data is stored, return it directly
     if problem_row["image_data"]:
@@ -196,13 +201,17 @@ def get_problem_image_data(problem_row, cursor) -> str:
                     region_data.get("end_page_number"),  # Optional: for cross-page regions
                     region_data.get("end_region_y")  # Optional: for cross-page regions
                 )
+            else:
+                log.error(f"Problem {problem_row['id']}: No PDF data found for submission {problem_row['submission_id']}")
         except (json.JSONDecodeError, KeyError) as e:
+            log.error(f"Problem {problem_row['id']}: Invalid region_coords data: {str(e)}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Invalid region_coords data: {str(e)}"
             )
 
     # Fallback: no image data available
+    log.error(f"Problem {problem_row['id']}: No image data available. has_image_data={bool(problem_row['image_data'])}, has_region_coords={bool(problem_row['region_coords'])}")
     raise HTTPException(
         status_code=500,
         detail="Problem image data not available (no stored image or PDF data)"
@@ -450,7 +459,6 @@ async def get_problem_in_context(problem_id: int):
         - page_image: Base64 PNG of full page
         - problem_region: Coordinates {y_start, y_end, height} for highlighting
     """
-    import json
 
     with get_db_connection() as conn:
         cursor = conn.cursor()
