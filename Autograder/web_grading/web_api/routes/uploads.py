@@ -518,13 +518,13 @@ async def process_exam_files(
                             coords_dict["end_region_y"] = problem["end_region_y"]
                         region_coords = json.dumps(coords_dict)
 
-                    # Insert problem with region metadata and QR metadata if available
+                    # Insert problem with region metadata and QR encrypted data if available
                     cursor.execute("""
                         INSERT INTO problems
                         (session_id, submission_id, problem_number, image_data, graded,
                          is_blank, blank_confidence, blank_method, blank_reasoning, max_points,
-                         region_coords, qr_question_type, qr_seed, qr_version)
-                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         region_coords, qr_encrypted_data)
+                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         session_id,
                         submission_id,
@@ -536,9 +536,7 @@ async def process_exam_files(
                         problem.get("blank_reasoning"),
                         max_points,
                         region_coords,  # JSON with page_number, region_y_start, region_y_end, region_height
-                        problem.get("qr_question_type"),  # QR metadata
-                        problem.get("qr_seed"),
-                        problem.get("qr_version")
+                        problem.get("qr_encrypted_data")  # Encrypted QR data
                     ))
 
             # Update session status

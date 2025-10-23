@@ -462,7 +462,7 @@ class Grader__template_grader(Grader__docker):
       
       subprocess.run(cmd, check=True, env=env)
     
-  def _get_image(self):
+  def _get_image(self, **kwargs):
     # What we want to do is to create a docker image that has the repository in it and installs all the required dependencies.
     # In this case that means we need to get the repo from either locally or remotely and then run `uv sync` in the right directory
 
@@ -491,6 +491,7 @@ class Grader__template_grader(Grader__docker):
       # Set up dockerfile
       dockerfile_lines = [
         f"FROM {self.base_image_name}",
+        *kwargs.get("docker_install_lines", []), # Any extra installs are just added in to our docker file
         "COPY repo /repo",
         "COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /bin/",
         "WORKDIR /repo",

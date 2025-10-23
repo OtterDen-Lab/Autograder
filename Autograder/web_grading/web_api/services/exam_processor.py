@@ -344,7 +344,8 @@ class ExamProcessor:
         start_page: int,
         start_y: float,
         end_page: int,
-        end_y: float
+        end_y: float,
+        dpi: int = 150
     ) -> Tuple[str, int]:
         """
         Extract a region that may span multiple pages and return as merged image.
@@ -383,7 +384,7 @@ class ExamProcessor:
             problem_page = problem_pdf.new_page(width=region.width, height=region.height)
             problem_page.show_pdf_page(problem_page.rect, pdf_document, start_page, clip=region)
 
-            pix = problem_page.get_pixmap(dpi=150)
+            pix = problem_page.get_pixmap(dpi=dpi)
             img_bytes = pix.tobytes("png")
             img_base64 = base64.b64encode(img_bytes).decode("utf-8")
 
@@ -407,7 +408,7 @@ class ExamProcessor:
                 problem_page = problem_pdf.new_page(width=first_region.width, height=first_region.height)
                 problem_page.show_pdf_page(problem_page.rect, pdf_document, start_page, clip=first_region)
 
-                pix = problem_page.get_pixmap(dpi=150)
+                pix = problem_page.get_pixmap(dpi=dpi)
                 img_bytes = pix.tobytes("png")
                 img = Image.open(io.BytesIO(img_bytes))
                 page_images.append(img)
@@ -424,7 +425,7 @@ class ExamProcessor:
                 problem_page = problem_pdf.new_page(width=region.width, height=region.height)
                 problem_page.show_pdf_page(problem_page.rect, pdf_document, page_num, clip=region)
 
-                pix = problem_page.get_pixmap(dpi=150)
+                pix = problem_page.get_pixmap(dpi=dpi)
                 img_bytes = pix.tobytes("png")
                 img = Image.open(io.BytesIO(img_bytes))
                 page_images.append(img)
@@ -440,7 +441,7 @@ class ExamProcessor:
                 problem_page = problem_pdf.new_page(width=last_region.width, height=last_region.height)
                 problem_page.show_pdf_page(problem_page.rect, pdf_document, end_page, clip=last_region)
 
-                pix = problem_page.get_pixmap(dpi=150)
+                pix = problem_page.get_pixmap(dpi=dpi)
                 img_bytes = pix.tobytes("png")
                 img = Image.open(io.BytesIO(img_bytes))
                 page_images.append(img)
@@ -603,49 +604,10 @@ class ExamProcessor:
 
         # Pre-scan QR codes on the ORIGINAL unredacted PDF before applying redaction
         # This is crucial because the redaction box may cover QR codes on the first page
-        qr_data_by_region = {}  # Will map (page_num, region_index) -> qr_data
+        # We need to do this BEFORE redaction but AFTER calculating linear splits
+        qr_data_by_problem = {}  # Will map problem_number -> qr_data
 
-        if self.qr_scanner.available:
-            log.info("Pre-scanning QR codes from original unredacted PDF...")
-            problem_number_temp = 1
-
-            for page_num in range(total_pages):
-                page_original = pdf_document_original[page_num]
-                line_positions = split_points.get(page_num, [])
-                # Include top margin to capture QR codes that may be above the question
-                regions = self.split_page_by_lines(page_original, line_positions, include_top_margin=True)
-
-                for region_index, region in enumerate(regions):
-                    # Skip first region on page 0 if requested (must match main processing logic)
-                    if skip_first_region and page_num == 0 and region_index == 0:
-                        log.debug(f"Pre-scan: Skipping first region on page 0 (header/title area)")
-                        continue
-
-                    # Extract region from ORIGINAL PDF
-                    problem_pdf = fitz.open()
-                    problem_page = problem_pdf.new_page(width=region.width, height=region.height)
-                    problem_page.show_pdf_page(problem_page.rect, pdf_document_original, page_num, clip=region)
-
-                    # Use higher DPI (300) for QR code scanning to improve detection
-                    pix = problem_page.get_pixmap(dpi=300)
-                    img_bytes = pix.tobytes("png")
-                    img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-                    log.debug(f"Page {page_num}, region {region_index}: Extracted image size {pix.width}x{pix.height} at 300 DPI")
-
-                    # Scan for QR code
-                    qr_data = self.qr_scanner.scan_qr_from_image(img_base64)
-                    if qr_data:
-                        log.info(f"Pre-scan: Problem {problem_number_temp} (page {page_num}, region {region_index}): "
-                                f"Found QR code with max_points={qr_data['max_points']}")
-                        qr_data_by_region[(page_num, region_index)] = qr_data
-
-                    problem_pdf.close()
-                    problem_number_temp += 1
-
-            log.info(f"Pre-scan complete: Found {len(qr_data_by_region)} QR codes")
-
-        # Close original PDF - we're done with it
-        pdf_document_original.close()
+        # We'll scan QR codes after creating the linear splits (below)
 
         # Now redact name area on first page
         if total_pages > 0:
@@ -733,6 +695,45 @@ class ExamProcessor:
         if skip_first_region and len(linear_splits) > 1:
             log.info(f"Skipping first region (header/title area): from {linear_splits[0]} to {linear_splits[1]}")
 
+        # NOW scan QR codes from the linearized problem regions (BEFORE redaction)
+        # This must happen after linear_splits is calculated but before problems are created
+        if self.qr_scanner.available:
+            log.info(f"Pre-scanning {len(linear_splits) - 1 - start_index} problem regions for QR codes from unredacted PDF...")
+            problem_number_prescan = 1
+
+            for i in range(start_index, len(linear_splits) - 1):
+                start_page, start_y = linear_splits[i]
+                end_page, end_y = linear_splits[i + 1]
+
+                # Adjust end point if needed (same logic as problem extraction)
+                if end_y == 0 and end_page > start_page:
+                    end_page = end_page - 1
+                    end_y = pdf_document_original[end_page].rect.height
+
+                # Extract region from ORIGINAL unredacted PDF at higher DPI for QR detection
+                problem_image_base64, _ = self._extract_cross_page_region(
+                    pdf_document_original,
+                    start_page, start_y,
+                    end_page, end_y,
+                    dpi=300  # Higher DPI for complex QR codes
+                )
+
+                # Scan for QR code in this problem region
+                qr_data = self.qr_scanner.scan_qr_from_image(problem_image_base64)
+                if qr_data:
+                    log.info(f"Pre-scan: Problem {problem_number_prescan}: "
+                            f"Found QR code with max_points={qr_data['max_points']}")
+                    qr_data_by_problem[problem_number_prescan] = qr_data
+                else:
+                    log.debug(f"Pre-scan: Problem {problem_number_prescan}: No QR code found")
+
+                problem_number_prescan += 1
+
+            log.info(f"Pre-scan complete: Found {len(qr_data_by_problem)} QR codes out of {problem_number_prescan - 1} problems")
+
+        # Close original PDF - we're done with it
+        pdf_document_original.close()
+
         # Now create problems from consecutive split pairs
         problems = []
         problem_number = 1
@@ -774,9 +775,17 @@ class ExamProcessor:
                 problem_dict["end_region_y"] = int(end_y)
                 log.info(f"Problem {problem_number} spans multiple pages: {start_page} to {end_page}")
 
-            # TODO: Update QR scanning to work with linearized regions
-            # For now, skip QR scanning for cross-page regions
-            qr_data = None
+            # Check if we have pre-scanned QR data for this problem
+            qr_data = qr_data_by_problem.get(problem_number)
+
+            if qr_data:
+                log.info(f"Problem {problem_number}: Using pre-scanned QR code data with max_points={qr_data['max_points']}")
+                problem_dict["max_points"] = qr_data["max_points"]
+                problem_dict["qr_encrypted_data"] = qr_data.get("encrypted_data")  # Store encrypted string for answer regeneration
+
+                # Cache the max points for this problem number (for future exams)
+                if problem_max_points is not None:
+                    problem_max_points[problem_number] = qr_data["max_points"]
 
             # Detect blank if requested
             if detect_blank:

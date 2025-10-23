@@ -16,6 +16,8 @@ from ..models import (
 )
 from ..database import get_db_connection
 from lms_interface.canvas_interface import CanvasInterface
+from ..services.qr_scanner import QRScanner
+import os
 
 router = APIRouter()
 
@@ -654,3 +656,50 @@ async def import_session(file: UploadFile = File(...)):
     except Exception as e:
         log.error(f"Import failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+
+
+@router.post("/encryption-key/test")
+async def test_encryption_key(encrypted_data: str, encryption_key: str):
+    """Test if an encryption key can decrypt sample QR code data"""
+    from ..services.qr_scanner import MinimalQuestionQRCode
+    import logging
+    log = logging.getLogger(__name__)
+
+    try:
+        # Try to decrypt with the provided key
+        metadata = MinimalQuestionQRCode.decrypt_question_data(
+            encrypted_data,
+            encryption_key.encode()
+        )
+
+        return {
+            "status": "success",
+            "message": "Encryption key is valid",
+            "metadata": metadata
+        }
+    except Exception as e:
+        log.warning(f"Failed to decrypt with provided key: {e}")
+        return {
+            "status": "failed",
+            "message": f"Encryption key failed to decrypt: {str(e)}"
+        }
+
+
+@router.post("/encryption-key/set")
+async def set_encryption_key(encryption_key: str):
+    """
+    Set the encryption key for the current session (runtime only, not persisted).
+    This is a workaround for when the QUIZ_ENCRYPTION_KEY env var isn't available.
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    # Set the environment variable for this process
+    os.environ['QUIZ_ENCRYPTION_KEY'] = encryption_key
+
+    log.info("Encryption key updated for current session (runtime only)")
+
+    return {
+        "status": "success",
+        "message": "Encryption key set for current session. This will be lost when the server restarts."
+    }

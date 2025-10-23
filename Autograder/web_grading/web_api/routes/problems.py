@@ -269,9 +269,7 @@ async def get_next_problem(session_id: int, problem_number: int):
             blank_method=row["blank_method"],
             blank_reasoning=row["blank_reasoning"],
             ai_reasoning=row["ai_reasoning"],
-            qr_question_type=row["qr_question_type"],
-            qr_seed=row["qr_seed"],
-            qr_version=row["qr_version"]
+            has_qr_data=bool(row["qr_encrypted_data"]) if "qr_encrypted_data" in row.keys() else False
         )
 
 
@@ -335,9 +333,7 @@ async def get_previous_problem(session_id: int, problem_number: int):
             blank_method=row["blank_method"],
             blank_reasoning=row["blank_reasoning"],
             ai_reasoning=row["ai_reasoning"],
-            qr_question_type=row["qr_question_type"],
-            qr_seed=row["qr_seed"],
-            qr_version=row["qr_version"]
+            has_qr_data=bool(row["qr_encrypted_data"]) if "qr_encrypted_data" in row.keys() else False
         )
 
 
@@ -440,9 +436,7 @@ async def get_problem(problem_id: int):
             blank_method=row["blank_method"],
             blank_reasoning=row["blank_reasoning"],
             ai_reasoning=row["ai_reasoning"],
-            qr_question_type=row["qr_question_type"],
-            qr_seed=row["qr_seed"],
-            qr_version=row["qr_version"]
+            has_qr_data=bool(row["qr_encrypted_data"]) if "qr_encrypted_data" in row.keys() else False
         )
 
 
@@ -694,7 +688,7 @@ async def regenerate_answer(problem_id: int):
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT qr_question_type, qr_seed, qr_version, max_points, problem_number
+            SELECT qr_encrypted_data, max_points, problem_number
             FROM problems
             WHERE id = ?
         """, (problem_id,))
@@ -703,16 +697,16 @@ async def regenerate_answer(problem_id: int):
         if not row:
             raise HTTPException(status_code=404, detail="Problem not found")
 
-        # Check if QR metadata is available
-        if not row["qr_question_type"] or row["qr_seed"] is None:
+        # Check if QR encrypted data is available
+        if not row["qr_encrypted_data"]:
             raise HTTPException(
                 status_code=400,
-                detail="QR code metadata not available for this problem"
+                detail="QR code data not available for this problem"
             )
 
     # Import QuizGeneration regeneration function
     try:
-        from grade_from_qr import regenerate_from_metadata
+        from grade_from_qr import regenerate_from_encrypted
     except ImportError:
         raise HTTPException(
             status_code=500,
@@ -720,13 +714,17 @@ async def regenerate_answer(problem_id: int):
         )
 
     try:
-        # Regenerate the answer using QR metadata
-        result = regenerate_from_metadata(
-            question_type=row["qr_question_type"],
-            seed=row["qr_seed"],
-            version=row["qr_version"],
+        # Regenerate the answer using encrypted QR data
+        result = regenerate_from_encrypted(
+            encrypted_data=row["qr_encrypted_data"],
             points=row["max_points"] or 0.0
         )
+
+        # Extract metadata from result (returned by regenerate_from_encrypted)
+        question_type = result.get('question_type')
+        seed = result.get('seed')
+        version = result.get('version')
+        config = result.get('config')
 
         # Format answers for display
         answers = []
@@ -742,15 +740,26 @@ async def regenerate_answer(problem_id: int):
 
             answers.append(answer_dict)
 
-        return {
+        # Prepare response
+        response = {
             "problem_id": problem_id,
             "problem_number": row["problem_number"],
-            "question_type": row["qr_question_type"],
-            "seed": row["qr_seed"],
-            "version": row["qr_version"],
+            "question_type": question_type,
+            "seed": seed,
+            "version": version,
             "max_points": row["max_points"],
             "answers": answers
         }
+
+        # Include config if available
+        if config:
+            response['config'] = config
+
+        # Include HTML answer key if available
+        if 'answer_key_html' in result:
+            response['answer_key_html'] = result['answer_key_html']
+
+        return response
 
     except ValueError as e:
         raise HTTPException(
