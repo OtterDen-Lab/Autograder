@@ -694,7 +694,7 @@ async def regenerate_answer(problem_id: int):
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT qr_question_type, qr_seed, qr_version, max_points, problem_number
+            SELECT qr_question_type, qr_seed, qr_version, qr_config, max_points, problem_number
             FROM problems
             WHERE id = ?
         """, (problem_id,))
@@ -720,12 +720,22 @@ async def regenerate_answer(problem_id: int):
         )
 
     try:
+        # Parse qr_config if it's a JSON string
+        import json
+        qr_config = row["qr_config"] if "qr_config" in row.keys() else None
+        if qr_config and isinstance(qr_config, str):
+            try:
+                qr_config = json.loads(qr_config)
+            except json.JSONDecodeError:
+                qr_config = None  # Invalid JSON, skip config
+
         # Regenerate the answer using QR metadata
         result = regenerate_from_metadata(
             question_type=row["qr_question_type"],
             seed=row["qr_seed"],
             version=row["qr_version"],
-            points=row["max_points"] or 0.0
+            points=row["max_points"] or 0.0,
+            kwargs=qr_config  # Pass configuration parameters if available
         )
 
         # Format answers for display
@@ -742,7 +752,8 @@ async def regenerate_answer(problem_id: int):
 
             answers.append(answer_dict)
 
-        return {
+        # Prepare response
+        response = {
             "problem_id": problem_id,
             "problem_number": row["problem_number"],
             "question_type": row["qr_question_type"],
@@ -751,6 +762,12 @@ async def regenerate_answer(problem_id: int):
             "max_points": row["max_points"],
             "answers": answers
         }
+
+        # Include HTML answer key if available
+        if 'answer_key_html' in result:
+            response['answer_key_html'] = result['answer_key_html']
+
+        return response
 
     except ValueError as e:
         raise HTTPException(

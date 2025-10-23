@@ -1318,10 +1318,25 @@ showAnswerBtn.addEventListener('click', async () => {
         document.getElementById('answer-seed').textContent = data.seed;
         document.getElementById('answer-version').textContent = data.version;
         document.getElementById('answer-max-points').textContent = data.max_points;
+
+        // Display config if available
+        const configWrapper = document.getElementById('answer-config-wrapper');
+        const configSpan = document.getElementById('answer-config');
+        if (data.config) {
+            configSpan.textContent = JSON.stringify(data.config);
+            configWrapper.style.display = 'block';
+        } else {
+            configWrapper.style.display = 'none';
+        }
+
         answerMetadata.style.display = 'block';
 
-        // Display answers
-        if (data.answers && data.answers.length > 0) {
+        // Display HTML answer key if available, otherwise show individual answers
+        if (data.answer_key_html) {
+            // Display the full HTML answer key
+            answerList.innerHTML = `<div style="padding: 15px; background: white; border-radius: 4px;">${data.answer_key_html}</div>`;
+        } else if (data.answers && data.answers.length > 0) {
+            // Fallback to individual answers
             answerList.innerHTML = data.answers.map(answer => {
                 let html = `<div style="margin-bottom: 15px; padding: 10px; background: white; border-radius: 4px;">`;
                 html += `<div style="font-weight: 600; color: #1e40af; margin-bottom: 5px;">${answer.key}:</div>`;

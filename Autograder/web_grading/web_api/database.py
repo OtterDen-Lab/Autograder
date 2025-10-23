@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 
 
 def get_db_path() -> Path:
@@ -273,6 +273,10 @@ def run_migrations(cursor, from_version: int):
         migrate_to_v16(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (16)")
 
+    if from_version < 17:
+        migrate_to_v17(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (17)")
+
 
 def migrate_to_v2(cursor):
     """Add progress tracking columns to grading_sessions"""
@@ -481,6 +485,14 @@ def migrate_to_v16(cursor):
     cursor.execute("ALTER TABLE problems ADD COLUMN qr_question_type TEXT")
     cursor.execute("ALTER TABLE problems ADD COLUMN qr_seed INTEGER")
     cursor.execute("ALTER TABLE problems ADD COLUMN qr_version TEXT")
+
+
+def migrate_to_v17(cursor):
+    """Add qr_config column to problems table for question configuration parameters"""
+    log.info("Migrating to schema version 17: adding qr_config to problems")
+
+    # Add column for storing QR code configuration (kwargs for answer generation)
+    cursor.execute("ALTER TABLE problems ADD COLUMN qr_config TEXT")
 
 
 def update_problem_stats(session_id: int):
