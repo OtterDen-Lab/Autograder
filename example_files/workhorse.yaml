@@ -1,5 +1,5 @@
 prod: False
-push: True
+push: False
 
 # Define assignment types with default graders and settings
 assignment_types:
@@ -26,6 +26,8 @@ courses:
         type: programming
         settings:
           base_image_name: "samogden/cst334"
+          extra_install_lines:
+            - "RUN apt install clang"
           source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
           golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
           files_from_golden:
@@ -93,3 +95,4 @@ courses:
           - 520126  # LL12
           - 520127  # LL13
           - 520128  # LL14
+

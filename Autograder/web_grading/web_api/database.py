@@ -145,6 +145,7 @@ def create_schema(cursor):
             qr_question_type TEXT,
             qr_seed INTEGER,
             qr_version TEXT,
+            qr_config TEXT,
             FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
             FOREIGN KEY (submission_id) REFERENCES submissions(id)
         )

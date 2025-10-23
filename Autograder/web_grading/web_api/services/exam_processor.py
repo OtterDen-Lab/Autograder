@@ -344,7 +344,8 @@ class ExamProcessor:
         start_page: int,
         start_y: float,
         end_page: int,
-        end_y: float
+        end_y: float,
+        dpi: int = 150
     ) -> Tuple[str, int]:
         """
         Extract a region that may span multiple pages and return as merged image.
@@ -383,7 +384,7 @@ class ExamProcessor:
             problem_page = problem_pdf.new_page(width=region.width, height=region.height)
             problem_page.show_pdf_page(problem_page.rect, pdf_document, start_page, clip=region)
 
-            pix = problem_page.get_pixmap(dpi=150)
+            pix = problem_page.get_pixmap(dpi=dpi)
             img_bytes = pix.tobytes("png")
             img_base64 = base64.b64encode(img_bytes).decode("utf-8")
 
@@ -407,7 +408,7 @@ class ExamProcessor:
                 problem_page = problem_pdf.new_page(width=first_region.width, height=first_region.height)
                 problem_page.show_pdf_page(problem_page.rect, pdf_document, start_page, clip=first_region)
 
-                pix = problem_page.get_pixmap(dpi=150)
+                pix = problem_page.get_pixmap(dpi=dpi)
                 img_bytes = pix.tobytes("png")
                 img = Image.open(io.BytesIO(img_bytes))
                 page_images.append(img)
@@ -424,7 +425,7 @@ class ExamProcessor:
                 problem_page = problem_pdf.new_page(width=region.width, height=region.height)
                 problem_page.show_pdf_page(problem_page.rect, pdf_document, page_num, clip=region)
 
-                pix = problem_page.get_pixmap(dpi=150)
+                pix = problem_page.get_pixmap(dpi=dpi)
                 img_bytes = pix.tobytes("png")
                 img = Image.open(io.BytesIO(img_bytes))
                 page_images.append(img)
@@ -440,7 +441,7 @@ class ExamProcessor:
                 problem_page = problem_pdf.new_page(width=last_region.width, height=last_region.height)
                 problem_page.show_pdf_page(problem_page.rect, pdf_document, end_page, clip=last_region)
 
-                pix = problem_page.get_pixmap(dpi=150)
+                pix = problem_page.get_pixmap(dpi=dpi)
                 img_bytes = pix.tobytes("png")
                 img = Image.open(io.BytesIO(img_bytes))
                 page_images.append(img)
@@ -713,7 +714,8 @@ class ExamProcessor:
                 problem_image_base64, _ = self._extract_cross_page_region(
                     pdf_document_original,
                     start_page, start_y,
-                    end_page, end_y
+                    end_page, end_y,
+                    dpi=300  # Higher DPI for complex QR codes
                 )
 
                 # Scan for QR code in this problem region

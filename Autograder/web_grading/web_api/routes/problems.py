@@ -763,6 +763,10 @@ async def regenerate_answer(problem_id: int):
             "answers": answers
         }
 
+        # Include config if available (parsed from qr_config)
+        if qr_config:
+            response['config'] = qr_config
+
         # Include HTML answer key if available
         if 'answer_key_html' in result:
             response['answer_key_html'] = result['answer_key_html']
