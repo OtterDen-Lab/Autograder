@@ -1,18 +1,15 @@
 """
-QR code scanning and decryption service for quiz questions.
+QR code scanning service for quiz questions.
 
 This service scans QR codes from exam problem images and extracts:
 - Question number
 - Maximum points
-- Encrypted question metadata (type, seed, version)
+- Encrypted question metadata (passed to QuizGeneration for decryption)
 """
 import base64
 import json
 import logging
-import os
-import sys
 from typing import Optional, Dict, List
-from pathlib import Path
 from PIL import Image
 import io
 
@@ -26,85 +23,15 @@ except ImportError:
     log.warning("pyzbar not installed - QR code scanning will not be available")
     PYZBAR_AVAILABLE = False
 
-# Try to import cryptography for decryption
-try:
-    from cryptography.fernet import Fernet
-    CRYPTOGRAPHY_AVAILABLE = True
-except ImportError:
-    log.warning("cryptography not installed - QR code decryption will not be available")
-    CRYPTOGRAPHY_AVAILABLE = False
-    Fernet = None
-
-
-# Minimal decryption implementation (doesn't require segno dependency)
-class MinimalQuestionQRCode:
-    """Minimal implementation of QR code decryption without requiring full QuizGeneration module."""
-
-    @classmethod
-    def get_encryption_key(cls) -> bytes:
-        """Get encryption key from environment."""
-        if not CRYPTOGRAPHY_AVAILABLE:
-            return b''
-
-        key_str = os.environ.get('QUIZ_ENCRYPTION_KEY')
-        if key_str is None:
-            log.warning("QUIZ_ENCRYPTION_KEY not set! Using temporary key (insecure)")
-            return Fernet.generate_key()
-        return key_str.encode()
-
-    @classmethod
-    def decrypt_question_data(cls, encrypted_data: str, key: bytes = None) -> Dict:
-        """Decode question regeneration data from QR code."""
-        if key is None:
-            key = cls.get_encryption_key()
-
-        try:
-            # Decode from base64
-            obfuscated = base64.urlsafe_b64decode(encrypted_data.encode())
-
-            # Reverse XOR obfuscation
-            if key:
-                key_bytes = key[:16] if isinstance(key, bytes) else key.encode()[:16]
-                data_bytes = bytes(b ^ key_bytes[i % len(key_bytes)] for i, b in enumerate(obfuscated))
-            else:
-                data_bytes = obfuscated
-
-            data_str = data_bytes.decode('utf-8')
-            
-            log.debug(data_str)
-
-            # Parse data string (format: "question_type:seed:version")
-            parts = data_str.split(':')
-            if len(parts) != 3:
-                raise ValueError(f"Invalid encoded data format: expected 3 parts, got {len(parts)}")
-
-            question_type, seed_str, version = parts
-
-            return {
-                "question_type": question_type,
-                "seed": int(seed_str),
-                "version": version
-            }
-        except Exception as e:
-            log.error(f"Failed to decode question data: {e}")
-            raise ValueError(f"Failed to decode QR code data: {e}")
-
-
-# Use the minimal implementation (avoids importing segno)
-QuestionQRCode = MinimalQuestionQRCode
-QUIZ_GENERATOR_AVAILABLE = CRYPTOGRAPHY_AVAILABLE
-
 
 class QRScanner:
     """Service for scanning and processing QR codes from exam problems."""
 
     def __init__(self):
         """Initialize QR scanner."""
-        self.available = PYZBAR_AVAILABLE and QUIZ_GENERATOR_AVAILABLE
+        self.available = PYZBAR_AVAILABLE
         if not PYZBAR_AVAILABLE:
             log.warning("QR scanner unavailable: pyzbar not installed")
-        if not QUIZ_GENERATOR_AVAILABLE:
-            log.warning("QR scanner unavailable: QuizGeneration module not found")
 
     def scan_qr_from_image(self, image_base64: str) -> Optional[Dict]:
         """
@@ -176,32 +103,6 @@ class QRScanner:
 
         except Exception as e:
             log.error(f"Error scanning QR code: {e}", exc_info=True)
-            return None
-
-    def decrypt_metadata(self, encrypted_str: str) -> Optional[Dict]:
-        """
-        Decrypt the encrypted metadata from QR code.
-
-        Args:
-            encrypted_str: Base64 encoded encrypted string
-
-        Returns:
-            Dict with decrypted metadata:
-            {
-                "question_type": str,
-                "seed": int,
-                "version": str
-            }
-        """
-        if not QUIZ_GENERATOR_AVAILABLE:
-            log.error("Cannot decrypt: QuizGeneration module not available")
-            return None
-
-        try:
-            metadata = QuestionQRCode.decrypt_question_data(encrypted_str)
-            return metadata
-        except Exception as e:
-            log.error(f"Error decrypting QR metadata: {e}")
             return None
 
     def scan_qr_from_region(
