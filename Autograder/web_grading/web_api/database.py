@@ -142,10 +142,7 @@ def create_schema(cursor):
             max_points REAL,
             ai_reasoning TEXT,
             region_coords TEXT,
-            qr_question_type TEXT,
-            qr_seed INTEGER,
-            qr_version TEXT,
-            qr_config TEXT,
+            qr_encrypted_data TEXT,
             FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
             FOREIGN KEY (submission_id) REFERENCES submissions(id)
         )
@@ -489,11 +486,14 @@ def migrate_to_v16(cursor):
 
 
 def migrate_to_v17(cursor):
-    """Add qr_config column to problems table for question configuration parameters"""
-    log.info("Migrating to schema version 17: adding qr_config to problems")
+    """Replace QR code fields with single encrypted data field"""
+    log.info("Migrating to schema version 17: replacing QR fields with qr_encrypted_data")
 
-    # Add column for storing QR code configuration (kwargs for answer generation)
-    cursor.execute("ALTER TABLE problems ADD COLUMN qr_config TEXT")
+    # Add new encrypted data column
+    cursor.execute("ALTER TABLE problems ADD COLUMN qr_encrypted_data TEXT")
+
+    # Note: Old columns (qr_question_type, qr_seed, qr_version) remain for backward compatibility
+    # but new code will only use qr_encrypted_data
 
 
 def update_problem_stats(session_id: int):

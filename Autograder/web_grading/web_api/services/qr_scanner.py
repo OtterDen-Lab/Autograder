@@ -70,6 +70,8 @@ class MinimalQuestionQRCode:
                 data_bytes = obfuscated
 
             data_str = data_bytes.decode('utf-8')
+            
+            log.debug(data_str)
 
             # Parse data string (format: "question_type:seed:version")
             parts = data_str.split(':')
@@ -161,23 +163,12 @@ class QRScanner:
             result = {
                 "question_number": question_number,
                 "max_points": float(max_points),
-                "question_type": None,
-                "seed": None,
-                "version": None
+                "encrypted_data": encrypted_metadata  # Store encrypted string directly
             }
 
-            # Try to decrypt metadata if present (optional - not required for max points)
+            # Log what we found
             if encrypted_metadata:
-                metadata = self.decrypt_metadata(encrypted_metadata)
-                if metadata:
-                    result["question_type"] = metadata.get("question_type")
-                    result["seed"] = metadata.get("seed")
-                    result["version"] = metadata.get("version")
-                    log.info(f"Successfully scanned QR code: Q{question_number}, {max_points} pts, "
-                             f"{result['question_type']} (seed={result['seed']})")
-                else:
-                    log.warning(f"Failed to decrypt QR metadata, but still using max_points={max_points}")
-                    log.info(f"Successfully scanned QR code: Q{question_number}, {max_points} pts (metadata unavailable)")
+                log.info(f"Successfully scanned QR code: Q{question_number}, {max_points} pts (has encrypted metadata)")
             else:
                 log.info(f"Successfully scanned QR code: Q{question_number}, {max_points} pts (no metadata)")
 

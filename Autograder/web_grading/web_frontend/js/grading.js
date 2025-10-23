@@ -281,9 +281,9 @@ function displayCurrentProblem() {
     // Re-attach event listeners
     setupScoreSync();
 
-    // Show/hide "Show Answer" button based on QR metadata availability
+    // Show/hide "Show Answer" button based on QR data availability
     const showAnswerBtn = document.getElementById('show-answer-btn');
-    if (currentProblem.qr_question_type && currentProblem.qr_seed !== null) {
+    if (currentProblem.has_qr_data) {
         showAnswerBtn.style.display = 'inline-block';
     } else {
         showAnswerBtn.style.display = 'none';
@@ -1319,15 +1319,15 @@ showAnswerBtn.addEventListener('click', async () => {
         document.getElementById('answer-version').textContent = data.version;
         document.getElementById('answer-max-points').textContent = data.max_points;
 
-        // Display config if available
+        // Display config if available (always show, with "None" if not present)
         const configWrapper = document.getElementById('answer-config-wrapper');
         const configSpan = document.getElementById('answer-config');
         if (data.config) {
             configSpan.textContent = JSON.stringify(data.config);
-            configWrapper.style.display = 'block';
         } else {
-            configWrapper.style.display = 'none';
+            configSpan.textContent = 'None';
         }
+        configWrapper.style.display = 'block';
 
         answerMetadata.style.display = 'block';
 

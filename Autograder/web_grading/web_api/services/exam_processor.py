@@ -781,10 +781,7 @@ class ExamProcessor:
             if qr_data:
                 log.info(f"Problem {problem_number}: Using pre-scanned QR code data with max_points={qr_data['max_points']}")
                 problem_dict["max_points"] = qr_data["max_points"]
-                problem_dict["qr_question_type"] = qr_data.get("question_type")
-                problem_dict["qr_seed"] = qr_data.get("seed")
-                problem_dict["qr_version"] = qr_data.get("version")
-                problem_dict["qr_config"] = qr_data.get("config")  # Configuration parameters for answer generation (will be kwargs)
+                problem_dict["qr_encrypted_data"] = qr_data.get("encrypted_data")  # Store encrypted string for answer regeneration
 
                 # Cache the max points for this problem number (for future exams)
                 if problem_max_points is not None:
