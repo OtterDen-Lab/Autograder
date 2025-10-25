@@ -1,5 +1,5 @@
-prod: False
-push: False
+prod: True
+push: True
 
 # Define assignment types with default graders and settings
 assignment_types:
