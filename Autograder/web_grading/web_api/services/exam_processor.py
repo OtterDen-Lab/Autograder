@@ -28,7 +28,7 @@ from .qr_scanner import QRScanner
 
 log = logging.getLogger(__name__)
 
-NAME_SIMILARITY_THRESHOLD = 100  # Percentage threshold for fuzzy matching (exact match required)
+NAME_SIMILARITY_THRESHOLD = 97  # Percentage threshold for fuzzy matching (exact match required)
 
 
 class ExamProcessor:
@@ -191,7 +191,7 @@ class ExamProcessor:
                         best_score = score
                         best_match = student
 
-                if best_score > NAME_SIMILARITY_THRESHOLD:
+                if best_score >= NAME_SIMILARITY_THRESHOLD:
                     matched_student = best_match
                     unmatched_students.remove(best_match)
                     log.info(f"  Matched to: {matched_student['name']} ({best_score}%)")

@@ -77,9 +77,23 @@ async def upload_exams(
     temp_dir = Path(tempfile.mkdtemp())
     saved_files = []
     file_metadata = {}  # Map: file_path -> {hash, original_filename}
+    filename_counter = {}  # Track filename usage to handle duplicates
 
     for file in files:
-        file_path = temp_dir / file.filename
+        # Handle duplicate filenames by appending a counter
+        # This can happen when dragging folders with same filenames in different subdirectories
+        base_filename = file.filename
+        if base_filename in filename_counter:
+            filename_counter[base_filename] += 1
+            # Insert counter before extension: "file.pdf" -> "file_1.pdf"
+            stem = Path(base_filename).stem
+            suffix = Path(base_filename).suffix
+            unique_filename = f"{stem}_{filename_counter[base_filename]}{suffix}"
+        else:
+            filename_counter[base_filename] = 0
+            unique_filename = base_filename
+
+        file_path = temp_dir / unique_filename
         with open(file_path, "wb") as f:
             content = await file.read()
             f.write(content)
@@ -88,7 +102,7 @@ async def upload_exams(
         file_hash = compute_file_hash(file_path)
         file_metadata[file_path] = {
             "hash": file_hash,
-            "original_filename": file.filename
+            "original_filename": base_filename  # Store original name for display
         }
 
         saved_files.append(file_path)
@@ -179,19 +193,15 @@ async def upload_exams(
     # Generate composite images using ALL files (existing + new)
     all_file_paths = [Path(p) for p in session_data["file_paths"]]
     alignment_service = ManualAlignmentService()
-    composites = alignment_service.create_composite_images(all_file_paths)
+    composites, composite_dimensions = alignment_service.create_composite_images(all_file_paths)
 
-    # Get page dimensions from first file
-    import fitz
-    first_pdf = fitz.open(str(all_file_paths[0]))
+    # Convert composite dimensions to dict with string keys for JSON serialization
     page_dimensions = {}
-    for page_num in range(first_pdf.page_count):
-        page = first_pdf[page_num]
+    for page_num, (width, height) in composite_dimensions.items():
         page_dimensions[page_num] = {
-            "width": page.rect.width,
-            "height": page.rect.height
+            "width": width,
+            "height": height
         }
-    first_pdf.close()
 
     return {
         "session_id": session_id,

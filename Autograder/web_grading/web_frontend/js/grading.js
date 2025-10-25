@@ -579,6 +579,20 @@ async function submitGrade() {
     }
 }
 
+// Toggle student scores visibility
+function toggleStudentScores() {
+    const container = document.getElementById('student-scores-container');
+    const toggle = document.getElementById('student-scores-toggle');
+
+    if (container.style.display === 'none') {
+        container.style.display = 'block';
+        toggle.textContent = '▼';
+    } else {
+        container.style.display = 'none';
+        toggle.textContent = '▶';
+    }
+}
+
 // Load statistics
 async function loadStatistics() {
     try {
@@ -728,28 +742,37 @@ async function loadStatistics() {
             container.innerHTML += '<div class="problem-stats-grid">' + problemStatsHtml + '</div>';
         }
 
-        // Add student scores table
+        // Add student scores table (collapsible, hidden by default)
         if (scoresData.students.length > 0) {
-            container.innerHTML += '<h3 style="margin-top: 30px;">Student Scores</h3>';
+            container.innerHTML += `
+                <h3 style="margin-top: 30px; cursor: pointer; user-select: none;"
+                    id="student-scores-header"
+                    onclick="toggleStudentScores()"
+                    title="Click to expand/collapse">
+                    <span id="student-scores-toggle">▶</span> Student Scores (${scoresData.students.length})
+                </h3>
+            `;
             const studentScoresHtml = `
-                <table class="student-scores-table">
-                    <thead>
-                        <tr>
-                            <th>Student Name</th>
-                            <th>Progress</th>
-                            <th>Total Score</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${scoresData.students.map(s => `
-                            <tr class="${s.is_complete ? 'complete' : 'incomplete'}">
-                                <td>${s.student_name || 'Unmatched'}</td>
-                                <td>${s.graded_problems} / ${s.total_problems}</td>
-                                <td>${s.total_score ? s.total_score.toFixed(2) : '0.00'}</td>
+                <div id="student-scores-container" style="display: none;">
+                    <table class="student-scores-table">
+                        <thead>
+                            <tr>
+                                <th>Student Name</th>
+                                <th>Progress</th>
+                                <th>Total Score</th>
                             </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            ${scoresData.students.map(s => `
+                                <tr class="${s.is_complete ? 'complete' : 'incomplete'}">
+                                    <td>${s.student_name || 'Unmatched'}</td>
+                                    <td>${s.graded_problems} / ${s.total_problems}</td>
+                                    <td>${s.total_score ? s.total_score.toFixed(2) : '0.00'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
             `;
             container.innerHTML += studentScoresHtml;
         }
