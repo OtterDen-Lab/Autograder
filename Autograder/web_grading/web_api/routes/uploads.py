@@ -203,6 +203,17 @@ async def upload_exams(
             "height": height
         }
 
+    # Store composite dimensions in session metadata for later use during processing
+    session_data["composite_dimensions"] = {str(k): list(v) for k, v in composite_dimensions.items()}
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE grading_sessions
+            SET metadata = ?
+            WHERE id = ?
+        """, (json.dumps(session_data), session_id))
+
     return {
         "session_id": session_id,
         "files_uploaded": len(saved_files),
@@ -244,8 +255,25 @@ async def submit_alignment(
     file_paths = [Path(p) for p in session_data["file_paths"]]
     file_metadata = {Path(k): v for k, v in session_data["file_metadata"].items()}
 
-    # Convert split_points keys from strings to integers
-    manual_split_points = {int(k): v for k, v in submission.split_points.items()}
+    # Convert split_points from absolute pixels to percentages of page height
+    # This makes them resolution-independent
+    composite_dimensions = session_data.get("composite_dimensions", {})
+    manual_split_points = {}
+
+    for page_str, y_positions in submission.split_points.items():
+        page_num = int(page_str)
+
+        # Get composite page height for this page
+        if str(page_num) in composite_dimensions:
+            page_height = composite_dimensions[str(page_num)][1]  # [width, height]
+
+            # Convert each y-position from pixels to percentage
+            percentages = [y_pos / page_height for y_pos in y_positions]
+            manual_split_points[page_num] = percentages
+        else:
+            # Fallback: if no composite dimensions, pass through as-is
+            log.warning(f"No composite dimensions for page {page_num}, using absolute coordinates")
+            manual_split_points[page_num] = y_positions
 
     # Create SSE stream for progress updates
     stream_id = sse.make_stream_id("upload", session_id)
@@ -497,7 +525,7 @@ async def process_exam_files(
                 file_metadata=file_metadata,
                 problem_max_points=problem_max_points,
                 extract_max_points_enabled=False,  # Disabled - use manual entry via UI
-                manual_split_points=manual_split_points,  # Use manual alignment if provided
+                manual_split_points=manual_split_points,  # Use manual alignment (now percentage-based)
                 skip_first_region=skip_first_region,  # Skip first region (header/title)
                 last_page_blank=last_page_blank  # Skip last page if blank
             )
