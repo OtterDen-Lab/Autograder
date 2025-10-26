@@ -76,9 +76,20 @@ function updateMaxPointsDropdown() {
 // Load available problem numbers
 async function loadProblemNumbers() {
     try {
-        const response = await fetch(`${API_BASE}/sessions/${currentSession.id}/problem-numbers`);
-        const data = await response.json();
+        const [numbersResponse, statsResponse] = await Promise.all([
+            fetch(`${API_BASE}/sessions/${currentSession.id}/problem-numbers`),
+            fetch(`${API_BASE}/sessions/${currentSession.id}/stats`)
+        ]);
+
+        const data = await numbersResponse.json();
+        const stats = await statsResponse.json();
         availableProblemNumbers = data.problem_numbers;
+
+        // Build a map of problem number -> ungraded count
+        const ungradedCounts = {};
+        stats.problem_stats.forEach(ps => {
+            ungradedCounts[ps.problem_number] = ps.num_total - ps.num_graded;
+        });
 
         const select = document.getElementById('problem-select');
         select.innerHTML = '';
@@ -86,7 +97,8 @@ async function loadProblemNumbers() {
         availableProblemNumbers.forEach(num => {
             const option = document.createElement('option');
             option.value = num;
-            option.textContent = `Problem ${num}`;
+            const ungradedCount = ungradedCounts[num] || 0;
+            option.textContent = `Problem ${num} (${ungradedCount})`;
             select.appendChild(option);
         });
 
