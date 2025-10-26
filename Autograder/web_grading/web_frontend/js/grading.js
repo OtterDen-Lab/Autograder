@@ -244,8 +244,29 @@ function displayCurrentProblem() {
     if (!currentProblem) return;
 
     // Display problem
-    document.getElementById('problem-image').src =
-        `data:image/png;base64,${currentProblem.image_data}`;
+    const problemImage = document.getElementById('problem-image');
+    problemImage.src = `data:image/png;base64,${currentProblem.image_data}`;
+
+    // Auto-size container to fit image when it loads
+    problemImage.onload = () => {
+        const scrollContainer = document.getElementById('problem-scroll-container');
+        if (scrollContainer) {
+            // Calculate the full displayed height of the image
+            const displayedHeight = problemImage.offsetHeight;
+            const fullImageHeight = displayedHeight + 40; // Add padding for borders/margins
+
+            // Store this as the maximum allowed height (so user can always expand to see full image)
+            scrollContainer.dataset.maxImageHeight = fullImageHeight;
+
+            // Check if we have a saved height preference
+            const savedHeight = localStorage.getItem('problemScrollContainerHeight');
+            if (!savedHeight) {
+                // No saved preference - default to showing full image
+                scrollContainer.style.height = `${fullImageHeight}px`;
+            }
+            // If there's a saved height, the setupProblemImageResize() function already applied it
+        }
+    };
 
     // Update progress with blank count
     let progressText = `${currentProblem.current_index} / ${currentProblem.total_count}`;
@@ -1798,11 +1819,18 @@ function setupProblemImageResize() {
         const deltaY = e.clientY - startY;
         const newHeight = startHeight + deltaY;
 
-        // Enforce minimum height only
+        // Enforce minimum and maximum heights
         const minHeight = 200; // Minimum 200px
+        const maxHeight = scrollContainer.dataset.maxImageHeight
+            ? parseFloat(scrollContainer.dataset.maxImageHeight)
+            : window.innerHeight * 0.9; // Fallback to 90% of viewport if not set
 
-        if (newHeight >= minHeight) {
+        if (newHeight >= minHeight && newHeight <= maxHeight) {
             scrollContainer.style.height = `${newHeight}px`;
+        } else if (newHeight < minHeight) {
+            scrollContainer.style.height = `${minHeight}px`;
+        } else if (newHeight > maxHeight) {
+            scrollContainer.style.height = `${maxHeight}px`;
         }
     });
 

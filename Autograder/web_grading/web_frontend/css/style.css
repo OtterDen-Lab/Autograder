@@ -251,9 +251,8 @@ header h1 {
     border: 2px solid var(--gray-200);
     border-radius: 4px;
     position: relative;
-    /* Default height - about 1 page worth */
+    /* Default height - will be auto-sized to fit image on load */
     height: 800px;
-    max-height: 80vh;
 }
 
 .problem-container img {
