@@ -64,14 +64,12 @@ function showNotification(message, callback) {
 function updateMaxPointsDropdown() {
     const maxPointsInput = document.getElementById('max-points-input');
     const scoreInput = document.getElementById('score-input');
-    const scoreSlider = document.getElementById('score-slider');
     const cachedMax = problemMaxPoints[currentProblemNumber];
 
     // Default to 8 if not set
     const maxPoints = cachedMax || 8;
 
     maxPointsInput.value = maxPoints;
-    scoreSlider.max = maxPoints;
     scoreInput.max = maxPoints;
 }
 
@@ -132,28 +130,10 @@ document.getElementById('upload-more-btn').addEventListener('click', () => {
         `<strong>Adding exams to:</strong> ${currentSession.assignment_name} - ${currentSession.course_name || `Course ${currentSession.course_id}`}`;
 });
 
-// Setup score sync between slider and input
+// Setup score sync between slider and input (slider removed, keeping function for compatibility)
 function setupScoreSync() {
-    const scoreSlider = document.getElementById('score-slider');
-    const scoreInput = document.getElementById('score-input');
-
-    // Remove old listeners by replacing elements
-    const newSlider = scoreSlider.cloneNode(true);
-    const newInput = scoreInput.cloneNode(true);
-    scoreSlider.parentNode.replaceChild(newSlider, scoreSlider);
-    scoreInput.parentNode.replaceChild(newInput, scoreInput);
-
-    // Add new listeners
-    newSlider.addEventListener('input', (e) => {
-        newInput.value = e.target.value;
-    });
-
-    newInput.addEventListener('input', (e) => {
-        const value = parseFloat(e.target.value);
-        if (!isNaN(value)) {
-            newSlider.value = value;
-        }
-    });
+    // Slider has been removed - this function is now a no-op
+    // Kept for compatibility with existing calls
 }
 
 // Setup grading controls
@@ -179,8 +159,7 @@ function setupGradingControls() {
     maxPointsInput.addEventListener('change', async (e) => {
         const maxPoints = parseFloat(e.target.value);
         if (!isNaN(maxPoints) && maxPoints > 0 && currentProblemNumber) {
-            // Update slider and input max
-            document.getElementById('score-slider').max = maxPoints;
+            // Update input max
             document.getElementById('score-input').max = maxPoints;
 
             // Save to cache
@@ -235,12 +214,6 @@ function handleGradingKeyboard(e) {
         submitGrade();
     }
 
-    // Shift+Tab - skip to next without grading
-    if (e.key === 'Tab' && e.shiftKey) {
-        e.preventDefault();
-        loadNextProblem();
-    }
-
     // Number keys 0-9 or dash (-) - quick score entry (but not when typing in rubric table or other inputs)
     if ((/^[0-9]$/.test(e.key) || e.key === '-') &&
         e.target.id !== 'score-input' &&
@@ -289,11 +262,16 @@ function displayCurrentProblem() {
         showAnswerBtn.style.display = 'none';
     }
 
+    // Update answer dialog if it's currently visible
+    const answerDialog = document.getElementById('answer-dialog');
+    if (answerDialog && answerDialog.style.display === 'flex') {
+        updateAnswerDialog();
+    }
+
     // Populate form based on whether it's graded or blank
     if (currentProblem.graded) {
         // Already graded - show existing grade
         document.getElementById('score-input').value = currentProblem.score != null ? currentProblem.score : '';
-        document.getElementById('score-slider').value = currentProblem.score != null ? currentProblem.score : 0;
         document.getElementById('feedback-input').value = currentProblem.feedback || '';
 
         // Remove blank indicator
@@ -304,9 +282,9 @@ function displayCurrentProblem() {
         const oldAiIndicator = document.getElementById('ai-graded-indicator');
         if (oldAiIndicator) oldAiIndicator.remove();
     } else if (currentProblem.is_blank) {
-        // Auto-populate score as 0 for detected blank problems
-        document.getElementById('score-input').value = '0';
-        document.getElementById('feedback-input').value = 'No answer provided';
+        // Don't auto-populate score for heuristically detected blanks - let user verify
+        document.getElementById('score-input').value = '';
+        document.getElementById('feedback-input').value = '';
 
         // Show blank detection indicator
         const blankIndicator = document.createElement('div');
@@ -336,7 +314,6 @@ function displayCurrentProblem() {
         if (currentProblem.score != null && currentProblem.feedback) {
             // Auto-populate both score and feedback for review
             document.getElementById('score-input').value = currentProblem.score != null ? currentProblem.score : '';
-            document.getElementById('score-slider').value = currentProblem.score != null ? currentProblem.score : 0;
             document.getElementById('feedback-input').value = currentProblem.feedback || '';
 
             // Show AI-graded indicator
@@ -757,14 +734,23 @@ async function loadStatistics() {
                     <table class="student-scores-table">
                         <thead>
                             <tr>
-                                <th>Student Name</th>
-                                <th>Progress</th>
-                                <th>Total Score</th>
+                                <th class="sortable" onclick="sortStudentTable('name')" data-sort="name">
+                                    Student Name <span class="sort-indicator"></span>
+                                </th>
+                                <th class="sortable" onclick="sortStudentTable('progress')" data-sort="progress">
+                                    Progress <span class="sort-indicator"></span>
+                                </th>
+                                <th class="sortable" onclick="sortStudentTable('score')" data-sort="score">
+                                    Total Score <span class="sort-indicator"></span>
+                                </th>
                             </tr>
                         </thead>
-                        <tbody>
+                        <tbody id="student-scores-tbody">
                             ${scoresData.students.map(s => `
-                                <tr class="${s.is_complete ? 'complete' : 'incomplete'}">
+                                <tr class="${s.is_complete ? 'complete' : 'incomplete'}"
+                                    data-name="${s.student_name || 'Unmatched'}"
+                                    data-progress="${s.graded_problems / s.total_problems}"
+                                    data-score="${s.total_score || 0}">
                                     <td>${s.student_name || 'Unmatched'}</td>
                                     <td>${s.graded_problems} / ${s.total_problems}</td>
                                     <td>${s.total_score ? s.total_score.toFixed(2) : '0.00'}</td>
@@ -1307,6 +1293,100 @@ document.addEventListener('mouseup', () => {
     isAnswerDragging = false;
 });
 
+// Function to update answer dialog with current problem
+async function updateAnswerDialog() {
+    if (!currentProblem) {
+        answerDialog.style.display = 'none';
+        return;
+    }
+
+    // Check if current problem has QR data
+    if (!currentProblem.has_qr_data) {
+        // No QR data - show message
+        const answerContent = document.getElementById('answer-content');
+        const answerError = document.getElementById('answer-error');
+        answerContent.style.display = 'none';
+        answerError.style.display = 'block';
+        answerError.textContent = 'Answer not available for this problem (no QR code data)';
+        return;
+    }
+
+    // Has QR data - load the answer
+    const answerContent = document.getElementById('answer-content');
+    const answerList = document.getElementById('answer-list');
+    const answerError = document.getElementById('answer-error');
+    const answerMetadata = document.getElementById('answer-metadata');
+
+    answerContent.style.display = 'block';
+    answerError.style.display = 'none';
+    answerList.innerHTML = '<div style="text-align: center; padding: 20px;">Loading answer...</div>';
+    answerMetadata.style.display = 'none';
+
+    try {
+        const response = await fetch(`${API_BASE}/problems/${currentProblem.id}/regenerate-answer`);
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to load answer');
+        }
+
+        const data = await response.json();
+
+        // Display metadata
+        document.getElementById('answer-question-type').textContent = data.question_type;
+        document.getElementById('answer-seed').textContent = data.seed;
+        document.getElementById('answer-version').textContent = data.version;
+        document.getElementById('answer-max-points').textContent = data.max_points;
+
+        // Display config if available
+        const configWrapper = document.getElementById('answer-config-wrapper');
+        const configSpan = document.getElementById('answer-config');
+        if (data.config) {
+            configSpan.textContent = JSON.stringify(data.config);
+        } else {
+            configSpan.textContent = 'None';
+        }
+        configWrapper.style.display = 'block';
+
+        answerMetadata.style.display = 'block';
+
+        // Display HTML answer key if available, otherwise show individual answers
+        if (data.answer_key_html) {
+            answerList.innerHTML = `<div style="padding: 15px; background: white; border-radius: 4px;">${data.answer_key_html}</div>`;
+        } else if (data.answers && data.answers.length > 0) {
+            answerList.innerHTML = data.answers.map(answer => {
+                let html = `<div style="margin-bottom: 15px; padding: 10px; background: white; border-radius: 4px;">`;
+                html += `<div style="font-weight: 600; color: #1e40af; margin-bottom: 5px;">${answer.key}:</div>`;
+
+                if (answer.html) {
+                    html += `<div style="font-size: 18px; font-family: 'Courier New', monospace;">${answer.html}</div>`;
+                } else {
+                    html += `<div style="font-size: 18px; font-family: 'Courier New', monospace;">${answer.value}</div>`;
+                }
+
+                if (answer.tolerance !== undefined && answer.tolerance !== null) {
+                    html += `<div style="font-size: 12px; color: #6b7280; margin-top: 5px;">Tolerance: ±${answer.tolerance}</div>`;
+                }
+                html += `</div>`;
+                return html;
+            }).join('');
+        } else {
+            answerList.innerHTML = '<div style="color: #6b7280;">No answers available</div>';
+        }
+
+        // Trigger MathJax typesetting for the answer content
+        if (typeof MathJax !== 'undefined') {
+            MathJax.typesetPromise([answerList]).catch((err) => console.error('MathJax typesetting failed:', err));
+        }
+
+    } catch (error) {
+        console.error('Failed to load answer:', error);
+        answerContent.style.display = 'none';
+        answerError.style.display = 'block';
+        answerError.textContent = error.message;
+    }
+}
+
 // Show answer button
 showAnswerBtn.addEventListener('click', async () => {
     if (!currentProblem) {
@@ -1706,11 +1786,10 @@ function setupProblemImageResize() {
         const deltaY = e.clientY - startY;
         const newHeight = startHeight + deltaY;
 
-        // Enforce minimum and maximum height
+        // Enforce minimum height only
         const minHeight = 200; // Minimum 200px
-        const maxHeight = window.innerHeight * 0.9; // Max 90% of viewport height
 
-        if (newHeight >= minHeight && newHeight <= maxHeight) {
+        if (newHeight >= minHeight) {
             scrollContainer.style.height = `${newHeight}px`;
         }
     });
@@ -1728,4 +1807,74 @@ function setupProblemImageResize() {
             console.log('Saved problem container height:', currentHeight);
         }
     });
+}
+
+// =============================================================================
+// STUDENT TABLE SORTING
+// =============================================================================
+
+let currentSortColumn = null;
+let currentSortDirection = 'asc';
+
+function sortStudentTable(column) {
+    const tbody = document.getElementById('student-scores-tbody');
+    if (!tbody) return;
+
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+
+    // Toggle direction if clicking same column, otherwise default to ascending
+    if (currentSortColumn === column) {
+        currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+        currentSortColumn = column;
+        currentSortDirection = 'asc';
+    }
+
+    // Sort rows based on column and direction
+    rows.sort((a, b) => {
+        let aVal, bVal;
+
+        if (column === 'name') {
+            aVal = a.dataset.name.toLowerCase();
+            bVal = b.dataset.name.toLowerCase();
+            return currentSortDirection === 'asc'
+                ? aVal.localeCompare(bVal)
+                : bVal.localeCompare(aVal);
+        } else if (column === 'progress') {
+            aVal = parseFloat(a.dataset.progress);
+            bVal = parseFloat(b.dataset.progress);
+        } else if (column === 'score') {
+            aVal = parseFloat(a.dataset.score);
+            bVal = parseFloat(b.dataset.score);
+        }
+
+        // Numerical comparison
+        if (currentSortDirection === 'asc') {
+            return aVal - bVal;
+        } else {
+            return bVal - aVal;
+        }
+    });
+
+    // Re-append rows in sorted order
+    rows.forEach(row => tbody.appendChild(row));
+
+    // Update sort indicators
+    updateSortIndicators(column);
+}
+
+function updateSortIndicators(column) {
+    // Clear all indicators
+    document.querySelectorAll('.student-scores-table th .sort-indicator').forEach(indicator => {
+        indicator.textContent = '';
+    });
+
+    // Set current indicator
+    const th = document.querySelector(`.student-scores-table th[data-sort="${column}"]`);
+    if (th) {
+        const indicator = th.querySelector('.sort-indicator');
+        if (indicator) {
+            indicator.textContent = currentSortDirection === 'asc' ? ' ▲' : ' ▼';
+        }
+    }
 }

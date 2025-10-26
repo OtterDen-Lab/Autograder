@@ -457,6 +457,21 @@ header h1 {
     letter-spacing: 0.5px;
 }
 
+.student-scores-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.2s;
+}
+
+.student-scores-table th.sortable:hover {
+    background-color: var(--gray-200);
+}
+
+.student-scores-table th .sort-indicator {
+    font-size: 10px;
+    color: var(--primary-color);
+}
+
 .student-scores-table td {
     padding: 12px 15px;
     border-top: 1px solid var(--gray-200);

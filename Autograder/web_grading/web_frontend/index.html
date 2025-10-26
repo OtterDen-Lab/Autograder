@@ -259,28 +259,24 @@
                     <button id="upload-more-btn" class="btn btn-secondary btn-small">+ Upload More Exams</button>
                 </div>
 
-                <div class="grading-form" style="margin-bottom: 10px;">
-                    <label style="margin-bottom: 5px;">
-                        Score:
-                        <div style="display: flex; gap: 10px; align-items: center;">
-                            <input type="range" id="score-slider" min="0" max="8" step="1" value="0" style="flex: 1;">
-                            <input type="text" id="score-input" placeholder="Enter score or -" style="width: 80px;" title="Enter a number or '-' to mark as blank">
-                        </div>
-                    </label>
-                </div>
-
                 <div class="problem-container">
-                    <div class="problem-scroll-container" id="problem-scroll-container">
-                        <img id="problem-image" alt="Problem to grade">
+                    <div class="problem-scroll-container" id="problem-scroll-container" tabindex="-1">
+                        <img id="problem-image" alt="Problem to grade" tabindex="-1">
                     </div>
                     <div class="problem-resize-handle" id="problem-resize-handle"></div>
                 </div>
 
                 <div class="grading-form">
-                    <label>
-                        Feedback (optional):
-                        <textarea id="feedback-input" rows="3" placeholder="Optional feedback for student"></textarea>
-                    </label>
+                    <div style="display: flex; gap: 15px; align-items: flex-start;">
+                        <label style="display: flex; flex-direction: column; min-width: 100px;">
+                            Score:
+                            <input type="text" id="score-input" placeholder="Enter score or -" style="width: 80px; margin-top: 5px;" title="Enter a number or '-' to mark as blank">
+                        </label>
+                        <label style="flex: 1; display: flex; flex-direction: column;">
+                            Feedback (optional):
+                            <textarea id="feedback-input" rows="3" placeholder="Optional feedback for student" style="margin-top: 5px;"></textarea>
+                        </label>
+                    </div>
                     <div style="display: flex; gap: 10px; margin-bottom: 5px;">
                         <button id="submit-grade-btn" class="btn btn-primary">Submit & Next</button>
                         <button id="back-problem-btn" class="btn">← Back</button>
@@ -292,7 +288,7 @@
                         <button id="review-grades-btn" class="btn btn-secondary">Review Graded</button>
                     </div>
                     <div style="text-align: center; padding: 5px 0;">
-                        <small style="color: var(--gray-600);">Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit | <strong>Shift+Tab</strong> to skip</small>
+                        <small style="color: var(--gray-600);">Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit</small>
                     </div>
                 </div>
             </section>
