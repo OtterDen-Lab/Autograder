@@ -1024,12 +1024,13 @@ header h1 {
 }
 
 .tag-button {
-    padding: 6px 12px;
+    padding: 10px 16px;
     border: 2px solid var(--gray-300);
     background: white;
-    border-radius: 16px;
+    border-radius: 20px;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 15px;
+    font-weight: 500;
     transition: all 0.2s;
     display: inline-flex;
     align-items: center;
