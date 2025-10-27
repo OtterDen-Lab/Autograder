@@ -259,36 +259,38 @@
                     <button id="upload-more-btn" class="btn btn-secondary btn-small">+ Upload More Exams</button>
                 </div>
 
-                <div class="problem-container">
-                    <div class="problem-scroll-container" id="problem-scroll-container" tabindex="-1">
-                        <img id="problem-image" alt="Problem to grade" tabindex="-1">
+                <div class="grading-layout">
+                    <div class="problem-container">
+                        <div class="problem-scroll-container" id="problem-scroll-container" tabindex="-1">
+                            <img id="problem-image" alt="Problem to grade" tabindex="-1">
+                        </div>
+                        <div class="problem-resize-handle" id="problem-resize-handle"></div>
                     </div>
-                    <div class="problem-resize-handle" id="problem-resize-handle"></div>
-                </div>
 
-                <div class="grading-form">
-                    <div style="display: flex; gap: 15px; align-items: flex-start;">
-                        <label style="display: flex; flex-direction: column; min-width: 100px;">
-                            Score:
-                            <input type="text" id="score-input" placeholder="Enter score or -" style="width: 80px; margin-top: 5px;" title="Enter a number or '-' to mark as blank">
-                        </label>
-                        <label style="flex: 1; display: flex; flex-direction: column;">
-                            Feedback (optional):
-                            <textarea id="feedback-input" rows="3" placeholder="Optional feedback for student" style="margin-top: 5px;"></textarea>
-                        </label>
-                    </div>
-                    <div style="display: flex; gap: 10px; margin-bottom: 5px;">
-                        <button id="submit-grade-btn" class="btn btn-primary">Submit & Next</button>
-                        <button id="back-problem-btn" class="btn">← Back</button>
-                        <button id="next-problem-btn" class="btn">Skip</button>
-                        <button id="show-context-btn" class="btn btn-secondary">Show in Context</button>
-                        <button id="decipher-btn" class="btn btn-secondary">Decipher Handwriting</button>
-                        <button id="show-answer-btn" class="btn btn-secondary" style="display: none;">Show Answer</button>
-                        <button id="start-autograde-btn" class="btn btn-success">Start Autograding</button>
-                        <button id="review-grades-btn" class="btn btn-secondary">Review Graded</button>
-                    </div>
-                    <div style="text-align: center; padding: 5px 0;">
-                        <small style="color: var(--gray-600);">Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit</small>
+                    <div class="grading-form">
+                        <div style="display: flex; gap: 15px; align-items: flex-start;">
+                            <label style="display: flex; flex-direction: column; min-width: 100px;">
+                                Score:
+                                <input type="text" id="score-input" placeholder="Enter score or -" style="width: 80px; margin-top: 5px;" title="Enter a number or '-' to mark as blank">
+                            </label>
+                            <label style="flex: 1; display: flex; flex-direction: column;">
+                                Feedback (optional):
+                                <textarea id="feedback-input" rows="3" placeholder="Optional feedback for student" style="margin-top: 5px;"></textarea>
+                            </label>
+                        </div>
+                        <div style="display: flex; gap: 10px; margin-bottom: 5px; flex-wrap: wrap;">
+                            <button id="submit-grade-btn" class="btn btn-primary">Submit & Next</button>
+                            <button id="back-problem-btn" class="btn">← Back</button>
+                            <button id="next-problem-btn" class="btn">Skip</button>
+                            <button id="show-context-btn" class="btn btn-secondary">Show in Context</button>
+                            <button id="decipher-btn" class="btn btn-secondary">Decipher Handwriting</button>
+                            <button id="show-answer-btn" class="btn btn-secondary" style="display: none;">Show Answer</button>
+                            <button id="start-autograde-btn" class="btn btn-success">Start Autograding</button>
+                            <button id="review-grades-btn" class="btn btn-secondary">Review Graded</button>
+                        </div>
+                        <div style="text-align: center; padding: 5px 0;">
+                            <small style="color: var(--gray-600);">Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit</small>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -381,15 +383,12 @@
 
                     <label style="margin-bottom: 15px;">
                         Score:
-                        <div style="display: flex; gap: 10px; align-items: center; margin-top: 5px;">
-                            <input type="range" id="review-score-slider" min="0" max="8" step="1" value="0" style="flex: 1;">
-                            <input type="number" id="review-score-input" min="0" max="8" step="0.5" placeholder="Score" style="width: 80px;">
-                        </div>
+                        <input type="number" id="review-score-input" min="0" max="8" step="1" placeholder="Score" style="width: 80px; margin-top: 5px; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
                     </label>
 
                     <label style="margin-bottom: 15px;">
                         Feedback:
-                        <textarea id="review-feedback-input" rows="6" style="margin-top: 5px; width: 100%; padding: 8px; font-family: inherit; border: 1px solid var(--gray-300); border-radius: 4px;"></textarea>
+                        <textarea id="review-feedback-input" rows="6" style="margin-top: 5px; width: 100%; padding: 8px; font-family: inherit; border: 2px solid var(--gray-300); border-radius: 4px; resize: vertical;"></textarea>
                     </label>
 
                     <div id="review-blank-info" style="display: none; background: #fef3c7; padding: 10px; border-radius: 6px; margin-bottom: 15px; font-size: 14px;">

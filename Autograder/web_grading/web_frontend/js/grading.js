@@ -227,7 +227,9 @@ function handleGradingKeyboard(e) {
     }
 
     // Number keys 0-9 or dash (-) - quick score entry (but not when typing in rubric table or other inputs)
+    // Also ignore if any modifier keys are pressed (Cmd/Ctrl/Alt for browser shortcuts like zoom)
     if ((/^[0-9]$/.test(e.key) || e.key === '-') &&
+        !e.metaKey && !e.ctrlKey && !e.altKey && // Ignore if modifier keys are held
         e.target.id !== 'score-input' &&
         e.target.id !== 'feedback-input' &&
         e.target.id !== 'max-points-input' &&

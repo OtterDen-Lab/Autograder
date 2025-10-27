@@ -24,7 +24,7 @@ body {
 }
 
 .container {
-    max-width: 1200px;
+    max-width: 2000px; /* Allow wider layouts for side-by-side grading */
     margin: 0 auto;
     padding: 20px;
 }
@@ -235,8 +235,36 @@ header h1 {
     font-family: monospace;
 }
 
+/* Grading Layout - Responsive side-by-side */
+.grading-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* Side-by-side layout when there's enough space to show image at full width
+   Image max width is typically 600px in the container (after padding),
+   plus 350px for controls, plus gaps = ~1000px minimum */
+@media (min-width: 1000px) {
+    .grading-layout {
+        flex-direction: row;
+        align-items: flex-start;
+    }
+
+    .problem-container {
+        flex: 3; /* Takes 3/4 of the space */
+        min-width: 0; /* Allow flex item to shrink below content size */
+    }
+
+    .grading-form {
+        flex: 1; /* Takes 1/4 of the space */
+        min-width: 300px; /* Minimum width to keep buttons readable */
+        max-width: 400px; /* Maximum width to prevent buttons from getting too large */
+    }
+}
+
 .problem-container {
-    margin: 20px 0;
+    margin: 0;
     background-color: var(--gray-100);
     padding: 20px;
     border-radius: 8px;
