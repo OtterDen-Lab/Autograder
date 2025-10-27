@@ -984,3 +984,87 @@ header h1 {
 .spoiler:hover:not(.revealed) {
     background-color: #4b5563;
 }
+
+/* =============================================================================
+   FEEDBACK TAGS
+   ============================================================================= */
+
+.feedback-tags-container {
+    margin-top: 15px;
+    padding: 15px;
+    background: #f9fafb;
+    border-radius: 6px;
+    border: 1px solid var(--gray-200);
+}
+
+.tags-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.tags-header strong {
+    color: var(--gray-700);
+    font-size: 14px;
+}
+
+.tags-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 40px;
+    align-items: center;
+}
+
+.tags-placeholder {
+    color: var(--gray-500);
+    font-style: italic;
+    font-size: 13px;
+}
+
+.tag-button {
+    padding: 6px 12px;
+    border: 2px solid var(--gray-300);
+    background: white;
+    border-radius: 16px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tag-button:hover {
+    border-color: var(--primary-color);
+    background: var(--gray-100);
+}
+
+.tag-button.selected {
+    border-color: var(--primary-color);
+    background: var(--primary-color);
+    color: white;
+}
+
+.tag-delete {
+    margin-left: 4px;
+    color: var(--danger-color);
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 14px;
+    line-height: 1;
+    transition: color 0.2s;
+}
+
+.tag-delete:hover {
+    color: #dc2626;
+}
+
+.tag-button.selected .tag-delete {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.tag-button.selected .tag-delete:hover {
+    color: white;
+}

@@ -386,6 +386,11 @@ function displayCurrentProblem() {
             if (oldAiIndicator) oldAiIndicator.remove();
         }
     }
+
+    // Load feedback tags for this problem number
+    if (currentSession && currentProblemNumber) {
+        loadFeedbackTags(currentSession.id, currentProblemNumber);
+    }
 }
 
 // Load problem for current problem number (ungraded if available, otherwise most recent)
@@ -531,6 +536,11 @@ async function loadNextProblem() {
 // Submit grade for current problem
 async function submitGrade() {
     if (!currentProblem) return;
+
+    // Auto-apply selected tags before submitting
+    if (typeof applySelectedTags === 'function' && selectedTagIds && selectedTagIds.size > 0) {
+        await applySelectedTags();
+    }
 
     const scoreValue = document.getElementById('score-input').value.trim();
     const feedback = document.getElementById('feedback-input').value;
