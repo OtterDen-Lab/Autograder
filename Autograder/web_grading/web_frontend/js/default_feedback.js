@@ -118,8 +118,8 @@ async function saveDefaultFeedback() {
     const threshold = parseFloat(thresholdInput.value) || 50.0;
 
     // Validate
-    if (feedbackText && feedbackText.length > 1000) {
-        alert('Default feedback must be 1000 characters or less');
+    if (feedbackText && feedbackText.length > 2000) {
+        alert('Default feedback must be 2000 characters or less');
         textArea.focus();
         return;
     }

@@ -648,8 +648,81 @@ async function loadStatistics() {
         const scoresData = await scoresResponse.json();
 
         const container = document.getElementById('stats-container');
-        container.innerHTML = `
-            <h3>Overall Progress</h3>
+
+        // Calculate overall statistics based on what's been graded so far
+        let examStatsHtml = '';
+        const studentsWithGrades = scoresData.students.filter(s => s.total_score !== null && s.graded_problems > 0);
+
+        if (studentsWithGrades.length > 0) {
+            // Get raw scores
+            const rawScores = studentsWithGrades.map(s => s.total_score);
+            const rawMin = Math.min(...rawScores);
+            const rawMax = Math.max(...rawScores);
+            const rawAvg = rawScores.reduce((sum, s) => sum + s, 0) / rawScores.length;
+
+            // Calculate raw standard deviation
+            const rawVariance = rawScores.reduce((sum, s) => sum + Math.pow(s - rawAvg, 2), 0) / rawScores.length;
+            const rawStddev = Math.sqrt(rawVariance);
+
+            // Calculate normalized scores (percentage of points earned out of points graded)
+            const normalizedScores = studentsWithGrades.map(s => {
+                // Calculate max possible points for problems this student has been graded on
+                // We need to figure out which problems they've been graded on
+                // For now, approximate using their graded_problems count
+                const problemsGraded = s.graded_problems;
+
+                // Get the actual max points for problems based on graded count
+                // Assume problems are graded in order (1, 2, 3, etc.)
+                let maxPossibleForStudent = 0;
+                const gradedProblemStats = stats.problem_stats.slice(0, problemsGraded);
+                gradedProblemStats.forEach(ps => {
+                    maxPossibleForStudent += (ps.max_points || 8);
+                });
+
+                // Return normalized score as percentage
+                return maxPossibleForStudent > 0 ? (s.total_score / maxPossibleForStudent) * 100 : 0;
+            });
+
+            const normAvg = normalizedScores.reduce((sum, s) => sum + s, 0) / normalizedScores.length;
+
+            // Calculate normalized standard deviation
+            const normVariance = normalizedScores.reduce((sum, s) => sum + Math.pow(s - normAvg, 2), 0) / normalizedScores.length;
+            const normStddev = Math.sqrt(normVariance);
+
+            // Calculate total possible points across all problems
+            const totalPossible = stats.problem_stats.reduce((sum, ps) => {
+                return sum + (ps.max_points || 8);
+            }, 0);
+
+            examStatsHtml = `
+                <h3>Overall Progress Statistics <small style="font-size: 14px; font-weight: normal; color: var(--gray-600);">(${studentsWithGrades.length} students with grades, based on problems graded so far)</small></h3>
+                <div class="overall-stats" style="margin-bottom: 30px;">
+                    <div class="stat-card">
+                        <h3>Average Score</h3>
+                        <div class="value">${rawAvg.toFixed(2)} pts</div>
+                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">(of graded problems)</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Normalized Average</h3>
+                        <div class="value">${normAvg.toFixed(1)}%</div>
+                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">±${normStddev.toFixed(1)}%</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Score Range</h3>
+                        <div class="value">${rawMin.toFixed(2)} - ${rawMax.toFixed(2)}</div>
+                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">Min to Max</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Std Deviation</h3>
+                        <div class="value">±${rawStddev.toFixed(2)} pts</div>
+                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">(raw scores)</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        container.innerHTML = examStatsHtml + `
+            <h3>Grading Progress</h3>
             <div class="overall-stats">
                 <div class="stat-card">
                     <h3>Total Submissions</h3>
