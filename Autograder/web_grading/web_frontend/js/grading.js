@@ -215,6 +215,18 @@ function handleGradingKeyboard(e) {
         return;
     }
 
+    // Don't handle if default feedback dialog is open
+    const defaultFeedbackDialog = document.getElementById('edit-default-feedback-dialog');
+    if (defaultFeedbackDialog && defaultFeedbackDialog.style.display === 'flex') {
+        return;
+    }
+
+    // Don't handle if add tag dialog is open
+    const addTagDialog = document.getElementById('add-tag-dialog');
+    if (addTagDialog && addTagDialog.style.display === 'flex') {
+        return;
+    }
+
     // Don't handle if typing in textarea
     if (e.target.tagName === 'TEXTAREA') {
         return;

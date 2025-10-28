@@ -208,7 +208,7 @@ function shouldApplyDefaultFeedback(score, isBlank) {
         // Calculate percentage based on max_points
         const maxPoints = currentProblem?.max_points || 8.0;
         const percentage = (score / maxPoints) * 100;
-        if (percentage < currentDefaultFeedback.threshold) {
+        if (percentage <= currentDefaultFeedback.threshold) {
             return true;
         }
     }
@@ -243,33 +243,43 @@ let isDefaultFeedbackDragging = false;
 let defaultFeedbackDragOffsetX = 0;
 let defaultFeedbackDragOffsetY = 0;
 
-// Make dialog draggable by the header
-const defaultFeedbackDialog = document.getElementById('edit-default-feedback-dialog');
-const defaultFeedbackHeader = defaultFeedbackDialog?.querySelector('.dialog-header, h3');
+// Setup draggable dialog
+function setupDefaultFeedbackDragging() {
+    const defaultFeedbackDialog = document.getElementById('edit-default-feedback-dialog');
+    const dialogContent = defaultFeedbackDialog?.querySelector('.dialog-content');
+    const defaultFeedbackHeader = defaultFeedbackDialog?.querySelector('.dialog-header');
 
-if (defaultFeedbackHeader) {
-    defaultFeedbackHeader.style.cursor = 'move';
+    if (!defaultFeedbackHeader || !dialogContent) return;
+
     defaultFeedbackHeader.addEventListener('mousedown', (e) => {
         // Don't drag if clicking on buttons
         if (e.target.tagName === 'BUTTON') return;
 
         isDefaultFeedbackDragging = true;
-        const rect = defaultFeedbackDialog.getBoundingClientRect();
+        const rect = dialogContent.getBoundingClientRect();
         defaultFeedbackDragOffsetX = e.clientX - rect.left;
         defaultFeedbackDragOffsetY = e.clientY - rect.top;
-        defaultFeedbackDialog.style.transform = 'none';
+        dialogContent.style.position = 'fixed';
+        dialogContent.style.margin = '0';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDefaultFeedbackDragging || !dialogContent) return;
+        dialogContent.style.left = (e.clientX - defaultFeedbackDragOffsetX) + 'px';
+        dialogContent.style.top = (e.clientY - defaultFeedbackDragOffsetY) + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        isDefaultFeedbackDragging = false;
     });
 }
 
-document.addEventListener('mousemove', (e) => {
-    if (!isDefaultFeedbackDragging) return;
-    defaultFeedbackDialog.style.left = (e.clientX - defaultFeedbackDragOffsetX) + 'px';
-    defaultFeedbackDialog.style.top = (e.clientY - defaultFeedbackDragOffsetY) + 'px';
-});
-
-document.addEventListener('mouseup', () => {
-    isDefaultFeedbackDragging = false;
-});
+// Initialize dragging when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupDefaultFeedbackDragging);
+} else {
+    setupDefaultFeedbackDragging();
+}
 
 // =============================================================================
 // EVENT LISTENERS
