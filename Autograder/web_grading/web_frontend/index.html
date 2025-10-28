@@ -303,6 +303,17 @@
                             </div>
                             <button id="apply-tags-btn" class="btn btn-primary btn-small" style="display: none; margin-top: 10px;">Apply Selected Tags to Feedback</button>
                         </div>
+
+                        <!-- Default Feedback Section -->
+                        <div id="default-feedback-container" class="default-feedback-container" style="display: none;">
+                            <div class="default-feedback-header">
+                                <strong>Default Feedback:</strong>
+                                <button id="edit-default-feedback-btn" class="btn btn-small">Edit</button>
+                            </div>
+                            <div id="default-feedback-display" class="default-feedback-display">
+                                <span class="default-feedback-placeholder">No default feedback set. Click "Edit" to add feedback for low scores.</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -416,6 +427,50 @@
                         Use ← → arrow keys to navigate
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Default Feedback Dialog -->
+    <div id="edit-default-feedback-dialog" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div style="background: white; border-radius: 8px; padding: 30px; max-width: 600px; width: 90%;">
+            <h2 style="margin-top: 0;">Edit Default Feedback</h2>
+            <p style="color: var(--gray-700); margin-bottom: 20px;">
+                This feedback will be automatically added to low-scoring submissions.
+            </p>
+
+            <label style="display: block; margin-bottom: 20px;">
+                <strong>Default Feedback Text:</strong>
+                <textarea id="default-feedback-text" rows="5" maxlength="1000" placeholder="e.g., The correct answer is..." style="display: block; width: 100%; padding: 8px; margin-top: 5px; border: 1px solid var(--gray-300); border-radius: 4px; resize: vertical;"></textarea>
+                <small style="color: var(--gray-600);">This will be appended after tags and manual feedback</small>
+            </label>
+
+            <label style="display: block; margin-bottom: 20px;">
+                <strong>Apply When:</strong>
+                <div style="margin-top: 10px;">
+                    <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                        <input type="checkbox" id="apply-on-zero" checked>
+                        <span>Score is 0</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                        <input type="checkbox" id="apply-on-blank" checked>
+                        <span>Problem is blank (marked with "-")</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="apply-on-threshold">
+                        <span style="display: flex; align-items: center; gap: 5px;">
+                            Score is below
+                            <input type="number" id="threshold-percentage" min="0" max="100" value="50" style="width: 60px; padding: 4px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                            % of max points
+                        </span>
+                    </label>
+                </div>
+            </label>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="cancel-default-feedback-btn" class="btn">Cancel</button>
+                <button id="clear-default-feedback-btn" class="btn btn-danger">Clear</button>
+                <button id="save-default-feedback-btn" class="btn btn-primary">Save</button>
             </div>
         </div>
     </div>
@@ -551,5 +606,6 @@
     <script src="/js/rubric-table.js"></script>
     <script src="/js/review.js"></script>
     <script src="/js/feedback_tags.js"></script>
+    <script src="/js/default_feedback.js"></script>
 </body>
 </html>

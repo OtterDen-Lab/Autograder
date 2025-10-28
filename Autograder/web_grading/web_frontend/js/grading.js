@@ -387,9 +387,10 @@ function displayCurrentProblem() {
         }
     }
 
-    // Load feedback tags for this problem number
+    // Load feedback tags and default feedback for this problem number
     if (currentSession && currentProblemNumber) {
         loadFeedbackTags(currentSession.id, currentProblemNumber);
+        loadDefaultFeedback(currentSession.id, currentProblemNumber);
     }
 }
 
@@ -543,13 +544,14 @@ async function submitGrade() {
     }
 
     const scoreValue = document.getElementById('score-input').value.trim();
-    const feedback = document.getElementById('feedback-input').value;
     const maxPoints = problemMaxPoints[currentProblemNumber] || 8;
 
     // Check if it's a dash (for blank marking) or a number
     let score;
+    let isBlank = false;
     if (scoreValue === '-') {
         score = '-';  // Send dash as-is to backend
+        isBlank = true;
     } else {
         score = parseFloat(scoreValue);
         if (isNaN(score)) {
@@ -561,6 +563,13 @@ async function submitGrade() {
             return;
         }
     }
+
+    // Auto-apply default feedback if conditions are met
+    if (typeof shouldApplyDefaultFeedback === 'function' && shouldApplyDefaultFeedback(score === '-' ? 0 : score, isBlank)) {
+        applyDefaultFeedbackToTextarea();
+    }
+
+    const feedback = document.getElementById('feedback-input').value;
 
     // Show loading state
     const submitBtn = document.getElementById('submit-grade-btn');
