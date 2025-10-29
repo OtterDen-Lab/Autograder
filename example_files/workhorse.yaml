@@ -60,6 +60,44 @@ courses:
           - 506879  # LL13
           - 506884  # LL14
 
+  - name: CST334-online
+    id: 31278
+    slack_channel: C09HR2J5EBF
+
+    assignment_groups:
+      - name: Programming Assignments
+        type: programming
+        settings:
+          base_image_name: "samogden/cst334"
+          extra_install_lines:
+            - "RUN apt install clang"
+          source_repo: "https://github.com/CSUMB-SCD-instructors/CST334-online"
+          golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
+          files_from_golden:
+            - "tests/unittests_reserved.c"
+          student_code_path: "src"
+          num_repeats: 10
+        assignments:
+          - {id: 534546, repo_path: PA1}
+          - {id: 534547, repo_path: PA2}
+          - {id: 534548, repo_path: PA3}
+          - {id: 534549, repo_path: PA4}
+          - {id: 534550, repo_path: PA5}
+
+      - name: Learning Logs
+        type: text
+        settings:
+          prefer_anthropic: false  # Override type default
+        assignments:
+          - 534506  # week 1
+          - 534507  # week 2
+          - 534508  # week 3
+          - 534509  # week 4
+          - 534510  # week 5
+          - 534511  # week 6
+          - 534512  # week 7
+          - 534513  # week 8
+
   - name: CST463
     id: 29740
     slack_channel: C09HR2J5EBF
