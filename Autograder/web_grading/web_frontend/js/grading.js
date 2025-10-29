@@ -694,6 +694,10 @@ async function loadStatistics() {
                 return sum + (ps.max_points || 8);
             }, 0);
 
+            // Calculate Canvas grade (raw score out of 100)
+            const canvasAvg = rawAvg; // Canvas grade is the raw score (out of 100)
+            const canvasPercentage = canvasAvg; // Since it's out of 100, the score IS the percentage
+
             examStatsHtml = `
                 <h3>Overall Progress Statistics <small style="font-size: 14px; font-weight: normal; color: var(--gray-600);">(${studentsWithGrades.length} students with grades, based on problems graded so far)</small></h3>
                 <div class="overall-stats" style="margin-bottom: 30px;">
@@ -701,6 +705,11 @@ async function loadStatistics() {
                         <h3>Average Score</h3>
                         <div class="value">${rawAvg.toFixed(2)} pts</div>
                         <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">(of graded problems)</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Canvas Grade</h3>
+                        <div class="value">${canvasPercentage.toFixed(1)}%</div>
+                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">(out of 100)</div>
                     </div>
                     <div class="stat-card">
                         <h3>Normalized Average</h3>
