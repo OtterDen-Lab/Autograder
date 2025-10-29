@@ -1134,6 +1134,16 @@ document.getElementById('finalize-btn').onclick = async () => {
             return;
         }
 
+        // Show progress area IMMEDIATELY to provide feedback
+        const progressDiv = document.getElementById('finalization-progress');
+        const messageDiv = document.getElementById('finalization-message');
+        const progressBar = document.getElementById('finalization-progress-bar');
+
+        progressDiv.style.display = 'block';
+        messageDiv.textContent = 'Initializing finalization...';
+        progressBar.style.width = '0%';
+        document.getElementById('finalize-btn').disabled = true;
+
         // Start finalization
         const response = await fetch(`${API_BASE}/finalize/${currentSession.id}/finalize`, {
             method: 'POST'
@@ -1141,18 +1151,14 @@ document.getElementById('finalize-btn').onclick = async () => {
 
         if (!response.ok) {
             const error = await response.json();
+            // Reset UI on error
+            progressDiv.style.display = 'none';
+            document.getElementById('finalize-btn').disabled = false;
             throw new Error(error.detail || 'Finalization failed');
         }
 
-        // Show progress area and start polling
-        const progressDiv = document.getElementById('finalization-progress');
-        const messageDiv = document.getElementById('finalization-message');
-        const progressBar = document.getElementById('finalization-progress-bar');
-
-        progressDiv.style.display = 'block';
+        // Update message once server responds
         messageDiv.textContent = 'Starting finalization...';
-        progressBar.style.width = '0%';
-        document.getElementById('finalize-btn').disabled = true;
 
         connectToFinalizationStream();
 
