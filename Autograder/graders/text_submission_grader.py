@@ -128,6 +128,53 @@ Return only valid JSON.
 """
 
 
+def get_question_consolidation_prompt(questions_list: List[str]) -> str:
+    """
+    Get prompt for consolidating similar questions into canonical versions.
+
+    Args:
+        questions_list: List of all questions asked by students
+
+    Returns:
+        Formatted prompt string for question consolidation
+    """
+    questions_str = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions_list)])
+
+    return f"""
+You are analyzing questions from student learning logs. Students have asked various questions, many of which are similar but phrased differently. Your task is to consolidate similar questions into clearly phrased canonical versions.
+
+Here are the questions students asked:
+
+{questions_str}
+
+Please consolidate these questions by:
+1. Identifying questions that ask about the same underlying concept or topic
+2. Grouping similar questions together
+3. Creating a single, clearly phrased canonical question for each group
+4. Making the canonical questions professional and precise (e.g., "Could you give a quick refresher on SGD and how it works?")
+
+Return a JSON response with:
+{{
+  "consolidated_questions": [
+    {{
+      "canonical_question": "The clearly phrased version of the question",
+      "original_questions": ["list", "of", "original", "questions", "that", "map", "to", "this"],
+      "topic": "Brief topic name (e.g., 'SGD', 'Neural Networks', 'Backpropagation')"
+    }}
+  ]
+}}
+
+IMPORTANT:
+- Each canonical question should be clear, professional, and well-phrased
+- Group questions that are asking about the same concept, even if phrased very differently
+- Keep the canonical questions concise but complete
+- If a question is unique and doesn't group with others, still include it but with only one original question
+- Preserve the intent and scope of the original questions
+
+Return only valid JSON.
+"""
+
+
 # Configuration constants for easy modification
 DEFAULT_MAX_TOPICS = 5
 DEFAULT_WORD_THRESHOLD = 250
@@ -159,6 +206,7 @@ class TextSubmissionGrader(Grader):
     self.aggregate_results = {}
     self.individual_results = []
     self.support_needed_students = []
+    self.consolidated_questions = []
     self.slack_channel = kwargs.get('slack_channel')
 
   def can_grade_submission(self, submission: Submission) -> bool:
@@ -490,7 +538,105 @@ class TextSubmissionGrader(Grader):
 
     log.info(f"✅ Individual grading completed. {len(self.support_needed_students)} students may need support.")
 
+    # Phase 2.5: Consolidate questions
+    log.info("="*60)
+    log.info("PHASE 2.5: QUESTION CONSOLIDATION")
+    log.info("="*60)
+    self.consolidated_questions = self._consolidate_questions(individual_results)
+
     return individual_results
+
+  def _consolidate_questions(self, individual_results: List[Dict]) -> List[Dict]:
+    """
+    Consolidate similar questions from all submissions into canonical versions.
+
+    Args:
+        individual_results: List of individual grading results
+
+    Returns:
+        List of consolidated question dictionaries
+    """
+    import json
+    import re
+    from Autograder.ai_helper import AI_Helper__OpenAI, AI_Helper__Anthropic
+
+    # Collect all questions from individual results
+    all_questions = []
+    for result in individual_results:
+      questions = result.get("questions_asked", [])
+      all_questions.extend(questions)
+
+    if not all_questions:
+      log.info("No questions found to consolidate")
+      return []
+
+    log.info(f"Consolidating {len(all_questions)} questions from students...")
+
+    # Get the consolidation prompt
+    prompt = get_question_consolidation_prompt(all_questions)
+
+    if self.prefer_anthropic:
+      # Try Anthropic first if preferred
+      try:
+        ai_helper = AI_Helper__Anthropic()
+        analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+
+        # Track token usage
+        self._track_token_usage(usage, "Phase 2.5 - Question Consolidation (Anthropic)")
+
+        # Try to parse JSON from response
+        json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
+        if json_match:
+          result = json.loads(json_match.group())
+          consolidated = result.get("consolidated_questions", [])
+          log.info(f"✅ Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions")
+          return consolidated
+        else:
+          log.warning("Could not parse JSON from Anthropic response")
+          return []
+
+      except Exception as e:
+        log.debug(f"Anthropic question consolidation failed: {e}. Trying OpenAI...")
+
+    try:
+      # Try OpenAI (either first choice or fallback)
+      ai_helper = AI_Helper__OpenAI()
+      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+
+      # Track token usage
+      self._track_token_usage(usage, "Phase 2.5 - Question Consolidation (OpenAI)")
+
+      consolidated = result.get("consolidated_questions", [])
+      log.info(f"✅ Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions")
+      return consolidated
+
+    except Exception as e:
+      log.debug(f"OpenAI question consolidation failed: {e}")
+
+      if not self.prefer_anthropic:
+        log.debug("Trying Anthropic as fallback...")
+        try:
+          # Fallback to Anthropic when OpenAI was first choice
+          ai_helper = AI_Helper__Anthropic()
+          analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+
+          # Track token usage
+          self._track_token_usage(usage, "Phase 2.5 - Question Consolidation (Anthropic fallback)")
+
+          # Try to parse JSON from response
+          json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
+          if json_match:
+            result = json.loads(json_match.group())
+            consolidated = result.get("consolidated_questions", [])
+            log.info(f"✅ Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions")
+            return consolidated
+          else:
+            log.warning("Could not parse JSON from Anthropic fallback response")
+            return []
+
+        except Exception as fallback_error:
+          log.error(f"Both AI providers failed for question consolidation: {fallback_error}")
+          return []
 
   def _grade_individual_submission(self, submission_text: str, core_topics: List[str], student_id: str) -> Dict:
     """
@@ -968,33 +1114,18 @@ class TextSubmissionGrader(Grader):
       for sentence in sentences:
         lines.append(f"• {sentence}")  # Don't add period since we split on periods
 
-    # Add questions section - group questions by student for context
-    questions_by_student = []
-    individual_results = report_data.get("individual_results", [])
-    total_questions = 0
-    for result in individual_results:
-      questions = result.get("questions_asked", [])
-      if questions:
-        student_name = result.get("student_name", "Unknown Student")
-        questions_by_student.append({
-          "student_name": student_name,
-          "questions": questions
-        })
-        total_questions += len(questions)
+    # Add consolidated questions section
+    if self.consolidated_questions:
+      lines.append(f"\n*Key Questions from Students ({len(self.consolidated_questions)} topics):*")
+      for q_group in self.consolidated_questions:
+        canonical = q_group.get("canonical_question", "")
+        topic = q_group.get("topic", "")
+        original_count = len(q_group.get("original_questions", []))
 
-    if questions_by_student:
-      lines.append(f"\n*Questions Students Asked ({total_questions} total):*")
-      for student_info in questions_by_student:
-        student_name = student_info["student_name"]
-        questions = student_info["questions"]
-        if len(questions) == 1:
-          # Single question: format inline
-          lines.append(f"• `{student_name}`: {questions[0]}")
+        if topic:
+          lines.append(f"• *{topic}*: {canonical} ({original_count} student{'s' if original_count > 1 else ''})")
         else:
-          # Multiple questions: format as sub-list
-          lines.append(f"• `{student_name}`:")
-          for question in questions:
-            lines.append(f"  - {question}")
+          lines.append(f"• {canonical} ({original_count} student{'s' if original_count > 1 else ''})")
 
     return "\n".join(lines)
 
