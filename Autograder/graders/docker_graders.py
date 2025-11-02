@@ -407,18 +407,26 @@ class Grader__template_grader(Grader__docker):
       source_repo: str = "https://github.com/CSUMB-SCD-instructors/course-template",
       student_code_path: str = "",
       extra_installs=None, # todo: these will be tough, do later
+      extra_dockerfile_lines=None,
+      file_paths=None,
       *args, **kwargs
   ):
-    
+
     if extra_installs is None:
       extra_installs = []
-    
+    if extra_dockerfile_lines is None:
+      extra_dockerfile_lines = []
+    if file_paths is None:
+      file_paths = {}
+
     self.course_name = course_name
     self.assignment_name = assignment_name
     self.base_image_name = base_image_name
     self.source_repo = source_repo
     self.student_code_path = student_code_path
     self.extra_installs = extra_installs
+    self.extra_dockerfile_lines = extra_dockerfile_lines
+    self.file_paths = file_paths
     
     # Potential includes
     self.golden_repo = kwargs.get("golden_repo", None)
@@ -462,6 +470,84 @@ class Grader__template_grader(Grader__docker):
       
       subprocess.run(cmd, check=True, env=env)
     
+  def _match_files_to_paths(self, submission) -> Tuple[List[Tuple], Optional[str]]:
+    """
+    Match submission files to target paths based on regex patterns in file_paths config.
+
+    Args:
+        submission: Submission object with files attribute
+
+    Returns:
+        Tuple of (files_to_copy, error_message)
+        - files_to_copy: List of (file_object, target_path) tuples
+        - error_message: Error string if duplicate matches found, None otherwise
+
+    Uses self.file_paths dict where keys are regex patterns and values are dicts with:
+        - path: subdirectory within assignment folder
+        - name: target filename
+    """
+    import re
+
+    files_to_copy = []
+    matched_patterns = {}  # Track which patterns have been matched
+
+    # Iterate through submission files
+    for file_obj in submission.files:
+      # Get the file's name (could include path if uploaded in folder structure)
+      file_identifier = getattr(file_obj, 'name', 'unnamed_file')
+
+      log.debug(f"Processing file: {file_identifier}")
+
+      # Try to match against each pattern
+      matched_this_file = False
+      for pattern, target_config in self.file_paths.items():
+        try:
+          if re.match(pattern, file_identifier):
+            log.debug(f"  Matched pattern: {pattern}")
+
+            # Check if this pattern was already matched by another file
+            if pattern in matched_patterns:
+              # Multiple files match the same pattern - return error
+              previous_file = matched_patterns[pattern]
+              error_msg = (
+                f"Multiple files match pattern '{pattern}': "
+                f"'{previous_file}' and '{file_identifier}'. "
+                f"Please ensure file names are unique and match exactly one pattern."
+              )
+              log.error(error_msg)
+              return [], error_msg
+
+            # Record this match
+            matched_patterns[pattern] = file_identifier
+
+            # Build target path
+            subpath = target_config.get('path', '')
+            target_name = target_config.get('name', file_identifier)
+
+            target_directory = os.path.join(
+              f"/repo/programming-assignments/{self.assignment_name}",
+              subpath
+            )
+
+            # We need to provide a target file path, not just directory
+            # The Docker copy will handle creating directories
+            target_file_path = os.path.join(target_directory, target_name)
+
+            files_to_copy.append((file_obj, target_file_path))
+            matched_this_file = True
+            log.debug(f"  Will copy to: {target_file_path}")
+            break  # Only match first pattern
+
+        except re.error as e:
+          log.error(f"Invalid regex pattern '{pattern}': {e}")
+          return [], f"Invalid regex pattern '{pattern}': {e}"
+
+      if not matched_this_file:
+        log.debug(f"  No pattern matched (will be skipped)")
+
+    log.info(f"Matched {len(files_to_copy)} files using file_paths patterns")
+    return files_to_copy, None
+
   def _get_image(self, **kwargs):
     # What we want to do is to create a docker image that has the repository in it and installs all the required dependencies.
     # In this case that means we need to get the repo from either locally or remotely and then run `uv sync` in the right directory
@@ -491,7 +577,20 @@ class Grader__template_grader(Grader__docker):
       # Set up dockerfile
       dockerfile_lines = [
         f"FROM {self.base_image_name}",
-        *kwargs.get("docker_install_lines", []), # Any extra installs are just added in to our docker file
+      ]
+
+      # Add any extra Dockerfile lines after FROM but before copying repo
+      # This allows for apt installs, user setup, etc.
+      if self.extra_dockerfile_lines:
+        # Handle both string (single line) and list (multiple lines)
+        if isinstance(self.extra_dockerfile_lines, str):
+          dockerfile_lines.append(self.extra_dockerfile_lines)
+        else:
+          dockerfile_lines.extend(self.extra_dockerfile_lines)
+
+      # Continue with the standard setup
+      dockerfile_lines.extend([
+        "",  # Empty line for readability
         "COPY repo /repo",
         "COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /bin/",
         "WORKDIR /repo",
@@ -499,7 +598,7 @@ class Grader__template_grader(Grader__docker):
         "USER root",
         "RUN uv lock",
         "RUN uv sync --locked"
-      ]
+      ])
       
       # Next, we want to save our dockerfile
       with open(os.path.join(temp_build_dir, "Dockerfile"), "w") as dockerfile_fid:
@@ -513,22 +612,39 @@ class Grader__template_grader(Grader__docker):
     return image
   
   def grade_submission(self, submission, *args, **kwargs) -> Feedback:
-    # Prepare files to copy to docker container
-    submission_files = []
-    for f in submission.files:
-      # Copy all files to the working directory
-      submission_files.append(
-        (
-          f,
-          os.path.join(
-            f"/repo/programming-assignments/{self.assignment_name}",
-            self.student_code_path
+    # Determine which file organization strategy to use
+    if self.file_paths:
+      # Use new regex-based file matching
+      log.info("Using file_paths regex matching for file organization")
+      submission_files, error_msg = self._match_files_to_paths(submission)
+
+      if error_msg:
+        # Return error feedback immediately
+        log.error(f"File matching error: {error_msg}")
+        return Feedback(
+          percentage_score=0.0,
+          comments=f"File naming error: {error_msg}"
+        )
+
+      log.debug(f"Matched files: {[(f.name if hasattr(f[0], 'name') else 'unknown', f[1]) for f in submission_files]}")
+    else:
+      # Use legacy student_code_path behavior (backward compatibility)
+      log.info("Using legacy student_code_path for file organization")
+      submission_files = []
+      for f in submission.files:
+        # Copy all files to the working directory
+        submission_files.append(
+          (
+            f,
+            os.path.join(
+              f"/repo/programming-assignments/{self.assignment_name}",
+              self.student_code_path
+            )
           )
         )
-      )
-    log.debug(f"submission.files: {submission.files}")
-    log.debug(f"submission_files: {submission_files}")
-    
+      log.debug(f"submission.files: {submission.files}")
+      log.debug(f"submission_files: {submission_files}")
+
     # Grade using parent class method
     return super().grade_submission(
       submission,
