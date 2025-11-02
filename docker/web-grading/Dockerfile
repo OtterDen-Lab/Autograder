@@ -21,6 +21,9 @@ WORKDIR /app
 # Copy LMSInterface dependency (local path dependency)
 COPY LMSInterface /app/LMSInterface
 
+# Copy QuizGeneration dependency (for answer regeneration)
+COPY QuizGeneration /app/QuizGeneration
+
 # Copy Autograder source
 COPY Autograder /app
 COPY Autograder/pyproject.toml /app/
@@ -33,6 +36,9 @@ RUN pip install --no-cache-dir uv
 
 # Install dependencies
 RUN uv pip install --system -e /app
+
+# Install QuizGeneration (for answer regeneration from QR codes)
+RUN uv pip install --system -e /app/QuizGeneration
 
 # Create data directory for database
 RUN mkdir -p /data

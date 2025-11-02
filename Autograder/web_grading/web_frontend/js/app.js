@@ -3,6 +3,61 @@
 const API_BASE = '/api';
 let currentSession = null;
 
+// Helper function to recursively get all files from dropped items (including directories)
+async function getAllFilesFromDataTransfer(dataTransferItems) {
+    const files = [];
+
+    // Process each dropped item
+    for (const item of dataTransferItems) {
+        const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+
+        if (entry) {
+            if (entry.isFile) {
+                const file = await new Promise((resolve) => entry.file(resolve));
+                files.push(file);
+            } else if (entry.isDirectory) {
+                const dirFiles = await readDirectory(entry);
+                files.push(...dirFiles);
+            }
+        } else {
+            // Fallback for browsers that don't support webkitGetAsEntry
+            const file = item.getAsFile();
+            if (file) files.push(file);
+        }
+    }
+
+    return files;
+}
+
+// Recursively read all files in a directory
+async function readDirectory(directoryEntry) {
+    const files = [];
+    const reader = directoryEntry.createReader();
+
+    // readEntries must be called repeatedly until it returns empty array
+    const readEntries = async () => {
+        return new Promise((resolve, reject) => {
+            reader.readEntries(resolve, reject);
+        });
+    };
+
+    let entries;
+    do {
+        entries = await readEntries();
+        for (const entry of entries) {
+            if (entry.isFile) {
+                const file = await new Promise((resolve) => entry.file(resolve));
+                files.push(file);
+            } else if (entry.isDirectory) {
+                const subFiles = await readDirectory(entry);
+                files.push(...subFiles);
+            }
+        }
+    } while (entries.length > 0);
+
+    return files;
+}
+
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
     loadSessions();
@@ -266,11 +321,53 @@ function setupEventListeners() {
         uploadArea.style.borderColor = 'var(--gray-200)';
     };
 
-    uploadArea.ondrop = (e) => {
+    uploadArea.ondrop = async (e) => {
         e.preventDefault();
         uploadArea.style.borderColor = 'var(--gray-200)';
-        fileInput.files = e.dataTransfer.files;
-        uploadFiles();
+
+        // Handle both files and directories
+        const items = e.dataTransfer.items;
+        console.log('Drop event - number of items:', items ? items.length : 0);
+
+        if (items) {
+            console.log('Processing items...');
+            const files = await getAllFilesFromDataTransfer(items);
+            console.log('Total files extracted from drop:', files.length);
+            console.log('File names:', files.map(f => f.name));
+
+            // Filter to only PDF files
+            const pdfFiles = files.filter(file =>
+                file.name.toLowerCase().endsWith('.pdf') &&
+                !file.name.startsWith('.')
+            );
+            console.log('PDF files after filtering:', pdfFiles.length);
+
+            if (pdfFiles.length > 0) {
+                // Create a new FileList-like object
+                const dataTransfer = new DataTransfer();
+                pdfFiles.forEach(file => dataTransfer.items.add(file));
+                fileInput.files = dataTransfer.files;
+                console.log('About to upload', fileInput.files.length, 'files');
+                uploadFiles();
+            } else {
+                alert('No PDF files found. Please upload PDF files only.');
+            }
+        } else {
+            // Fallback for older browsers - still filter PDFs
+            const pdfFiles = Array.from(e.dataTransfer.files).filter(file =>
+                file.name.toLowerCase().endsWith('.pdf') &&
+                !file.name.startsWith('.')
+            );
+            console.log('Fallback mode - PDF files:', pdfFiles.length);
+            if (pdfFiles.length > 0) {
+                const dataTransfer = new DataTransfer();
+                pdfFiles.forEach(file => dataTransfer.items.add(file));
+                fileInput.files = dataTransfer.files;
+                uploadFiles();
+            } else {
+                alert('No PDF files found. Please upload PDF files only.');
+            }
+        }
     };
 
     fileInput.onchange = uploadFiles;
@@ -926,12 +1023,18 @@ async function submitAlignment() {
         // Check if last page is blank
         const lastPageBlank = document.getElementById('last-page-blank-checkbox').checked;
 
+        // Convert all split points to integers (they may be floats from page dimensions)
+        const splitPointsInt = {};
+        for (const [pageNum, points] of Object.entries(splitPoints)) {
+            splitPointsInt[pageNum] = points.map(y => Math.round(y));
+        }
+
         // Submit split points to backend
         const response = await fetch(`${API_BASE}/uploads/${currentSession.id}/submit-alignment`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                split_points: splitPoints,
+                split_points: splitPointsInt,
                 skip_first_region: skipFirstRegion,
                 last_page_blank: lastPageBlank
             })

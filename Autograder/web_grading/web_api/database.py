@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 
 
 def get_db_path() -> Path:
@@ -142,9 +142,7 @@ def create_schema(cursor):
             max_points REAL,
             ai_reasoning TEXT,
             region_coords TEXT,
-            qr_question_type TEXT,
-            qr_seed INTEGER,
-            qr_version TEXT,
+            qr_encrypted_data TEXT,
             FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
             FOREIGN KEY (submission_id) REFERENCES submissions(id)
         )
@@ -272,6 +270,10 @@ def run_migrations(cursor, from_version: int):
     if from_version < 16:
         migrate_to_v16(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (16)")
+
+    if from_version < 17:
+        migrate_to_v17(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (17)")
 
 
 def migrate_to_v2(cursor):
@@ -481,6 +483,17 @@ def migrate_to_v16(cursor):
     cursor.execute("ALTER TABLE problems ADD COLUMN qr_question_type TEXT")
     cursor.execute("ALTER TABLE problems ADD COLUMN qr_seed INTEGER")
     cursor.execute("ALTER TABLE problems ADD COLUMN qr_version TEXT")
+
+
+def migrate_to_v17(cursor):
+    """Replace QR code fields with single encrypted data field"""
+    log.info("Migrating to schema version 17: replacing QR fields with qr_encrypted_data")
+
+    # Add new encrypted data column
+    cursor.execute("ALTER TABLE problems ADD COLUMN qr_encrypted_data TEXT")
+
+    # Note: Old columns (qr_question_type, qr_seed, qr_version) remain for backward compatibility
+    # but new code will only use qr_encrypted_data
 
 
 def update_problem_stats(session_id: int):

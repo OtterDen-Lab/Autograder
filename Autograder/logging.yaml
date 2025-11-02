@@ -36,12 +36,12 @@ handlers:
 
 loggers:
   Autograder:
-    level: DEBUG
+    level: INFO
     handlers: [console, file]
     propagate: false
 
   lms_interface:
-    level: DEBUG
+    level: INFO
     handlers: [console, file]
     propagate: false
     

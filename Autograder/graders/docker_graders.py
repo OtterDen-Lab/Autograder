@@ -548,7 +548,7 @@ class Grader__template_grader(Grader__docker):
     log.info(f"Matched {len(files_to_copy)} files using file_paths patterns")
     return files_to_copy, None
 
-  def _get_image(self):
+  def _get_image(self, **kwargs):
     # What we want to do is to create a docker image that has the repository in it and installs all the required dependencies.
     # In this case that means we need to get the repo from either locally or remotely and then run `uv sync` in the right directory
 
@@ -596,6 +596,7 @@ class Grader__template_grader(Grader__docker):
         "WORKDIR /repo",
         "RUN rm -rf .venv",
         "USER root",
+        "RUN uv lock",
         "RUN uv sync --locked"
       ])
       
@@ -660,6 +661,7 @@ class Grader__template_grader(Grader__docker):
     #   comments: <feedback text>
     #   logs: <optional execution logs>
     feedback_content = self.read_file_from_container("/tmp/feedback.yaml")
+    log.debug(f"feedback_content: {feedback_content}")
 
     if feedback_content:
       try:

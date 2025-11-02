@@ -8,6 +8,7 @@ from pydantic import BaseModel
 import tempfile
 import zipfile
 import hashlib
+import logging
 from pathlib import Path
 
 from ..models import UploadResponse
@@ -15,6 +16,7 @@ from ..database import get_db_connection
 from .. import sse
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 
 class SplitPointsSubmission(BaseModel):
@@ -110,13 +112,78 @@ async def upload_exams(
                 "original_filename": pdf_path.name
             }
 
-    # Generate composite images for manual alignment
-    alignment_service = ManualAlignmentService()
-    composites = alignment_service.create_composite_images(saved_files)
+    # Store file paths and metadata in session for later processing
+    # Append to existing uploads if any (support multiple upload batches)
+    import json
 
-    # Get page dimensions
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get existing session data
+        cursor.execute("SELECT metadata FROM grading_sessions WHERE id = ?", (session_id,))
+        row = cursor.fetchone()
+        existing_data = json.loads(row["metadata"]) if row and row["metadata"] else None
+
+        if existing_data and "file_paths" in existing_data:
+            # Append to existing files
+            log.info(f"Appending {len(saved_files)} files to existing {len(existing_data['file_paths'])} files")
+
+            existing_files = [Path(p) for p in existing_data["file_paths"]]
+            existing_metadata = {Path(k): v for k, v in existing_data["file_metadata"].items()}
+
+            # Combine with new files (avoiding duplicates by hash)
+            existing_hashes = {meta["hash"] for meta in existing_metadata.values()}
+            new_files_added = 0
+
+            for new_file in saved_files:
+                new_hash = file_metadata[new_file]["hash"]
+                if new_hash not in existing_hashes:
+                    existing_files.append(new_file)
+                    existing_metadata[new_file] = file_metadata[new_file]
+                    new_files_added += 1
+                else:
+                    log.info(f"Skipping duplicate file: {new_file.name}")
+
+            log.info(f"Added {new_files_added} new files (skipped {len(saved_files) - new_files_added} duplicates)")
+
+            # Use the first temp_dir or create new one
+            temp_dir_to_use = existing_data.get("temp_dir", str(temp_dir))
+
+            session_data = {
+                "temp_dir": temp_dir_to_use,
+                "file_paths": [str(f) for f in existing_files],
+                "file_metadata": {str(k): v for k, v in existing_metadata.items()}
+            }
+
+            total_files = len(existing_files)
+        else:
+            # First upload for this session
+            log.info(f"First upload: {len(saved_files)} files")
+            session_data = {
+                "temp_dir": str(temp_dir),
+                "file_paths": [str(f) for f in saved_files],
+                "file_metadata": {str(k): v for k, v in file_metadata.items()}
+            }
+            total_files = len(saved_files)
+
+        cursor.execute("""
+            UPDATE grading_sessions
+            SET status = 'awaiting_alignment',
+                total_exams = ?,
+                metadata = ?,
+                processing_message = 'Uploaded. Please align split points.',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (total_files, json.dumps(session_data), session_id))
+
+    # Generate composite images using ALL files (existing + new)
+    all_file_paths = [Path(p) for p in session_data["file_paths"]]
+    alignment_service = ManualAlignmentService()
+    composites = alignment_service.create_composite_images(all_file_paths)
+
+    # Get page dimensions from first file
     import fitz
-    first_pdf = fitz.open(str(saved_files[0]))
+    first_pdf = fitz.open(str(all_file_paths[0]))
     page_dimensions = {}
     for page_num in range(first_pdf.page_count):
         page = first_pdf[page_num]
@@ -126,35 +193,14 @@ async def upload_exams(
         }
     first_pdf.close()
 
-    # Store file paths and metadata in session for later processing
-    # We'll use a temp location that can be retrieved when user submits alignment
-    import json
-    session_data = {
-        "temp_dir": str(temp_dir),
-        "file_paths": [str(f) for f in saved_files],
-        "file_metadata": {str(k): v for k, v in file_metadata.items()}
-    }
-
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE grading_sessions
-            SET status = 'awaiting_alignment',
-                total_exams = ?,
-                metadata = ?,
-                processing_message = 'Uploaded. Please align split points.',
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (len(saved_files), json.dumps(session_data), session_id))
-
     return {
         "session_id": session_id,
         "files_uploaded": len(saved_files),
         "status": "awaiting_alignment",
-        "message": f"Uploaded {len(saved_files)} exam(s). Please set split points.",
+        "message": f"Uploaded {len(saved_files)} exam(s). Total: {total_files} exam(s). Please set split points.",
         "composites": composites,
         "page_dimensions": page_dimensions,
-        "num_exams": len(saved_files)
+        "num_exams": total_files
     }
 
 
@@ -518,13 +564,13 @@ async def process_exam_files(
                             coords_dict["end_region_y"] = problem["end_region_y"]
                         region_coords = json.dumps(coords_dict)
 
-                    # Insert problem with region metadata and QR metadata if available
+                    # Insert problem with region metadata and QR encrypted data if available
                     cursor.execute("""
                         INSERT INTO problems
                         (session_id, submission_id, problem_number, image_data, graded,
                          is_blank, blank_confidence, blank_method, blank_reasoning, max_points,
-                         region_coords, qr_question_type, qr_seed, qr_version)
-                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         region_coords, qr_encrypted_data)
+                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         session_id,
                         submission_id,
@@ -536,9 +582,7 @@ async def process_exam_files(
                         problem.get("blank_reasoning"),
                         max_points,
                         region_coords,  # JSON with page_number, region_y_start, region_y_end, region_height
-                        problem.get("qr_question_type"),  # QR metadata
-                        problem.get("qr_seed"),
-                        problem.get("qr_version")
+                        problem.get("qr_encrypted_data")  # Encrypted QR data
                     ))
 
             # Update session status

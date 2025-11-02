@@ -16,6 +16,14 @@ from ..database import get_db_connection, update_problem_stats
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 import Autograder.ai_helper as ai_helper
 
+from PIL import Image
+import io
+
+import json
+import logging
+
+log = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -36,8 +44,6 @@ def extract_problem_image(pdf_data: str, page_number: int, region_y_start: int,
     Returns:
         Base64 encoded PNG image of the problem region
     """
-    from PIL import Image
-    import io
 
     # Decode PDF from base64
     pdf_bytes = base64.b64decode(pdf_data)
@@ -169,7 +175,6 @@ def get_problem_image_data(problem_row, cursor) -> str:
     Returns:
         Base64 encoded PNG image
     """
-    import json
 
     # If image_data is stored, return it directly
     if problem_row["image_data"]:
@@ -196,13 +201,17 @@ def get_problem_image_data(problem_row, cursor) -> str:
                     region_data.get("end_page_number"),  # Optional: for cross-page regions
                     region_data.get("end_region_y")  # Optional: for cross-page regions
                 )
+            else:
+                log.error(f"Problem {problem_row['id']}: No PDF data found for submission {problem_row['submission_id']}")
         except (json.JSONDecodeError, KeyError) as e:
+            log.error(f"Problem {problem_row['id']}: Invalid region_coords data: {str(e)}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Invalid region_coords data: {str(e)}"
             )
 
     # Fallback: no image data available
+    log.error(f"Problem {problem_row['id']}: No image data available. has_image_data={bool(problem_row['image_data'])}, has_region_coords={bool(problem_row['region_coords'])}")
     raise HTTPException(
         status_code=500,
         detail="Problem image data not available (no stored image or PDF data)"
@@ -269,9 +278,7 @@ async def get_next_problem(session_id: int, problem_number: int):
             blank_method=row["blank_method"],
             blank_reasoning=row["blank_reasoning"],
             ai_reasoning=row["ai_reasoning"],
-            qr_question_type=row["qr_question_type"],
-            qr_seed=row["qr_seed"],
-            qr_version=row["qr_version"]
+            has_qr_data=bool(row["qr_encrypted_data"]) if "qr_encrypted_data" in row.keys() else False
         )
 
 
@@ -335,9 +342,7 @@ async def get_previous_problem(session_id: int, problem_number: int):
             blank_method=row["blank_method"],
             blank_reasoning=row["blank_reasoning"],
             ai_reasoning=row["ai_reasoning"],
-            qr_question_type=row["qr_question_type"],
-            qr_seed=row["qr_seed"],
-            qr_version=row["qr_version"]
+            has_qr_data=bool(row["qr_encrypted_data"]) if "qr_encrypted_data" in row.keys() else False
         )
 
 
@@ -440,9 +445,7 @@ async def get_problem(problem_id: int):
             blank_method=row["blank_method"],
             blank_reasoning=row["blank_reasoning"],
             ai_reasoning=row["ai_reasoning"],
-            qr_question_type=row["qr_question_type"],
-            qr_seed=row["qr_seed"],
-            qr_version=row["qr_version"]
+            has_qr_data=bool(row["qr_encrypted_data"]) if "qr_encrypted_data" in row.keys() else False
         )
 
 
@@ -456,7 +459,6 @@ async def get_problem_in_context(problem_id: int):
         - page_image: Base64 PNG of full page
         - problem_region: Coordinates {y_start, y_end, height} for highlighting
     """
-    import json
 
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -694,7 +696,7 @@ async def regenerate_answer(problem_id: int):
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT qr_question_type, qr_seed, qr_version, max_points, problem_number
+            SELECT qr_encrypted_data, max_points, problem_number
             FROM problems
             WHERE id = ?
         """, (problem_id,))
@@ -703,16 +705,16 @@ async def regenerate_answer(problem_id: int):
         if not row:
             raise HTTPException(status_code=404, detail="Problem not found")
 
-        # Check if QR metadata is available
-        if not row["qr_question_type"] or row["qr_seed"] is None:
+        # Check if QR encrypted data is available
+        if not row["qr_encrypted_data"]:
             raise HTTPException(
                 status_code=400,
-                detail="QR code metadata not available for this problem"
+                detail="QR code data not available for this problem"
             )
 
     # Import QuizGeneration regeneration function
     try:
-        from grade_from_qr import regenerate_from_metadata
+        from grade_from_qr import regenerate_from_encrypted
     except ImportError:
         raise HTTPException(
             status_code=500,
@@ -720,13 +722,17 @@ async def regenerate_answer(problem_id: int):
         )
 
     try:
-        # Regenerate the answer using QR metadata
-        result = regenerate_from_metadata(
-            question_type=row["qr_question_type"],
-            seed=row["qr_seed"],
-            version=row["qr_version"],
+        # Regenerate the answer using encrypted QR data
+        result = regenerate_from_encrypted(
+            encrypted_data=row["qr_encrypted_data"],
             points=row["max_points"] or 0.0
         )
+
+        # Extract metadata from result (returned by regenerate_from_encrypted)
+        question_type = result.get('question_type')
+        seed = result.get('seed')
+        version = result.get('version')
+        config = result.get('config')
 
         # Format answers for display
         answers = []
@@ -742,15 +748,26 @@ async def regenerate_answer(problem_id: int):
 
             answers.append(answer_dict)
 
-        return {
+        # Prepare response
+        response = {
             "problem_id": problem_id,
             "problem_number": row["problem_number"],
-            "question_type": row["qr_question_type"],
-            "seed": row["qr_seed"],
-            "version": row["qr_version"],
+            "question_type": question_type,
+            "seed": seed,
+            "version": version,
             "max_points": row["max_points"],
             "answers": answers
         }
+
+        # Include config if available
+        if config:
+            response['config'] = config
+
+        # Include HTML answer key if available
+        if 'answer_key_html' in result:
+            response['answer_key_html'] = result['answer_key_html']
+
+        return response
 
     except ValueError as e:
         raise HTTPException(

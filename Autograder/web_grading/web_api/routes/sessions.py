@@ -16,6 +16,8 @@ from ..models import (
 )
 from ..database import get_db_connection
 from lms_interface.canvas_interface import CanvasInterface
+from ..services.qr_scanner import QRScanner
+import os
 
 router = APIRouter()
 
@@ -582,8 +584,8 @@ async def import_session(file: UploadFile = File(...)):
                 cursor.execute("""
                     INSERT INTO submissions
                     (session_id, document_id, approximate_name, name_image_data, student_name, display_name,
-                     canvas_user_id, page_mappings, total_score, graded_at, file_hash, original_filename)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     canvas_user_id, page_mappings, total_score, graded_at, file_hash, original_filename, exam_pdf_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     new_session_id,
                     submission["document_id"],
@@ -596,7 +598,8 @@ async def import_session(file: UploadFile = File(...)):
                     submission.get("total_score"),
                     submission.get("graded_at"),
                     submission.get("file_hash"),
-                    submission.get("original_filename")
+                    submission.get("original_filename"),
+                    submission.get("exam_pdf_data")
                 ))
 
                 new_submission_id = cursor.lastrowid
@@ -607,13 +610,14 @@ async def import_session(file: UploadFile = File(...)):
                     cursor.execute("""
                         INSERT INTO problems
                         (session_id, submission_id, problem_number, image_data, score, feedback,
-                         graded, graded_at, is_blank, blank_confidence, blank_method, blank_reasoning, max_points)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         graded, graded_at, is_blank, blank_confidence, blank_method, blank_reasoning, max_points,
+                         region_coords, qr_encrypted_data, ai_reasoning)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         new_session_id,
                         new_submission_id,
                         problem["problem_number"],
-                        problem["image_data"],
+                        problem.get("image_data"),
                         problem.get("score"),
                         problem.get("feedback"),
                         problem.get("graded", 0),
@@ -622,7 +626,10 @@ async def import_session(file: UploadFile = File(...)):
                         problem.get("blank_confidence", 0.0),
                         problem.get("blank_method"),
                         problem.get("blank_reasoning"),
-                        problem.get("max_points")
+                        problem.get("max_points"),
+                        problem.get("region_coords"),
+                        problem.get("qr_encrypted_data"),
+                        problem.get("ai_reasoning")
                     ))
 
             # Import problem stats
@@ -654,3 +661,50 @@ async def import_session(file: UploadFile = File(...)):
     except Exception as e:
         log.error(f"Import failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+
+
+@router.post("/encryption-key/test")
+async def test_encryption_key(encrypted_data: str, encryption_key: str):
+    """Test if an encryption key can decrypt sample QR code data"""
+    from ..services.qr_scanner import MinimalQuestionQRCode
+    import logging
+    log = logging.getLogger(__name__)
+
+    try:
+        # Try to decrypt with the provided key
+        metadata = MinimalQuestionQRCode.decrypt_question_data(
+            encrypted_data,
+            encryption_key.encode()
+        )
+
+        return {
+            "status": "success",
+            "message": "Encryption key is valid",
+            "metadata": metadata
+        }
+    except Exception as e:
+        log.warning(f"Failed to decrypt with provided key: {e}")
+        return {
+            "status": "failed",
+            "message": f"Encryption key failed to decrypt: {str(e)}"
+        }
+
+
+@router.post("/encryption-key/set")
+async def set_encryption_key(encryption_key: str):
+    """
+    Set the encryption key for the current session (runtime only, not persisted).
+    This is a workaround for when the QUIZ_ENCRYPTION_KEY env var isn't available.
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    # Set the environment variable for this process
+    os.environ['QUIZ_ENCRYPTION_KEY'] = encryption_key
+
+    log.info("Encryption key updated for current session (runtime only)")
+
+    return {
+        "status": "success",
+        "message": "Encryption key set for current session. This will be lost when the server restarts."
+    }
