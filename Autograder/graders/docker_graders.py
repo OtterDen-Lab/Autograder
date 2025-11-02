@@ -545,6 +545,7 @@ class Grader__template_grader(Grader__docker):
     #   comments: <feedback text>
     #   logs: <optional execution logs>
     feedback_content = self.read_file_from_container("/tmp/feedback.yaml")
+    log.debug(f"feedback_content: {feedback_content}")
 
     if feedback_content:
       try:
