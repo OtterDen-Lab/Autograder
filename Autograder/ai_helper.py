@@ -2,6 +2,7 @@ import abc
 import json
 import os
 import random
+import ollama
 from typing import Tuple, Dict, List
 
 import dotenv
@@ -154,3 +155,54 @@ class AI_Helper__OpenAI(AI_Helper):
         return cls.query_ai(message, attachments, max_response_tokens, max_retries-1)
       else:
         return {}, usage_info
+
+
+class AI_Helper__Ollama(AI_Helper):
+  def __init__(self):
+    super().__init__()
+    self.__class__._client = ollama.Client(
+      host='http://worker:11434'
+    )
+  
+  @classmethod
+  def query_ai(
+      cls,
+      message: str,
+      attachments: List[Tuple[str, str]],
+      max_response_tokens: int = DEFAULT_MAX_TOKENS,
+      max_retries: int = DEFAULT_MAX_RETRIES
+  ) -> Tuple[Dict, Dict]:
+    
+    response = ollama.chat(
+      model='gemma3',
+      messages=[
+        {
+          'role': 'user',
+          'content': message,
+          'images' : attachments[0]
+        }
+      ]
+    )
+    
+    
+    
+    # Extract usage information
+    usage_info = {
+      "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+      "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+      "total_tokens": response.usage.total_tokens if response.usage else 0,
+      "provider": "ollama"
+    }
+    
+    try:
+      content = json.loads(response.choices[0].message.content)
+      return content, usage_info
+    except TypeError:
+      if max_retries > 0:
+        return cls.query_ai(message, attachments, max_response_tokens, max_retries - 1)
+      else:
+        return {}, usage_info
+
+
+  
+  
