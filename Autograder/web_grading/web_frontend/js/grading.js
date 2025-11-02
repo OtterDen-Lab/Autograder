@@ -64,23 +64,32 @@ function showNotification(message, callback) {
 function updateMaxPointsDropdown() {
     const maxPointsInput = document.getElementById('max-points-input');
     const scoreInput = document.getElementById('score-input');
-    const scoreSlider = document.getElementById('score-slider');
     const cachedMax = problemMaxPoints[currentProblemNumber];
 
     // Default to 8 if not set
     const maxPoints = cachedMax || 8;
 
     maxPointsInput.value = maxPoints;
-    scoreSlider.max = maxPoints;
     scoreInput.max = maxPoints;
 }
 
 // Load available problem numbers
 async function loadProblemNumbers() {
     try {
-        const response = await fetch(`${API_BASE}/sessions/${currentSession.id}/problem-numbers`);
-        const data = await response.json();
+        const [numbersResponse, statsResponse] = await Promise.all([
+            fetch(`${API_BASE}/sessions/${currentSession.id}/problem-numbers`),
+            fetch(`${API_BASE}/sessions/${currentSession.id}/stats`)
+        ]);
+
+        const data = await numbersResponse.json();
+        const stats = await statsResponse.json();
         availableProblemNumbers = data.problem_numbers;
+
+        // Build a map of problem number -> ungraded count
+        const ungradedCounts = {};
+        stats.problem_stats.forEach(ps => {
+            ungradedCounts[ps.problem_number] = ps.num_total - ps.num_graded;
+        });
 
         const select = document.getElementById('problem-select');
         select.innerHTML = '';
@@ -88,7 +97,8 @@ async function loadProblemNumbers() {
         availableProblemNumbers.forEach(num => {
             const option = document.createElement('option');
             option.value = num;
-            option.textContent = `Problem ${num}`;
+            const ungradedCount = ungradedCounts[num] || 0;
+            option.textContent = `Problem ${num} (${ungradedCount})`;
             select.appendChild(option);
         });
 
@@ -132,28 +142,10 @@ document.getElementById('upload-more-btn').addEventListener('click', () => {
         `<strong>Adding exams to:</strong> ${currentSession.assignment_name} - ${currentSession.course_name || `Course ${currentSession.course_id}`}`;
 });
 
-// Setup score sync between slider and input
+// Setup score sync between slider and input (slider removed, keeping function for compatibility)
 function setupScoreSync() {
-    const scoreSlider = document.getElementById('score-slider');
-    const scoreInput = document.getElementById('score-input');
-
-    // Remove old listeners by replacing elements
-    const newSlider = scoreSlider.cloneNode(true);
-    const newInput = scoreInput.cloneNode(true);
-    scoreSlider.parentNode.replaceChild(newSlider, scoreSlider);
-    scoreInput.parentNode.replaceChild(newInput, scoreInput);
-
-    // Add new listeners
-    newSlider.addEventListener('input', (e) => {
-        newInput.value = e.target.value;
-    });
-
-    newInput.addEventListener('input', (e) => {
-        const value = parseFloat(e.target.value);
-        if (!isNaN(value)) {
-            newSlider.value = value;
-        }
-    });
+    // Slider has been removed - this function is now a no-op
+    // Kept for compatibility with existing calls
 }
 
 // Setup grading controls
@@ -179,8 +171,7 @@ function setupGradingControls() {
     maxPointsInput.addEventListener('change', async (e) => {
         const maxPoints = parseFloat(e.target.value);
         if (!isNaN(maxPoints) && maxPoints > 0 && currentProblemNumber) {
-            // Update slider and input max
-            document.getElementById('score-slider').max = maxPoints;
+            // Update input max
             document.getElementById('score-input').max = maxPoints;
 
             // Save to cache
@@ -224,6 +215,18 @@ function handleGradingKeyboard(e) {
         return;
     }
 
+    // Don't handle if default feedback dialog is open
+    const defaultFeedbackDialog = document.getElementById('edit-default-feedback-dialog');
+    if (defaultFeedbackDialog && defaultFeedbackDialog.style.display === 'flex') {
+        return;
+    }
+
+    // Don't handle if add tag dialog is open
+    const addTagDialog = document.getElementById('add-tag-dialog');
+    if (addTagDialog && addTagDialog.style.display === 'flex') {
+        return;
+    }
+
     // Don't handle if typing in textarea
     if (e.target.tagName === 'TEXTAREA') {
         return;
@@ -235,14 +238,10 @@ function handleGradingKeyboard(e) {
         submitGrade();
     }
 
-    // Shift+Tab - skip to next without grading
-    if (e.key === 'Tab' && e.shiftKey) {
-        e.preventDefault();
-        loadNextProblem();
-    }
-
     // Number keys 0-9 or dash (-) - quick score entry (but not when typing in rubric table or other inputs)
+    // Also ignore if any modifier keys are pressed (Cmd/Ctrl/Alt for browser shortcuts like zoom)
     if ((/^[0-9]$/.test(e.key) || e.key === '-') &&
+        !e.metaKey && !e.ctrlKey && !e.altKey && // Ignore if modifier keys are held
         e.target.id !== 'score-input' &&
         e.target.id !== 'feedback-input' &&
         e.target.id !== 'max-points-input' &&
@@ -259,8 +258,29 @@ function displayCurrentProblem() {
     if (!currentProblem) return;
 
     // Display problem
-    document.getElementById('problem-image').src =
-        `data:image/png;base64,${currentProblem.image_data}`;
+    const problemImage = document.getElementById('problem-image');
+    problemImage.src = `data:image/png;base64,${currentProblem.image_data}`;
+
+    // Auto-size container to fit image when it loads
+    problemImage.onload = () => {
+        const scrollContainer = document.getElementById('problem-scroll-container');
+        if (scrollContainer) {
+            // Calculate the full displayed height of the image
+            const displayedHeight = problemImage.offsetHeight;
+            const fullImageHeight = displayedHeight + 40; // Add padding for borders/margins
+
+            // Store this as the maximum allowed height (so user can always expand to see full image)
+            scrollContainer.dataset.maxImageHeight = fullImageHeight;
+
+            // Check if we have a saved height preference
+            const savedHeight = localStorage.getItem('problemScrollContainerHeight');
+            if (!savedHeight) {
+                // No saved preference - default to showing full image
+                scrollContainer.style.height = `${fullImageHeight}px`;
+            }
+            // If there's a saved height, the setupProblemImageResize() function already applied it
+        }
+    };
 
     // Update progress with blank count
     let progressText = `${currentProblem.current_index} / ${currentProblem.total_count}`;
@@ -289,11 +309,16 @@ function displayCurrentProblem() {
         showAnswerBtn.style.display = 'none';
     }
 
+    // Update answer dialog if it's currently visible
+    const answerDialog = document.getElementById('answer-dialog');
+    if (answerDialog && answerDialog.style.display === 'flex') {
+        updateAnswerDialog();
+    }
+
     // Populate form based on whether it's graded or blank
     if (currentProblem.graded) {
         // Already graded - show existing grade
         document.getElementById('score-input').value = currentProblem.score != null ? currentProblem.score : '';
-        document.getElementById('score-slider').value = currentProblem.score != null ? currentProblem.score : 0;
         document.getElementById('feedback-input').value = currentProblem.feedback || '';
 
         // Remove blank indicator
@@ -304,9 +329,9 @@ function displayCurrentProblem() {
         const oldAiIndicator = document.getElementById('ai-graded-indicator');
         if (oldAiIndicator) oldAiIndicator.remove();
     } else if (currentProblem.is_blank) {
-        // Auto-populate score as 0 for detected blank problems
-        document.getElementById('score-input').value = '0';
-        document.getElementById('feedback-input').value = 'No answer provided';
+        // Don't auto-populate score for heuristically detected blanks - let user verify
+        document.getElementById('score-input').value = '';
+        document.getElementById('feedback-input').value = '';
 
         // Show blank detection indicator
         const blankIndicator = document.createElement('div');
@@ -336,7 +361,6 @@ function displayCurrentProblem() {
         if (currentProblem.score != null && currentProblem.feedback) {
             // Auto-populate both score and feedback for review
             document.getElementById('score-input').value = currentProblem.score != null ? currentProblem.score : '';
-            document.getElementById('score-slider').value = currentProblem.score != null ? currentProblem.score : 0;
             document.getElementById('feedback-input').value = currentProblem.feedback || '';
 
             // Show AI-graded indicator
@@ -373,6 +397,12 @@ function displayCurrentProblem() {
             const oldAiIndicator = document.getElementById('ai-graded-indicator');
             if (oldAiIndicator) oldAiIndicator.remove();
         }
+    }
+
+    // Load feedback tags and default feedback for this problem number
+    if (currentSession && currentProblemNumber) {
+        loadFeedbackTags(currentSession.id, currentProblemNumber);
+        loadDefaultFeedback(currentSession.id, currentProblemNumber);
     }
 }
 
@@ -520,14 +550,20 @@ async function loadNextProblem() {
 async function submitGrade() {
     if (!currentProblem) return;
 
+    // Auto-apply selected tags before submitting
+    if (typeof applySelectedTags === 'function' && selectedTagIds && selectedTagIds.size > 0) {
+        await applySelectedTags();
+    }
+
     const scoreValue = document.getElementById('score-input').value.trim();
-    const feedback = document.getElementById('feedback-input').value;
     const maxPoints = problemMaxPoints[currentProblemNumber] || 8;
 
     // Check if it's a dash (for blank marking) or a number
     let score;
+    let isBlank = false;
     if (scoreValue === '-') {
         score = '-';  // Send dash as-is to backend
+        isBlank = true;
     } else {
         score = parseFloat(scoreValue);
         if (isNaN(score)) {
@@ -539,6 +575,13 @@ async function submitGrade() {
             return;
         }
     }
+
+    // Auto-apply default feedback if conditions are met
+    if (typeof shouldApplyDefaultFeedback === 'function' && shouldApplyDefaultFeedback(score === '-' ? 0 : score, isBlank)) {
+        applyDefaultFeedbackToTextarea();
+    }
+
+    const feedback = document.getElementById('feedback-input').value;
 
     // Show loading state
     const submitBtn = document.getElementById('submit-grade-btn');
@@ -579,6 +622,20 @@ async function submitGrade() {
     }
 }
 
+// Toggle student scores visibility
+function toggleStudentScores() {
+    const container = document.getElementById('student-scores-container');
+    const toggle = document.getElementById('student-scores-toggle');
+
+    if (container.style.display === 'none') {
+        container.style.display = 'block';
+        toggle.textContent = '▼';
+    } else {
+        container.style.display = 'none';
+        toggle.textContent = '▶';
+    }
+}
+
 // Load statistics
 async function loadStatistics() {
     try {
@@ -591,8 +648,90 @@ async function loadStatistics() {
         const scoresData = await scoresResponse.json();
 
         const container = document.getElementById('stats-container');
-        container.innerHTML = `
-            <h3>Overall Progress</h3>
+
+        // Calculate overall statistics based on what's been graded so far
+        let examStatsHtml = '';
+        const studentsWithGrades = scoresData.students.filter(s => s.total_score !== null && s.graded_problems > 0);
+
+        if (studentsWithGrades.length > 0) {
+            // Get raw scores
+            const rawScores = studentsWithGrades.map(s => s.total_score);
+            const rawMin = Math.min(...rawScores);
+            const rawMax = Math.max(...rawScores);
+            const rawAvg = rawScores.reduce((sum, s) => sum + s, 0) / rawScores.length;
+
+            // Calculate raw standard deviation
+            const rawVariance = rawScores.reduce((sum, s) => sum + Math.pow(s - rawAvg, 2), 0) / rawScores.length;
+            const rawStddev = Math.sqrt(rawVariance);
+
+            // Calculate normalized scores (percentage of points earned out of points graded)
+            const normalizedScores = studentsWithGrades.map(s => {
+                // Calculate max possible points for problems this student has been graded on
+                // We need to figure out which problems they've been graded on
+                // For now, approximate using their graded_problems count
+                const problemsGraded = s.graded_problems;
+
+                // Get the actual max points for problems based on graded count
+                // Assume problems are graded in order (1, 2, 3, etc.)
+                let maxPossibleForStudent = 0;
+                const gradedProblemStats = stats.problem_stats.slice(0, problemsGraded);
+                gradedProblemStats.forEach(ps => {
+                    maxPossibleForStudent += (ps.max_points || 8);
+                });
+
+                // Return normalized score as percentage
+                return maxPossibleForStudent > 0 ? (s.total_score / maxPossibleForStudent) * 100 : 0;
+            });
+
+            const normAvg = normalizedScores.reduce((sum, s) => sum + s, 0) / normalizedScores.length;
+
+            // Calculate normalized standard deviation
+            const normVariance = normalizedScores.reduce((sum, s) => sum + Math.pow(s - normAvg, 2), 0) / normalizedScores.length;
+            const normStddev = Math.sqrt(normVariance);
+
+            // Calculate total possible points across all problems
+            const totalPossible = stats.problem_stats.reduce((sum, ps) => {
+                return sum + (ps.max_points || 8);
+            }, 0);
+
+            // Calculate Canvas grade (raw score out of 100)
+            const canvasAvg = rawAvg; // Canvas grade is the raw score (out of 100)
+            const canvasPercentage = canvasAvg; // Since it's out of 100, the score IS the percentage
+
+            examStatsHtml = `
+                <h3>Overall Progress Statistics <small style="font-size: 14px; font-weight: normal; color: var(--gray-600);">(${studentsWithGrades.length} students with grades, based on problems graded so far)</small></h3>
+                <div class="overall-stats" style="margin-bottom: 30px;">
+                    <div class="stat-card">
+                        <h3>Average Score</h3>
+                        <div class="value">${rawAvg.toFixed(2)} pts</div>
+                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">(of graded problems)</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Canvas Grade</h3>
+                        <div class="value">${canvasPercentage.toFixed(1)}%</div>
+                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">(out of 100)</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Normalized Average</h3>
+                        <div class="value">${normAvg.toFixed(1)}%</div>
+                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">±${normStddev.toFixed(1)}%</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Score Range</h3>
+                        <div class="value">${rawMin.toFixed(2)} - ${rawMax.toFixed(2)}</div>
+                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">Min to Max</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Std Deviation</h3>
+                        <div class="value">±${rawStddev.toFixed(2)} pts</div>
+                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">(raw scores)</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        container.innerHTML = examStatsHtml + `
+            <h3>Grading Progress</h3>
             <div class="overall-stats">
                 <div class="stat-card">
                     <h3>Total Submissions</h3>
@@ -728,28 +867,46 @@ async function loadStatistics() {
             container.innerHTML += '<div class="problem-stats-grid">' + problemStatsHtml + '</div>';
         }
 
-        // Add student scores table
+        // Add student scores table (collapsible, hidden by default)
         if (scoresData.students.length > 0) {
-            container.innerHTML += '<h3 style="margin-top: 30px;">Student Scores</h3>';
+            container.innerHTML += `
+                <h3 style="margin-top: 30px; cursor: pointer; user-select: none;"
+                    id="student-scores-header"
+                    onclick="toggleStudentScores()"
+                    title="Click to expand/collapse">
+                    <span id="student-scores-toggle">▶</span> Student Scores (${scoresData.students.length})
+                </h3>
+            `;
             const studentScoresHtml = `
-                <table class="student-scores-table">
-                    <thead>
-                        <tr>
-                            <th>Student Name</th>
-                            <th>Progress</th>
-                            <th>Total Score</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${scoresData.students.map(s => `
-                            <tr class="${s.is_complete ? 'complete' : 'incomplete'}">
-                                <td>${s.student_name || 'Unmatched'}</td>
-                                <td>${s.graded_problems} / ${s.total_problems}</td>
-                                <td>${s.total_score ? s.total_score.toFixed(2) : '0.00'}</td>
+                <div id="student-scores-container" style="display: none;">
+                    <table class="student-scores-table">
+                        <thead>
+                            <tr>
+                                <th class="sortable" onclick="sortStudentTable('name')" data-sort="name">
+                                    Student Name <span class="sort-indicator"></span>
+                                </th>
+                                <th class="sortable" onclick="sortStudentTable('progress')" data-sort="progress">
+                                    Progress <span class="sort-indicator"></span>
+                                </th>
+                                <th class="sortable" onclick="sortStudentTable('score')" data-sort="score">
+                                    Total Score <span class="sort-indicator"></span>
+                                </th>
                             </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody id="student-scores-tbody">
+                            ${scoresData.students.map(s => `
+                                <tr class="${s.is_complete ? 'complete' : 'incomplete'}"
+                                    data-name="${s.student_name || 'Unmatched'}"
+                                    data-progress="${s.graded_problems / s.total_problems}"
+                                    data-score="${s.total_score || 0}">
+                                    <td>${s.student_name || 'Unmatched'}</td>
+                                    <td>${s.graded_problems} / ${s.total_problems}</td>
+                                    <td>${s.total_score ? s.total_score.toFixed(2) : '0.00'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
             `;
             container.innerHTML += studentScoresHtml;
         }
@@ -977,6 +1134,16 @@ document.getElementById('finalize-btn').onclick = async () => {
             return;
         }
 
+        // Show progress area IMMEDIATELY to provide feedback
+        const progressDiv = document.getElementById('finalization-progress');
+        const messageDiv = document.getElementById('finalization-message');
+        const progressBar = document.getElementById('finalization-progress-bar');
+
+        progressDiv.style.display = 'block';
+        messageDiv.textContent = 'Initializing finalization...';
+        progressBar.style.width = '0%';
+        document.getElementById('finalize-btn').disabled = true;
+
         // Start finalization
         const response = await fetch(`${API_BASE}/finalize/${currentSession.id}/finalize`, {
             method: 'POST'
@@ -984,18 +1151,14 @@ document.getElementById('finalize-btn').onclick = async () => {
 
         if (!response.ok) {
             const error = await response.json();
+            // Reset UI on error
+            progressDiv.style.display = 'none';
+            document.getElementById('finalize-btn').disabled = false;
             throw new Error(error.detail || 'Finalization failed');
         }
 
-        // Show progress area and start polling
-        const progressDiv = document.getElementById('finalization-progress');
-        const messageDiv = document.getElementById('finalization-message');
-        const progressBar = document.getElementById('finalization-progress-bar');
-
-        progressDiv.style.display = 'block';
+        // Update message once server responds
         messageDiv.textContent = 'Starting finalization...';
-        progressBar.style.width = '0%';
-        document.getElementById('finalize-btn').disabled = true;
 
         connectToFinalizationStream();
 
@@ -1283,6 +1446,100 @@ document.addEventListener('mousemove', (e) => {
 document.addEventListener('mouseup', () => {
     isAnswerDragging = false;
 });
+
+// Function to update answer dialog with current problem
+async function updateAnswerDialog() {
+    if (!currentProblem) {
+        answerDialog.style.display = 'none';
+        return;
+    }
+
+    // Check if current problem has QR data
+    if (!currentProblem.has_qr_data) {
+        // No QR data - show message
+        const answerContent = document.getElementById('answer-content');
+        const answerError = document.getElementById('answer-error');
+        answerContent.style.display = 'none';
+        answerError.style.display = 'block';
+        answerError.textContent = 'Answer not available for this problem (no QR code data)';
+        return;
+    }
+
+    // Has QR data - load the answer
+    const answerContent = document.getElementById('answer-content');
+    const answerList = document.getElementById('answer-list');
+    const answerError = document.getElementById('answer-error');
+    const answerMetadata = document.getElementById('answer-metadata');
+
+    answerContent.style.display = 'block';
+    answerError.style.display = 'none';
+    answerList.innerHTML = '<div style="text-align: center; padding: 20px;">Loading answer...</div>';
+    answerMetadata.style.display = 'none';
+
+    try {
+        const response = await fetch(`${API_BASE}/problems/${currentProblem.id}/regenerate-answer`);
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to load answer');
+        }
+
+        const data = await response.json();
+
+        // Display metadata
+        document.getElementById('answer-question-type').textContent = data.question_type;
+        document.getElementById('answer-seed').textContent = data.seed;
+        document.getElementById('answer-version').textContent = data.version;
+        document.getElementById('answer-max-points').textContent = data.max_points;
+
+        // Display config if available
+        const configWrapper = document.getElementById('answer-config-wrapper');
+        const configSpan = document.getElementById('answer-config');
+        if (data.config) {
+            configSpan.textContent = JSON.stringify(data.config);
+        } else {
+            configSpan.textContent = 'None';
+        }
+        configWrapper.style.display = 'block';
+
+        answerMetadata.style.display = 'block';
+
+        // Display HTML answer key if available, otherwise show individual answers
+        if (data.answer_key_html) {
+            answerList.innerHTML = `<div style="padding: 15px; background: white; border-radius: 4px;">${data.answer_key_html}</div>`;
+        } else if (data.answers && data.answers.length > 0) {
+            answerList.innerHTML = data.answers.map(answer => {
+                let html = `<div style="margin-bottom: 15px; padding: 10px; background: white; border-radius: 4px;">`;
+                html += `<div style="font-weight: 600; color: #1e40af; margin-bottom: 5px;">${answer.key}:</div>`;
+
+                if (answer.html) {
+                    html += `<div style="font-size: 18px; font-family: 'Courier New', monospace;">${answer.html}</div>`;
+                } else {
+                    html += `<div style="font-size: 18px; font-family: 'Courier New', monospace;">${answer.value}</div>`;
+                }
+
+                if (answer.tolerance !== undefined && answer.tolerance !== null) {
+                    html += `<div style="font-size: 12px; color: #6b7280; margin-top: 5px;">Tolerance: ±${answer.tolerance}</div>`;
+                }
+                html += `</div>`;
+                return html;
+            }).join('');
+        } else {
+            answerList.innerHTML = '<div style="color: #6b7280;">No answers available</div>';
+        }
+
+        // Trigger MathJax typesetting for the answer content
+        if (typeof MathJax !== 'undefined') {
+            MathJax.typesetPromise([answerList]).catch((err) => console.error('MathJax typesetting failed:', err));
+        }
+
+    } catch (error) {
+        console.error('Failed to load answer:', error);
+        answerContent.style.display = 'none';
+        answerError.style.display = 'block';
+        answerError.textContent = error.message;
+    }
+}
 
 // Show answer button
 showAnswerBtn.addEventListener('click', async () => {
@@ -1683,12 +1940,18 @@ function setupProblemImageResize() {
         const deltaY = e.clientY - startY;
         const newHeight = startHeight + deltaY;
 
-        // Enforce minimum and maximum height
+        // Enforce minimum and maximum heights
         const minHeight = 200; // Minimum 200px
-        const maxHeight = window.innerHeight * 0.9; // Max 90% of viewport height
+        const maxHeight = scrollContainer.dataset.maxImageHeight
+            ? parseFloat(scrollContainer.dataset.maxImageHeight)
+            : window.innerHeight * 0.9; // Fallback to 90% of viewport if not set
 
         if (newHeight >= minHeight && newHeight <= maxHeight) {
             scrollContainer.style.height = `${newHeight}px`;
+        } else if (newHeight < minHeight) {
+            scrollContainer.style.height = `${minHeight}px`;
+        } else if (newHeight > maxHeight) {
+            scrollContainer.style.height = `${maxHeight}px`;
         }
     });
 
@@ -1705,4 +1968,74 @@ function setupProblemImageResize() {
             console.log('Saved problem container height:', currentHeight);
         }
     });
+}
+
+// =============================================================================
+// STUDENT TABLE SORTING
+// =============================================================================
+
+let currentSortColumn = null;
+let currentSortDirection = 'asc';
+
+function sortStudentTable(column) {
+    const tbody = document.getElementById('student-scores-tbody');
+    if (!tbody) return;
+
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+
+    // Toggle direction if clicking same column, otherwise default to ascending
+    if (currentSortColumn === column) {
+        currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+        currentSortColumn = column;
+        currentSortDirection = 'asc';
+    }
+
+    // Sort rows based on column and direction
+    rows.sort((a, b) => {
+        let aVal, bVal;
+
+        if (column === 'name') {
+            aVal = a.dataset.name.toLowerCase();
+            bVal = b.dataset.name.toLowerCase();
+            return currentSortDirection === 'asc'
+                ? aVal.localeCompare(bVal)
+                : bVal.localeCompare(aVal);
+        } else if (column === 'progress') {
+            aVal = parseFloat(a.dataset.progress);
+            bVal = parseFloat(b.dataset.progress);
+        } else if (column === 'score') {
+            aVal = parseFloat(a.dataset.score);
+            bVal = parseFloat(b.dataset.score);
+        }
+
+        // Numerical comparison
+        if (currentSortDirection === 'asc') {
+            return aVal - bVal;
+        } else {
+            return bVal - aVal;
+        }
+    });
+
+    // Re-append rows in sorted order
+    rows.forEach(row => tbody.appendChild(row));
+
+    // Update sort indicators
+    updateSortIndicators(column);
+}
+
+function updateSortIndicators(column) {
+    // Clear all indicators
+    document.querySelectorAll('.student-scores-table th .sort-indicator').forEach(indicator => {
+        indicator.textContent = '';
+    });
+
+    // Set current indicator
+    const th = document.querySelector(`.student-scores-table th[data-sort="${column}"]`);
+    if (th) {
+        const indicator = th.querySelector('.sort-indicator');
+        if (indicator) {
+            indicator.textContent = currentSortDirection === 'asc' ? ' ▲' : ' ▼';
+        }
+    }
 }

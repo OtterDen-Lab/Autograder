@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 17
+CURRENT_SCHEMA_VERSION = 19
 
 
 def get_db_path() -> Path:
@@ -195,10 +195,32 @@ def create_schema(cursor):
             max_points REAL,
             question_text TEXT,
             grading_rubric TEXT,
+            default_feedback TEXT,
+            default_feedback_threshold REAL DEFAULT 50.0,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
             UNIQUE(session_id, problem_number)
         )
+    """)
+
+    # Feedback tags (reusable grading comments)
+    cursor.execute("""
+        CREATE TABLE feedback_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            problem_number INTEGER NOT NULL,
+            short_name TEXT NOT NULL,
+            comment_text TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            use_count INTEGER DEFAULT 0,
+            FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
+            UNIQUE(session_id, problem_number, short_name)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX idx_feedback_tags_session_problem
+        ON feedback_tags(session_id, problem_number)
     """)
 
     # Record schema version
@@ -274,6 +296,14 @@ def run_migrations(cursor, from_version: int):
     if from_version < 17:
         migrate_to_v17(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (17)")
+
+    if from_version < 18:
+        migrate_to_v18(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (18)")
+
+    if from_version < 19:
+        migrate_to_v19(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (19)")
 
 
 def migrate_to_v2(cursor):
@@ -494,6 +524,48 @@ def migrate_to_v17(cursor):
 
     # Note: Old columns (qr_question_type, qr_seed, qr_version) remain for backward compatibility
     # but new code will only use qr_encrypted_data
+
+
+def migrate_to_v18(cursor):
+    """Create feedback_tags table for reusable grading comments"""
+    log.info("Migrating to schema version 18: creating feedback_tags table")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS feedback_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            problem_number INTEGER NOT NULL,
+            short_name TEXT NOT NULL,
+            comment_text TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            use_count INTEGER DEFAULT 0,
+            FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
+            UNIQUE(session_id, problem_number, short_name)
+        )
+    """)
+
+    # Create index for fast lookup by session and problem
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_feedback_tags_session_problem
+        ON feedback_tags(session_id, problem_number)
+    """)
+
+
+def migrate_to_v19(cursor):
+    """Add default feedback columns to problem_metadata"""
+    log.info("Migrating to schema version 19: adding default_feedback to problem_metadata")
+
+    # Check if columns already exist
+    cursor.execute("PRAGMA table_info(problem_metadata)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+
+    if 'default_feedback' not in existing_columns:
+        cursor.execute("ALTER TABLE problem_metadata ADD COLUMN default_feedback TEXT")
+        log.info("Added default_feedback column")
+
+    if 'default_feedback_threshold' not in existing_columns:
+        cursor.execute("ALTER TABLE problem_metadata ADD COLUMN default_feedback_threshold REAL DEFAULT 50.0")
+        log.info("Added default_feedback_threshold column")
 
 
 def update_problem_stats(session_id: int):

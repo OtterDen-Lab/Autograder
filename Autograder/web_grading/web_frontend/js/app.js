@@ -1010,18 +1010,76 @@ function updateSplitLines(pageNum, container, canvas) {
     });
 }
 
+// Calculate expected problem count from split points
+function calculateProblemCount(splitPoints, skipFirstRegion, lastPageBlank) {
+    // The backend creates a linear list of (page, y) splits, then:
+    // 1. Adds (0, 0) at start if not present
+    // 2. Adds (last_page, page_height) at end if not present
+    // 3. Each consecutive pair of splits defines one region
+    // 4. If skip_first_region=True, skip the first pair
+
+    // Count total split points provided by user
+    let totalSplits = 0;
+    for (const pageNum in splitPoints) {
+        totalSplits += splitPoints[pageNum].length;
+    }
+
+    console.log('Problem count calculation:');
+    console.log('  User splits:', totalSplits);
+    console.log('  Split points by page:', splitPoints);
+    console.log('  Skip first region:', skipFirstRegion);
+
+    // Backend always adds start (0,0) and end splits, so:
+    // linear_splits.length = user_splits + 2 (start and end)
+    // regions = linear_splits.length - 1
+    // problems = regions - (1 if skip_first_region else 0)
+
+    let linearSplitsCount = totalSplits + 2; // Add implicit start and end
+    let regions = linearSplitsCount - 1;
+
+    console.log('  Linear splits count:', linearSplitsCount);
+    console.log('  Regions:', regions);
+
+    // Subtract first region if skipping header
+    let problems = regions;
+    if (skipFirstRegion) {
+        problems -= 1;
+    }
+
+    console.log('  Final problems:', problems);
+
+    // Note: lastPageBlank is handled in backend after problem extraction
+    // so we don't adjust the count here
+
+    return Math.max(1, problems); // At least 1 problem
+}
+
 async function submitAlignment() {
     try {
-        document.getElementById('submit-alignment-btn').disabled = true;
-        document.getElementById('submit-alignment-btn').textContent = 'Submitting...';
-        document.getElementById('submit-alignment-bottom-btn').disabled = true;
-        document.getElementById('submit-alignment-bottom-btn').textContent = 'Submitting...';
-
         // Check if we should skip the first region
         const skipFirstRegion = document.getElementById('skip-first-region-checkbox').checked;
 
         // Check if last page is blank
         const lastPageBlank = document.getElementById('last-page-blank-checkbox').checked;
+
+        // Calculate expected problem count
+        const problemCount = calculateProblemCount(splitPoints, skipFirstRegion, lastPageBlank);
+
+        // Show confirmation dialog
+        const confirmed = confirm(
+            `Based on your split points, this will create ${problemCount} problem(s) per exam.\n\n` +
+            `Is this correct?\n\n` +
+            `(Click OK to proceed with processing, or Cancel to adjust your split points)`
+        );
+
+        if (!confirmed) {
+            return; // User cancelled
+        }
+
+        document.getElementById('submit-alignment-btn').disabled = true;
+        document.getElementById('submit-alignment-btn').textContent = 'Submitting...';
+        document.getElementById('submit-alignment-bottom-btn').disabled = true;
+        document.getElementById('submit-alignment-bottom-btn').textContent = 'Submitting...';
 
         // Convert all split points to integers (they may be floats from page dimensions)
         const splitPointsInt = {};

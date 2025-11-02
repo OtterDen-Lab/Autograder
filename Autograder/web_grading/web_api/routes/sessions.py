@@ -453,6 +453,67 @@ async def update_problem_max_points(
         }
 
 
+@router.get("/{session_id}/default-feedback/{problem_number}")
+async def get_default_feedback(session_id: int, problem_number: int):
+    """Get default feedback for a specific problem number"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT default_feedback, default_feedback_threshold
+            FROM problem_metadata
+            WHERE session_id = ? AND problem_number = ?
+        """, (session_id, problem_number))
+
+        row = cursor.fetchone()
+        if row:
+            return {
+                "default_feedback": row["default_feedback"],
+                "default_feedback_threshold": row["default_feedback_threshold"] or 50.0
+            }
+        else:
+            return {
+                "default_feedback": None,
+                "default_feedback_threshold": 50.0
+            }
+
+
+@router.put("/{session_id}/default-feedback")
+async def update_default_feedback(
+    session_id: int,
+    problem_number: int,
+    default_feedback: str = None,
+    threshold: float = 50.0
+):
+    """Update default feedback for a specific problem number"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Verify session exists
+        cursor.execute("SELECT id FROM grading_sessions WHERE id = ?", (session_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Update or create metadata
+        cursor.execute("""
+            INSERT INTO problem_metadata (session_id, problem_number, default_feedback, default_feedback_threshold)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(session_id, problem_number)
+            DO UPDATE SET
+                default_feedback = excluded.default_feedback,
+                default_feedback_threshold = excluded.default_feedback_threshold,
+                updated_at = CURRENT_TIMESTAMP
+        """, (session_id, problem_number, default_feedback, threshold))
+
+        return {
+            "status": "updated",
+            "session_id": session_id,
+            "problem_number": problem_number,
+            "default_feedback": default_feedback,
+            "threshold": threshold
+        }
+
+
 @router.delete("/{session_id}")
 async def delete_session(session_id: int):
     """Delete a grading session and all associated data"""

@@ -12,7 +12,6 @@ async function openReviewForProblem(problemNumber) {
 
     // Update modal title and max points
     document.getElementById('review-problem-number').textContent = reviewProblemNumber;
-    document.getElementById('review-score-slider').max = maxPoints;
     document.getElementById('review-score-input').max = maxPoints;
 
     // Load graded problems
@@ -114,8 +113,8 @@ function reviewProblemFromStats(problemNumber) {
 // Close review dialog
 document.getElementById('close-review-btn').addEventListener('click', () => {
     document.getElementById('review-dialog').style.display = 'none';
-    // Reload the main grading view to pick up any changes
-    loadProblemOrMostRecent();
+    // Don't reload the main grading view - just close the dialog
+    // The user can manually navigate if they want to see updates
 });
 
 // Load a specific problem in review mode
@@ -167,44 +166,16 @@ async function loadReviewProblem(index) {
 
         // Populate form
         document.getElementById('review-score-input').value = problem.score;
-        document.getElementById('review-score-slider').value = problem.score;
         document.getElementById('review-feedback-input').value = problem.feedback || '';
 
         // Store current problem ID for saving
         document.getElementById('review-save-btn').dataset.problemId = problem.id;
         document.getElementById('review-decipher-btn').dataset.problemId = problem.id;
 
-        // Setup score sync for review inputs
-        setupReviewScoreSync();
-
     } catch (error) {
         console.error('Failed to load problem details:', error);
         alert('Failed to load problem: ' + error.message);
     }
-}
-
-// Setup score sync for review inputs
-function setupReviewScoreSync() {
-    const slider = document.getElementById('review-score-slider');
-    const input = document.getElementById('review-score-input');
-
-    // Remove old listeners
-    const newSlider = slider.cloneNode(true);
-    const newInput = input.cloneNode(true);
-    slider.parentNode.replaceChild(newSlider, slider);
-    input.parentNode.replaceChild(newInput, input);
-
-    // Add new listeners
-    newSlider.addEventListener('input', (e) => {
-        newInput.value = e.target.value;
-    });
-
-    newInput.addEventListener('input', (e) => {
-        const value = parseFloat(e.target.value);
-        if (!isNaN(value)) {
-            newSlider.value = value;
-        }
-    });
 }
 
 // Previous button
@@ -308,10 +279,10 @@ document.addEventListener('keydown', (e) => {
     const reviewDialog = document.getElementById('review-dialog');
     if (reviewDialog.style.display !== 'flex') return;
 
-    // Don't handle if typing in textarea
-    if (e.target.tagName === 'TEXTAREA') return;
+    // Don't handle if typing in input fields or textarea
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
 
-    // Left arrow - previous
+    // Left arrow - previous (only when not in input)
     if (e.key === 'ArrowLeft') {
         e.preventDefault();
         if (reviewCurrentIndex > 0) {
@@ -319,7 +290,7 @@ document.addEventListener('keydown', (e) => {
         }
     }
 
-    // Right arrow - next
+    // Right arrow - next (only when not in input)
     if (e.key === 'ArrowRight') {
         e.preventDefault();
         if (reviewCurrentIndex < reviewProblems.length - 1) {
@@ -327,17 +298,10 @@ document.addEventListener('keydown', (e) => {
         }
     }
 
-    // Escape - close
+    // Escape - close (don't reload main grading view)
     if (e.key === 'Escape') {
         e.preventDefault();
         reviewDialog.style.display = 'none';
-        loadProblemOrMostRecent();
-    }
-
-    // Enter - save (when not in textarea)
-    if (e.key === 'Enter' && e.target.id !== 'review-feedback-input') {
-        e.preventDefault();
-        document.getElementById('review-save-btn').click();
     }
 });
 

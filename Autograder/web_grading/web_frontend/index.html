@@ -259,40 +259,61 @@
                     <button id="upload-more-btn" class="btn btn-secondary btn-small">+ Upload More Exams</button>
                 </div>
 
-                <div class="grading-form" style="margin-bottom: 10px;">
-                    <label style="margin-bottom: 5px;">
-                        Score:
-                        <div style="display: flex; gap: 10px; align-items: center;">
-                            <input type="range" id="score-slider" min="0" max="8" step="1" value="0" style="flex: 1;">
-                            <input type="text" id="score-input" placeholder="Enter score or -" style="width: 80px;" title="Enter a number or '-' to mark as blank">
+                <div class="grading-layout">
+                    <div class="problem-container">
+                        <div class="problem-scroll-container" id="problem-scroll-container" tabindex="-1">
+                            <img id="problem-image" alt="Problem to grade" tabindex="-1">
                         </div>
-                    </label>
-                </div>
-
-                <div class="problem-container">
-                    <div class="problem-scroll-container" id="problem-scroll-container">
-                        <img id="problem-image" alt="Problem to grade">
+                        <div class="problem-resize-handle" id="problem-resize-handle"></div>
                     </div>
-                    <div class="problem-resize-handle" id="problem-resize-handle"></div>
-                </div>
 
-                <div class="grading-form">
-                    <label>
-                        Feedback (optional):
-                        <textarea id="feedback-input" rows="3" placeholder="Optional feedback for student"></textarea>
-                    </label>
-                    <div style="display: flex; gap: 10px; margin-bottom: 5px;">
-                        <button id="submit-grade-btn" class="btn btn-primary">Submit & Next</button>
-                        <button id="back-problem-btn" class="btn">← Back</button>
-                        <button id="next-problem-btn" class="btn">Skip</button>
-                        <button id="show-context-btn" class="btn btn-secondary">Show in Context</button>
-                        <button id="decipher-btn" class="btn btn-secondary">Decipher Handwriting</button>
-                        <button id="show-answer-btn" class="btn btn-secondary" style="display: none;">Show Answer</button>
-                        <button id="start-autograde-btn" class="btn btn-success">Start Autograding</button>
-                        <button id="review-grades-btn" class="btn btn-secondary">Review Graded</button>
-                    </div>
-                    <div style="text-align: center; padding: 5px 0;">
-                        <small style="color: var(--gray-600);">Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit | <strong>Shift+Tab</strong> to skip</small>
+                    <div class="grading-form">
+                        <div style="display: flex; gap: 15px; align-items: flex-start;">
+                            <label style="display: flex; flex-direction: column; min-width: 100px;">
+                                Score:
+                                <input type="text" id="score-input" placeholder="Enter score or -" style="width: 80px; margin-top: 5px;" title="Enter a number or '-' to mark as blank">
+                            </label>
+                            <label style="flex: 1; display: flex; flex-direction: column;">
+                                Feedback (optional):
+                                <textarea id="feedback-input" rows="3" placeholder="Optional feedback for student" style="margin-top: 5px;"></textarea>
+                            </label>
+                        </div>
+                        <div style="display: flex; gap: 10px; margin-bottom: 5px; flex-wrap: wrap;">
+                            <button id="submit-grade-btn" class="btn btn-primary">Submit & Next</button>
+                            <button id="back-problem-btn" class="btn">← Back</button>
+                            <button id="next-problem-btn" class="btn">Skip</button>
+                            <button id="show-context-btn" class="btn btn-secondary">Show in Context</button>
+                            <button id="decipher-btn" class="btn btn-secondary">Decipher Handwriting</button>
+                            <button id="show-answer-btn" class="btn btn-secondary" style="display: none;">Show Answer</button>
+                            <button id="start-autograde-btn" class="btn btn-success">Start Autograding</button>
+                            <button id="review-grades-btn" class="btn btn-secondary">Review Graded</button>
+                        </div>
+                        <div style="text-align: center; padding: 5px 0;">
+                            <small style="color: var(--gray-600);">Shortcuts: <strong>0-9</strong> to enter score | <strong>Enter</strong> to submit</small>
+                        </div>
+
+                        <!-- Feedback Tags Section -->
+                        <div id="feedback-tags-container" class="feedback-tags-container" style="display: none;">
+                            <div class="tags-header">
+                                <strong>Quick Feedback Tags:</strong>
+                                <button id="add-tag-btn" class="btn btn-small">+ Add Tag</button>
+                            </div>
+                            <div id="tags-list" class="tags-list">
+                                <span class="tags-placeholder">No tags yet. Click "+ Add Tag" to create reusable feedback comments.</span>
+                            </div>
+                            <button id="apply-tags-btn" class="btn btn-primary btn-small" style="display: none; margin-top: 10px;">Apply Selected Tags to Feedback</button>
+                        </div>
+
+                        <!-- Default Feedback Section -->
+                        <div id="default-feedback-container" class="default-feedback-container" style="display: none;">
+                            <div class="default-feedback-header">
+                                <strong>Default Feedback:</strong>
+                                <button id="edit-default-feedback-btn" class="btn btn-small">Edit</button>
+                            </div>
+                            <div id="default-feedback-display" class="default-feedback-display">
+                                <span class="default-feedback-placeholder">No default feedback set. Click "Edit" to add feedback for low scores.</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -385,15 +406,12 @@
 
                     <label style="margin-bottom: 15px;">
                         Score:
-                        <div style="display: flex; gap: 10px; align-items: center; margin-top: 5px;">
-                            <input type="range" id="review-score-slider" min="0" max="8" step="1" value="0" style="flex: 1;">
-                            <input type="number" id="review-score-input" min="0" max="8" step="0.5" placeholder="Score" style="width: 80px;">
-                        </div>
+                        <input type="number" id="review-score-input" min="0" max="8" step="1" placeholder="Score" style="width: 80px; margin-top: 5px; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
                     </label>
 
                     <label style="margin-bottom: 15px;">
                         Feedback:
-                        <textarea id="review-feedback-input" rows="6" style="margin-top: 5px; width: 100%; padding: 8px; font-family: inherit; border: 1px solid var(--gray-300); border-radius: 4px;"></textarea>
+                        <textarea id="review-feedback-input" rows="6" style="margin-top: 5px; width: 100%; padding: 8px; font-family: inherit; border: 2px solid var(--gray-300); border-radius: 4px; resize: vertical;"></textarea>
                     </label>
 
                     <div id="review-blank-info" style="display: none; background: #fef3c7; padding: 10px; border-radius: 6px; margin-bottom: 15px; font-size: 14px;">
@@ -409,6 +427,75 @@
                         Use ← → arrow keys to navigate
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Default Feedback Dialog -->
+    <div id="edit-default-feedback-dialog" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div class="dialog-content" style="background: white; border-radius: 8px; padding: 30px; max-width: 600px; width: 90%;">
+            <h2 class="dialog-header" style="margin-top: 0; cursor: move; user-select: none;">Edit Default Feedback</h2>
+            <p style="color: var(--gray-700); margin-bottom: 20px;">
+                This feedback will be automatically added to low-scoring submissions.
+            </p>
+
+            <label style="display: block; margin-bottom: 20px;">
+                <strong>Default Feedback Text:</strong>
+                <textarea id="default-feedback-text" rows="5" maxlength="2000" placeholder="e.g., The correct answer is..." style="display: block; width: 100%; padding: 8px; margin-top: 5px; border: 1px solid var(--gray-300); border-radius: 4px; resize: vertical;"></textarea>
+                <small style="color: var(--gray-600);">This will be appended after tags and manual feedback</small>
+            </label>
+
+            <label style="display: block; margin-bottom: 20px;">
+                <strong>Apply When:</strong>
+                <div style="margin-top: 10px;">
+                    <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                        <input type="checkbox" id="apply-on-zero" checked>
+                        <span>Score is 0</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                        <input type="checkbox" id="apply-on-blank" checked>
+                        <span>Problem is blank (marked with "-")</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="apply-on-threshold">
+                        <span style="display: flex; align-items: center; gap: 5px;">
+                            Score is below
+                            <input type="number" id="threshold-percentage" min="0" max="100" value="50" style="width: 60px; padding: 4px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                            % of max points
+                        </span>
+                    </label>
+                </div>
+            </label>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="cancel-default-feedback-btn" class="btn">Cancel</button>
+                <button id="clear-default-feedback-btn" class="btn btn-danger">Clear</button>
+                <button id="save-default-feedback-btn" class="btn btn-primary">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Feedback Tag Dialog -->
+    <div id="add-tag-dialog" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div style="background: white; border-radius: 8px; padding: 30px; max-width: 500px; width: 90%;">
+            <h2 style="margin-top: 0;">Create Feedback Tag</h2>
+            <p style="color: var(--gray-700); margin-bottom: 20px;">
+                Create a reusable comment for common mistakes in this problem.
+            </p>
+
+            <label style="display: block; margin-bottom: 15px;">
+                <strong>Short Name:</strong> <span style="color: var(--gray-600); font-size: 13px;">(max 30 chars, shown on button)</span>
+                <input type="text" id="new-tag-name" maxlength="30" placeholder="e.g., % conversion" style="display: block; width: 100%; padding: 8px; margin-top: 5px; border: 1px solid var(--gray-300); border-radius: 4px;">
+            </label>
+
+            <label style="display: block; margin-bottom: 20px;">
+                <strong>Comment Text:</strong> <span style="color: var(--gray-600); font-size: 13px;">(max 500 chars)</span>
+                <textarea id="new-tag-comment" maxlength="500" rows="4" placeholder="e.g., don't forget to convert percentages to the range 0 to 1!" style="display: block; width: 100%; padding: 8px; margin-top: 5px; border: 1px solid var(--gray-300); border-radius: 4px; resize: vertical;"></textarea>
+            </label>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="cancel-tag-btn" class="btn">Cancel</button>
+                <button id="save-tag-btn" class="btn btn-primary">Create Tag</button>
             </div>
         </div>
     </div>
@@ -518,5 +605,7 @@
     <script src="/js/grading.js"></script>
     <script src="/js/rubric-table.js"></script>
     <script src="/js/review.js"></script>
+    <script src="/js/feedback_tags.js"></script>
+    <script src="/js/default_feedback.js"></script>
 </body>
 </html>

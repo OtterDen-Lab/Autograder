@@ -28,7 +28,7 @@ from .qr_scanner import QRScanner
 
 log = logging.getLogger(__name__)
 
-NAME_SIMILARITY_THRESHOLD = 100  # Percentage threshold for fuzzy matching (exact match required)
+NAME_SIMILARITY_THRESHOLD = 97  # Percentage threshold for fuzzy matching (exact match required)
 
 
 class ExamProcessor:
@@ -191,7 +191,7 @@ class ExamProcessor:
                         best_score = score
                         best_match = student
 
-                if best_score > NAME_SIMILARITY_THRESHOLD:
+                if best_score >= NAME_SIMILARITY_THRESHOLD:
                     matched_student = best_match
                     unmatched_students.remove(best_match)
                     log.info(f"  Matched to: {matched_student['name']} ({best_score}%)")
@@ -620,14 +620,17 @@ class ExamProcessor:
         # Create a linear list of all split points across pages
         # Each split point is (page_num, y_position)
         # Only add splits that were explicitly provided by the user
+        # NOTE: split_points now contain percentages (0.0-1.0), not absolute pixels
         linear_splits = []
 
         for page_num in range(total_pages):
             page = pdf_document[page_num]
             page_height = page.rect.height
 
-            # Add manual split points for this page
-            line_positions = split_points.get(page_num, [])
+            # Get split percentages for this page and convert to absolute coordinates
+            line_percentages = split_points.get(page_num, [])
+            # Convert from percentage of page height to absolute y-coordinate
+            line_positions = [pct * page_height for pct in line_percentages]
             for y_pos in sorted(line_positions):
                 # Normalize splits at page boundaries:
                 # If a split is at the very bottom of a page (within 1pt tolerance),

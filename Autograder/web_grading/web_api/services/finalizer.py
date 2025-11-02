@@ -143,7 +143,6 @@ class FinalizationService:
                         problem_number,
                         score,
                         COALESCE(feedback, '') as feedback,
-                        image_data,
                         region_coords
                     FROM problems
                     WHERE submission_id = ?
@@ -151,41 +150,29 @@ class FinalizationService:
                 """, (submission_id,))
 
                 problems = []
-                images = {}
 
                 for prob_row in cursor.fetchall():
                     prob_num = prob_row["problem_number"]
 
+                    # Parse region coordinates if available
+                    region_coords = None
+                    if prob_row["region_coords"]:
+                        region_coords = json.loads(prob_row["region_coords"])
+
                     problems.append({
                         "problem_number": prob_num,
                         "score": prob_row["score"] or 0.0,
-                        "feedback": prob_row["feedback"]
+                        "feedback": prob_row["feedback"],
+                        "region_coords": region_coords
                     })
-
-                    # Get image data - either directly or extract from PDF
-                    if prob_row["image_data"]:
-                        # Legacy: image_data is stored
-                        images[prob_num] = prob_row["image_data"]
-                    elif prob_row["region_coords"] and row["exam_pdf_data"]:
-                        # New: extract from PDF using region_coords
-                        region_data = json.loads(prob_row["region_coords"])
-                        image_b64 = self._extract_problem_image_from_pdf(
-                            row["exam_pdf_data"],
-                            region_data["page_number"],
-                            region_data["region_y_start"],
-                            region_data["region_y_end"]
-                        )
-                        images[prob_num] = image_b64
-                    else:
-                        log.warning(f"No image data available for problem {prob_num} in submission {submission_id}")
 
                 submissions.append({
                     "id": submission_id,
                     "student_name": row["student_name"],
                     "canvas_user_id": row["canvas_user_id"],
                     "page_mappings": json.loads(row["page_mappings"]),
-                    "problems": problems,
-                    "images": images
+                    "exam_pdf_data": row["exam_pdf_data"],
+                    "problems": problems
                 })
 
             return submissions
@@ -225,56 +212,49 @@ class FinalizationService:
         return img_base64
 
     def _create_annotated_pdf(self, submission: Dict) -> Path:
-        """Create annotated PDF with score stickers on each page"""
+        """
+        Create annotated PDF by adding score stickers to the original PDF.
+        Works directly with the original exam PDF instead of reconstructing from images.
+        """
         output_path = self.temp_dir / f"exam_{submission['id']}.pdf"
 
-        # Create a new PDF document
-        pdf_doc = fitz.open()
+        # Check if we have the original PDF data
+        if not submission.get("exam_pdf_data"):
+            log.error(f"No exam_pdf_data for submission {submission['id']}, cannot create annotated PDF")
+            raise ValueError(f"Missing exam_pdf_data for submission {submission['id']}")
 
-        # Add each problem as a page with score annotation
-        for problem in sorted(submission["problems"], key=lambda p: p["problem_number"]):
-            prob_num = problem["problem_number"]
+        # Decode and open the original PDF
+        pdf_bytes = base64.b64decode(submission["exam_pdf_data"])
+        pdf_doc = fitz.open("pdf", pdf_bytes)
 
-            # Get the image data (base64 PNG)
-            if prob_num not in submission["images"]:
-                log.warning(f"Missing image for problem {prob_num}")
+        # Add score stickers to each problem region
+        for problem in submission["problems"]:
+            region_coords = problem.get("region_coords")
+
+            if not region_coords:
+                log.warning(f"No region_coords for problem {problem['problem_number']}, skipping annotation")
                 continue
 
-            image_data = base64.b64decode(submission["images"][prob_num])
+            page_number = region_coords["page_number"]
+            region_y_start = region_coords["region_y_start"]
+            region_y_end = region_coords["region_y_end"]
 
-            # Convert PNG to JPEG for smaller file size
-            pil_img = Image.open(io.BytesIO(image_data))
-            if pil_img.mode in ('RGBA', 'LA', 'P'):
-                # Convert transparency to white background
-                background = Image.new('RGB', pil_img.size, (255, 255, 255))
-                if pil_img.mode == 'P':
-                    pil_img = pil_img.convert('RGBA')
-                background.paste(pil_img, mask=pil_img.split()[-1] if pil_img.mode == 'RGBA' else None)
-                pil_img = background
-            elif pil_img.mode != 'RGB':
-                pil_img = pil_img.convert('RGB')
+            # Get the page
+            if page_number >= len(pdf_doc):
+                log.warning(f"Page {page_number} out of range for submission {submission['id']}")
+                continue
 
-            # Save as JPEG with quality=85 (good balance between size and quality)
-            jpeg_buffer = io.BytesIO()
-            pil_img.save(jpeg_buffer, format='JPEG', quality=85, optimize=True)
-            jpeg_data = jpeg_buffer.getvalue()
+            page = pdf_doc[page_number]
 
-            # Open the JPEG to get dimensions
-            img = fitz.open(stream=jpeg_data, filetype="jpeg")
-            img_page = img[0]
-            img_rect = img_page.rect
+            # Add score sticker in the problem region (upper right corner of the region)
+            self._add_score_sticker_at_region(
+                page,
+                problem["score"],
+                region_y_start,
+                region_y_end
+            )
 
-            # Create a new page with the same dimensions as the image
-            page = pdf_doc.new_page(width=img_rect.width, height=img_rect.height)
-
-            # Insert the JPEG onto the page
-            page.insert_image(img_rect, stream=jpeg_data)
-            img.close()
-
-            # Add score sticker in upper right corner
-            self._add_score_sticker(page, problem["score"])
-
-        # Save the PDF with compression
+        # Save the annotated PDF with compression
         pdf_doc.save(
             str(output_path),
             garbage=4,  # Maximum garbage collection
@@ -283,21 +263,30 @@ class FinalizationService:
         )
         pdf_doc.close()
 
+        log.info(f"Created annotated PDF for submission {submission['id']} at {output_path}")
         return output_path
 
-    def _add_score_sticker(self, page: fitz.Page, score: float):
-        """Add a score sticker to the upper right corner of a page"""
+    def _add_score_sticker_at_region(self, page: fitz.Page, score: float, region_y_start: int, region_y_end: int):
+        """
+        Add a score sticker to the upper right corner of a problem region.
+
+        Args:
+            page: The PDF page to annotate
+            score: The score to display
+            region_y_start: Top Y coordinate of the problem region
+            region_y_end: Bottom Y coordinate of the problem region
+        """
         # Define sticker dimensions and position
         sticker_width = 60
         sticker_height = 30
         margin = 10
 
-        # Position in upper right corner
+        # Position in upper right corner of the region
         page_width = page.rect.width
         x0 = page_width - sticker_width - margin
-        y0 = margin
+        y0 = region_y_start + margin
         x1 = page_width - margin
-        y1 = margin + sticker_height
+        y1 = region_y_start + margin + sticker_height
 
         # Create rectangle for background (black with 90% opacity)
         rect = fitz.Rect(x0, y0, x1, y1)
@@ -318,20 +307,26 @@ class FinalizationService:
         )
 
     def _generate_comments(self, submission: Dict) -> str:
-        """Generate feedback comments for Canvas"""
+        """Generate feedback comments for Canvas in markdown format"""
         comments = []
 
         # Overall score
         total_score = sum(p["score"] for p in submission["problems"])
-        comments.append(f"Total Score: {total_score:.2f}\n")
+        comments.append(f"# Grading Summary\n")
+        comments.append(f"**Total Score:** {total_score:.2f}\n")
+        comments.append("---\n")
 
-        # Per-problem breakdown
-        comments.append("Per-Problem Breakdown:")
+        # Per-problem breakdown with markdown headers
         for problem in sorted(submission["problems"], key=lambda p: p["problem_number"]):
-            prob_line = f"Problem {problem['problem_number']}: {problem['score']:.2f}"
+            comments.append(f"## Problem {problem['problem_number']}")
+            comments.append(f"**Score:** {problem['score']:.2f}\n")
+
             if problem["feedback"]:
-                prob_line += f" - {problem['feedback']}"
-            comments.append(prob_line)
+                # Add feedback with proper spacing
+                comments.append(f"{problem['feedback']}\n")
+
+            # Add separator between problems
+            comments.append("---\n")
 
         return "\n".join(comments)
 

@@ -24,7 +24,7 @@ body {
 }
 
 .container {
-    max-width: 1200px;
+    max-width: 2000px; /* Allow wider layouts for side-by-side grading */
     margin: 0 auto;
     padding: 20px;
 }
@@ -235,8 +235,36 @@ header h1 {
     font-family: monospace;
 }
 
+/* Grading Layout - Responsive side-by-side */
+.grading-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* Side-by-side layout when there's enough space to show image at full width
+   Image max width is typically 600px in the container (after padding),
+   plus 350px for controls, plus gaps = ~1000px minimum */
+@media (min-width: 1000px) {
+    .grading-layout {
+        flex-direction: row;
+        align-items: flex-start;
+    }
+
+    .problem-container {
+        flex: 3; /* Takes 3/4 of the space */
+        min-width: 0; /* Allow flex item to shrink below content size */
+    }
+
+    .grading-form {
+        flex: 1; /* Takes 1/4 of the space */
+        min-width: 300px; /* Minimum width to keep buttons readable */
+        max-width: 400px; /* Maximum width to prevent buttons from getting too large */
+    }
+}
+
 .problem-container {
-    margin: 20px 0;
+    margin: 0;
     background-color: var(--gray-100);
     padding: 20px;
     border-radius: 8px;
@@ -251,9 +279,8 @@ header h1 {
     border: 2px solid var(--gray-200);
     border-radius: 4px;
     position: relative;
-    /* Default height - about 1 page worth */
+    /* Default height - will be auto-sized to fit image on load */
     height: 800px;
-    max-height: 80vh;
 }
 
 .problem-container img {
@@ -455,6 +482,21 @@ header h1 {
     text-transform: uppercase;
     font-size: 12px;
     letter-spacing: 0.5px;
+}
+
+.student-scores-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.2s;
+}
+
+.student-scores-table th.sortable:hover {
+    background-color: var(--gray-200);
+}
+
+.student-scores-table th .sort-indicator {
+    font-size: 10px;
+    color: var(--primary-color);
 }
 
 .student-scores-table td {
@@ -941,4 +983,134 @@ header h1 {
 
 .spoiler:hover:not(.revealed) {
     background-color: #4b5563;
+}
+
+/* =============================================================================
+   FEEDBACK TAGS
+   ============================================================================= */
+
+.feedback-tags-container {
+    margin-top: 15px;
+    padding: 15px;
+    background: #f9fafb;
+    border-radius: 6px;
+    border: 1px solid var(--gray-200);
+}
+
+.tags-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.tags-header strong {
+    color: var(--gray-700);
+    font-size: 14px;
+}
+
+.tags-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 40px;
+    align-items: center;
+}
+
+.tags-placeholder {
+    color: var(--gray-500);
+    font-style: italic;
+    font-size: 13px;
+}
+
+.tag-button {
+    padding: 10px 16px;
+    border: 2px solid var(--gray-300);
+    background: white;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: 500;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tag-button:hover {
+    border-color: var(--primary-color);
+    background: var(--gray-100);
+}
+
+.tag-button.selected {
+    border-color: var(--primary-color);
+    background: var(--primary-color);
+    color: white;
+}
+
+.tag-delete {
+    margin-left: 4px;
+    color: var(--danger-color);
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 14px;
+    line-height: 1;
+    transition: color 0.2s;
+}
+
+.tag-delete:hover {
+    color: #dc2626;
+}
+
+.tag-button.selected .tag-delete {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.tag-button.selected .tag-delete:hover {
+    color: white;
+}
+
+/* =============================================================================
+   DEFAULT FEEDBACK SECTION
+   ============================================================================= */
+
+.default-feedback-container {
+    background: var(--gray-50);
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 20px;
+}
+
+.default-feedback-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.default-feedback-header strong {
+    font-size: 14px;
+    color: var(--gray-700);
+}
+
+.default-feedback-display {
+    background: white;
+    border: 1px solid var(--gray-200);
+    border-radius: 4px;
+    padding: 12px;
+    min-height: 50px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--gray-800);
+    white-space: pre-wrap;
+}
+
+.default-feedback-placeholder {
+    color: var(--gray-400);
+    font-style: italic;
+}
+
+.default-feedback-display:not(:empty) {
+    color: var(--gray-800);
 }
