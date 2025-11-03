@@ -3,6 +3,37 @@
 let allSubmissions = [];
 let allStudents = [];
 
+// Simple fuzzy matching helper (Levenshtein distance)
+function fuzzyMatch(str1, str2) {
+    const s1 = str1.toLowerCase();
+    const s2 = str2.toLowerCase();
+    const len1 = s1.length;
+    const len2 = s2.length;
+
+    const matrix = [];
+    for (let i = 0; i <= len1; i++) {
+        matrix[i] = [i];
+    }
+    for (let j = 0; j <= len2; j++) {
+        matrix[0][j] = j;
+    }
+
+    for (let i = 1; i <= len1; i++) {
+        for (let j = 1; j <= len2; j++) {
+            const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+            matrix[i][j] = Math.min(
+                matrix[i - 1][j] + 1,
+                matrix[i][j - 1] + 1,
+                matrix[i - 1][j - 1] + cost
+            );
+        }
+    }
+
+    const maxLen = Math.max(len1, len2);
+    const distance = matrix[len1][len2];
+    return Math.round((1 - distance / maxLen) * 100);
+}
+
 // Load name matching interface
 async function loadNameMatching() {
     if (!currentSession) return;
@@ -17,6 +48,28 @@ async function loadNameMatching() {
         const studentsResp = await fetch(`${API_BASE}/matching/${currentSession.id}/students`);
         const studentsData = await studentsResp.json();
         allStudents = studentsData.students;
+
+        // Pre-fill suggested matches based on fuzzy matching
+        // Only if not already matched
+        allSubmissions.forEach(submission => {
+            if (!submission.canvas_user_id && submission.approximate_name) {
+                let bestScore = 0;
+                let bestStudent = null;
+
+                allStudents.forEach(student => {
+                    const score = fuzzyMatch(submission.approximate_name, student.name);
+                    if (score > bestScore && score >= 97) {  // 97% threshold (same as backend)
+                        bestScore = score;
+                        bestStudent = student;
+                    }
+                });
+
+                if (bestStudent) {
+                    submission.suggested_canvas_user_id = bestStudent.user_id;
+                    console.log(`Suggested match for "${submission.approximate_name}": ${bestStudent.name} (${bestScore}%)`);
+                }
+            }
+        });
 
         // Render UI
         renderMatchingList();
@@ -78,13 +131,18 @@ function renderMatchingList() {
                             ${submission.is_matched ? `data-current-match="${submission.canvas_user_id}"` : ''}
                             onchange="handleStudentSelection(${submission.id})">
                         <option value="">-- Select Canvas Student --</option>
-                        ${allStudents.map(s => `
+                        ${allStudents.map(s => {
+                            // Pre-select if this is the actual match OR the suggested match
+                            const isSelected = (submission.canvas_user_id === s.user_id) ||
+                                             (!submission.canvas_user_id && submission.suggested_canvas_user_id === s.user_id);
+                            return `
                             <option value="${s.user_id}"
                                     ${s.is_matched ? 'class="matched-student"' : ''}
-                                    ${submission.canvas_user_id === s.user_id ? 'selected' : ''}>
+                                    ${isSelected ? 'selected' : ''}>
                                 ${s.is_matched ? '✓ ' : ''}${s.name}
                             </option>
-                        `).join('')}
+                        `;
+                        }).join('')}
                     </select>
                 </div>
             </div>
@@ -205,15 +263,25 @@ async function confirmAllMatches() {
         // Reload data to reflect changes
         await loadNameMatching();
 
-        // Check if all are now matched
-        const response = await fetch(`${API_BASE}/sessions/${currentSession.id}`);
-        currentSession = await response.json();
+        // Check if all submissions are matched, then set status to 'ready'
+        const unmatchedCount = allSubmissions.filter(s => !s.is_matched).length;
 
-        if (currentSession.status === 'ready') {
-            setTimeout(() => {
-                updateSessionInfo();
-                navigateToSection('grading-section');
-            }, 1500);
+        if (unmatchedCount === 0) {
+            // All matched - update session status to 'ready'
+            await fetch(`${API_BASE}/sessions/${currentSession.id}/status`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'ready' })
+            });
+
+            // Reload session and navigate
+            const response = await fetch(`${API_BASE}/sessions/${currentSession.id}`);
+            currentSession = await response.json();
+            updateSessionInfo();
+            navigateToSection('grading-section');
+        } else {
+            // Some submissions still unmatched
+            alert(`${unmatchedCount} submission(s) still need to be matched. Please select students for all submissions.`);
         }
 
     } catch (error) {

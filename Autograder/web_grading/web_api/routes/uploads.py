@@ -607,17 +607,17 @@ async def process_exam_files(
                         region_coords = json.dumps(coords_dict)
 
                     # Insert problem with region metadata and QR encrypted data if available
+                    # Note: image_data column removed in v21, using PDF-based storage only
                     cursor.execute("""
                         INSERT INTO problems
-                        (session_id, submission_id, problem_number, image_data, graded,
+                        (session_id, submission_id, problem_number, graded,
                          is_blank, blank_confidence, blank_method, blank_reasoning, max_points,
                          region_coords, qr_encrypted_data)
-                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         session_id,
                         submission_id,
                         problem_number,
-                        problem.get("image_base64"),  # May be None for new PDF-based storage
                         1 if problem.get("is_blank", False) else 0,
                         problem.get("blank_confidence", 0.0),
                         problem.get("blank_method"),

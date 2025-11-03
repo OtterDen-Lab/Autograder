@@ -179,11 +179,8 @@ def get_problem_image_data(problem_row, cursor) -> str:
         Base64 encoded PNG image
     """
 
-    # If image_data is stored, return it directly
-    if problem_row["image_data"]:
-        return problem_row["image_data"]
-
-    # Otherwise, extract from PDF using region metadata from region_coords JSON
+    # Extract from PDF using region metadata from region_coords JSON
+    # Note: image_data column removed in v21, always use PDF-based extraction
     if problem_row["region_coords"]:
         try:
             region_data = json.loads(problem_row["region_coords"])
@@ -214,10 +211,10 @@ def get_problem_image_data(problem_row, cursor) -> str:
             )
 
     # Fallback: no image data available
-    log.error(f"Problem {problem_row['id']}: No image data available. has_image_data={bool(problem_row['image_data'])}, has_region_coords={bool(problem_row['region_coords'])}")
+    log.error(f"Problem {problem_row['id']}: No image data available. has_region_coords={bool(problem_row['region_coords'])}")
     raise HTTPException(
         status_code=500,
-        detail="Problem image data not available (no stored image or PDF data)"
+        detail="Problem image data not available (no region_coords or PDF data)"
     )
 
 
@@ -563,7 +560,7 @@ async def decipher_handwriting(problem_id: int, model: str = "default"):
             # Not cached - bump priority in queue and process immediately
             log.info(f"Cache miss for problem {problem_id}, queueing with high priority")
             queue = get_transcription_queue()
-            queue.bump_priority(problem_id, priority=0)
+            queue.bump_priority(problem_id, new_priority=0)
 
         # Get image data (extract from PDF if needed)
         image_base64 = get_problem_image_data(row, cursor)

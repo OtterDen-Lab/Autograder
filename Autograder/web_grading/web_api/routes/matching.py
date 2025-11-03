@@ -148,13 +148,8 @@ async def match_submission(session_id: int, match: NameMatchRequest):
 
         unmatched_count = cursor.fetchone()["unmatched_count"]
 
-        # Update session status if all matched
-        if unmatched_count == 0:
-            cursor.execute("""
-                UPDATE grading_sessions
-                SET status = 'ready', updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (session_id,))
+        # DON'T auto-update status to 'ready' - wait for user to click "Confirm All Matches"
+        # This allows the user to review all matches before proceeding
 
         return {
             "status": "matched",

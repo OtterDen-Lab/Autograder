@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 20
+CURRENT_SCHEMA_VERSION = 21
 
 
 def get_db_path() -> Path:
@@ -123,14 +123,13 @@ def create_schema(cursor):
         )
     """)
 
-    # Individual problems
+    # Individual problems (PDF-based storage only, no image_data column)
     cursor.execute("""
         CREATE TABLE problems (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id INTEGER NOT NULL,
             submission_id INTEGER NOT NULL,
             problem_number INTEGER NOT NULL,
-            image_data TEXT,
             score REAL,
             feedback TEXT,
             graded INTEGER DEFAULT 0,
@@ -143,6 +142,9 @@ def create_schema(cursor):
             ai_reasoning TEXT,
             region_coords TEXT,
             qr_encrypted_data TEXT,
+            transcription TEXT,
+            transcription_model TEXT,
+            transcription_cached_at TIMESTAMP,
             FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
             FOREIGN KEY (submission_id) REFERENCES submissions(id)
         )
@@ -308,6 +310,10 @@ def run_migrations(cursor, from_version: int):
     if from_version < 20:
         migrate_to_v20(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (20)")
+
+    if from_version < 21:
+        migrate_to_v21(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (21)")
 
 
 def migrate_to_v2(cursor):
@@ -591,6 +597,71 @@ def migrate_to_v20(cursor):
     if 'transcription_cached_at' not in existing_columns:
         cursor.execute("ALTER TABLE problems ADD COLUMN transcription_cached_at TIMESTAMP")
         log.info("Added transcription_cached_at column")
+
+
+def migrate_to_v21(cursor):
+    """Remove image_data column from problems table (no longer used with PDF-based storage)"""
+    log.info("Migrating to schema version 21: removing image_data column from problems")
+
+    # SQLite doesn't support DROP COLUMN directly, need to recreate table
+    # Create new table without image_data column
+    cursor.execute("""
+        CREATE TABLE problems_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            submission_id INTEGER NOT NULL,
+            problem_number INTEGER NOT NULL,
+            score REAL,
+            feedback TEXT,
+            graded INTEGER DEFAULT 0,
+            graded_at TIMESTAMP,
+            is_blank INTEGER DEFAULT 0,
+            blank_confidence REAL DEFAULT 0.0,
+            blank_method TEXT,
+            blank_reasoning TEXT,
+            max_points REAL,
+            ai_reasoning TEXT,
+            region_coords TEXT,
+            qr_encrypted_data TEXT,
+            transcription TEXT,
+            transcription_model TEXT,
+            transcription_cached_at TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
+            FOREIGN KEY (submission_id) REFERENCES submissions(id)
+        )
+    """)
+
+    # Copy data from old table (excluding image_data)
+    cursor.execute("""
+        INSERT INTO problems_new
+        (id, session_id, submission_id, problem_number, score, feedback, graded, graded_at,
+         is_blank, blank_confidence, blank_method, blank_reasoning, max_points, ai_reasoning,
+         region_coords, qr_encrypted_data, transcription, transcription_model, transcription_cached_at)
+        SELECT
+         id, session_id, submission_id, problem_number, score, feedback, graded, graded_at,
+         is_blank, blank_confidence, blank_method, blank_reasoning, max_points, ai_reasoning,
+         region_coords, qr_encrypted_data, transcription, transcription_model, transcription_cached_at
+        FROM problems
+    """)
+
+    # Drop old table
+    cursor.execute("DROP TABLE problems")
+
+    # Rename new table
+    cursor.execute("ALTER TABLE problems_new RENAME TO problems")
+
+    # Recreate indexes
+    cursor.execute("""
+        CREATE INDEX idx_problems_session_problem
+        ON problems(session_id, problem_number)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX idx_problems_graded
+        ON problems(session_id, graded)
+    """)
+
+    log.info("Successfully removed image_data column from problems table")
 
 
 def update_problem_stats(session_id: int):

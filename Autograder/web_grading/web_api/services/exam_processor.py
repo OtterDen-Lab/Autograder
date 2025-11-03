@@ -273,12 +273,14 @@ class ExamProcessor:
                     problem_doc.close()
 
             # Create submission dict (no auto-matching - always goes to unmatched for manual confirmation)
+            # But store the suggested match for pre-filling the dropdown
             submission = {
                 "document_id": document_id,
                 "approximate_name": approximate_name,
                 "name_image_data": name_image,
                 "student_name": None,  # No auto-matching - requires manual confirmation
                 "canvas_user_id": None,  # No auto-matching - requires manual confirmation
+                "suggested_canvas_user_id": suggested_match["user_id"] if suggested_match else None,  # Pre-fill suggestion
                 "page_mappings": page_mappings_by_submission[document_id] if page_mappings_by_submission else [],
                 "problems": problems,
                 "pdf_data": pdf_data,  # Base64 PDF (None for manual page ranges)

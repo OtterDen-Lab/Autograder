@@ -9,12 +9,14 @@ import logging
 import queue
 import threading
 import time
+import json
 from typing import Optional, Dict, Tuple
 from datetime import datetime
 import textwrap
 
 from ..database import get_db_connection
 from Autograder.ai_helper import AI_Helper__Ollama
+from ..routes.problems import extract_problem_image
 
 log = logging.getLogger(__name__)
 
@@ -266,18 +268,44 @@ class TranscriptionQueue:
         log.info("TranscriptionQueue worker stopped")
 
     def _get_problem_image(self, problem_id: int) -> Optional[str]:
-        """Get base64-encoded image data for a problem."""
+        """Get base64-encoded image data for a problem by extracting from PDF."""
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
+
+                # Get problem metadata and submission info
                 cursor.execute("""
-                    SELECT image_data FROM problems WHERE id = ?
+                    SELECT region_coords, submission_id FROM problems WHERE id = ?
                 """, (problem_id,))
                 row = cursor.fetchone()
-                if row:
-                    return row[0]
+                if not row or not row[0]:
+                    log.error(f"No region_coords found for problem {problem_id}")
+                    return None
+
+                region_data = json.loads(row[0])
+                submission_id = row[1]
+
+                # Get PDF data from submission
+                cursor.execute("""
+                    SELECT exam_pdf_data FROM submissions WHERE id = ?
+                """, (submission_id,))
+                submission_row = cursor.fetchone()
+
+                if not submission_row or not submission_row[0]:
+                    log.error(f"No PDF data found for submission {submission_id}")
+                    return None
+
+                # Extract image from PDF using shared function
+                return extract_problem_image(
+                    submission_row[0],
+                    region_data["page_number"],
+                    region_data["region_y_start"],
+                    region_data["region_y_end"],
+                    region_data.get("end_page_number"),
+                    region_data.get("end_region_y")
+                )
         except Exception as e:
-            log.error(f"Error getting image for problem {problem_id}: {e}")
+            log.error(f"Error getting image for problem {problem_id}: {e}", exc_info=True)
         return None
 
 

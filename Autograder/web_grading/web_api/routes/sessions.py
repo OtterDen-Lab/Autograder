@@ -13,6 +13,7 @@ from ..models import (
     SessionResponse,
     SessionStatsResponse,
     ProblemStatsResponse,
+    SessionStatusUpdate,
 )
 from ..database import get_db_connection
 from lms_interface.canvas_interface import CanvasInterface
@@ -93,6 +94,27 @@ async def get_session(session_id: int):
             matched_exams=row_dict.get("matched_exams", 0),
             processing_message=row_dict.get("processing_message"),
         )
+
+
+@router.patch("/{session_id}/status")
+async def update_session_status(session_id: int, status_update: SessionStatusUpdate):
+    """Update session status (e.g., from name_matching_needed to ready)"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Verify session exists
+        cursor.execute("SELECT id FROM grading_sessions WHERE id = ?", (session_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Update status
+        cursor.execute("""
+            UPDATE grading_sessions
+            SET status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (status_update.status, session_id))
+
+        return {"status": "updated", "session_id": session_id, "new_status": status_update.status}
 
 
 @router.get("", response_model=List[SessionResponse])
