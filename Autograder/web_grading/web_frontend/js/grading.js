@@ -315,6 +315,12 @@ function displayCurrentProblem() {
         updateAnswerDialog();
     }
 
+    // Update transcription dialog if it's currently visible
+    const transcriptionDialog = document.getElementById('transcription-dialog');
+    if (transcriptionDialog && transcriptionDialog.style.display === 'flex') {
+        updateTranscriptionDialog();
+    }
+
     // Populate form based on whether it's graded or blank
     if (currentProblem.graded) {
         // Already graded - show existing grade
@@ -1353,6 +1359,36 @@ async function retryWithModel(model) {
         transcriptionText.innerHTML = `<div style="color: var(--danger-color);">Failed to transcribe with ${modelNames[model]}. Please try again.</div>`;
         // Show buttons again so user can retry
         transcriptionActions.style.display = 'block';
+    }
+}
+
+// Function to update transcription dialog when problem changes
+async function updateTranscriptionDialog() {
+    if (!currentProblem) {
+        transcriptionDialog.style.display = 'none';
+        return;
+    }
+
+    // Check if we have a cached transcription for this problem (default to ollama)
+    const cacheKey = 'ollama';
+    if (transcriptionCache[currentProblem.id] && transcriptionCache[currentProblem.id][cacheKey]) {
+        // Show cached transcription immediately
+        console.log(`Showing cached transcription for problem ${currentProblem.id}`);
+        displayTranscription(transcriptionCache[currentProblem.id][cacheKey]);
+    } else {
+        // No cache - fetch new transcription with Ollama
+        console.log(`No cache found, fetching new transcription for problem ${currentProblem.id}`);
+        transcriptionText.innerHTML = '<div class="transcription-loading">Transcribing handwriting with Ollama...</div>';
+        transcriptionActions.style.display = 'none';
+
+        try {
+            const transcription = await fetchTranscription(currentProblem.id, 'default');
+            displayTranscription(transcription);
+        } catch (error) {
+            console.error('Failed to auto-fetch transcription:', error);
+            transcriptionText.innerHTML = '<div style="color: var(--danger-color);">Failed to transcribe handwriting. Please try again.</div>';
+            transcriptionActions.style.display = 'block';
+        }
     }
 }
 
