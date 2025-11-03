@@ -17,6 +17,7 @@ services:
       # Ollama configuration (via Tailscale)
       - OLLAMA_HOST=http://100.84.102.113:11434
       - OLLAMA_MODEL=qwen3-vl:2b
+      - OLLAMA_TIMEOUT=30
     volumes:
       # Persistent storage for database
       - grading-data:/data

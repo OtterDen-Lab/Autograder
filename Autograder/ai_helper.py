@@ -9,6 +9,7 @@ import dotenv
 import openai.types.chat.completion_create_params
 from openai import OpenAI
 from anthropic import Anthropic
+import httpx
 
 import logging
 log = logging.getLogger(__name__)
@@ -163,8 +164,9 @@ class AI_Helper__Ollama(AI_Helper):
     # Initialize client if not already done
     if self.__class__._client is None:
       ollama_host = os.getenv('OLLAMA_HOST', 'http://workhorse:11434')
-      log.info(f"Initializing Ollama client with host: {ollama_host}")
-      self.__class__._client = ollama.Client(host=ollama_host)
+      ollama_timeout = int(os.getenv('OLLAMA_TIMEOUT', '30'))
+      log.info(f"Initializing Ollama client with host: {ollama_host}, timeout: {ollama_timeout}s")
+      self.__class__._client = ollama.Client(host=ollama_host, timeout=ollama_timeout)
 
   @classmethod
   def query_ai(
@@ -178,8 +180,9 @@ class AI_Helper__Ollama(AI_Helper):
     # Ensure client is initialized
     if cls._client is None:
       ollama_host = os.getenv('OLLAMA_HOST', 'http://workhorse:11434')
-      log.info(f"Lazily initializing Ollama client with host: {ollama_host}")
-      cls._client = ollama.Client(host=ollama_host)
+      ollama_timeout = int(os.getenv('OLLAMA_TIMEOUT', '30'))
+      log.info(f"Lazily initializing Ollama client with host: {ollama_host}, timeout: {ollama_timeout}s")
+      cls._client = ollama.Client(host=ollama_host, timeout=ollama_timeout)
 
     # Extract base64 images from attachments (format: [("png", base64_str), ...])
     images = [att[1] for att in attachments if att[0] in ("png", "jpg", "jpeg")]
@@ -194,42 +197,42 @@ class AI_Helper__Ollama(AI_Helper):
     if images:
       msg_content['images'] = images
 
+    # Use the client instance to make the request
+    # Model can be configured via environment variable or default to qwen3-vl:2b
+    model = os.getenv('OLLAMA_MODEL', 'qwen3-vl:2b')
+
+    log.info(f"Ollama: Using model {model} with host {cls._client._client.base_url}")
+    log.debug(f"Ollama: Message content has {len(images)} images")
+
     try:
-      # Use the client instance to make the request
-      # Model can be configured via environment variable or default to qwen3-vl:2b
-      model = os.getenv('OLLAMA_MODEL', 'qwen3-vl:2b')
-
-      log.info(f"Ollama: Using model {model} with host {cls._client._client.base_url}")
-      log.debug(f"Ollama: Message content has {len(images)} images")
-
       response = cls._client.chat(
         model=model,
         messages=[msg_content]
       )
-
-      log.debug(f"Ollama response: {response}")
-
-      # Extract usage information (Ollama provides these in response metadata)
-      usage_info = {
-        "prompt_tokens": response.get('prompt_eval_count', 0),
-        "completion_tokens": response.get('eval_count', 0),
-        "total_tokens": response.get('prompt_eval_count', 0) + response.get('eval_count', 0),
-        "provider": "ollama"
-      }
-
-      # Return the text content (similar to Anthropic interface)
-      content = response['message']['content']
-
-      log.info(f"Ollama: Received response with {len(content)} characters")
-
-      return content, usage_info
-
-    except Exception as e:
-      log.error(f"Ollama error: {str(e)}")
-      log.error(f"Ollama error type: {type(e)}")
-      import traceback
-      log.error(f"Traceback: {traceback.format_exc()}")
+    except httpx.ReadTimeout:
+      timeout = os.getenv('OLLAMA_TIMEOUT', '30')
+      log.info(f"Ollama request timed out after {timeout}s")
       raise
+    except Exception as e:
+      log.error(f"Ollama error ({type(e).__name__}): {str(e)}")
+      raise
+
+    log.debug(f"Ollama response: {response}")
+
+    # Extract usage information (Ollama provides these in response metadata)
+    usage_info = {
+      "prompt_tokens": response.get('prompt_eval_count', 0),
+      "completion_tokens": response.get('eval_count', 0),
+      "total_tokens": response.get('prompt_eval_count', 0) + response.get('eval_count', 0),
+      "provider": "ollama"
+    }
+
+    # Return the text content (similar to Anthropic interface)
+    content = response['message']['content']
+
+    log.info(f"Ollama: Received response with {len(content)} characters")
+
+    return content, usage_info
 
 
   

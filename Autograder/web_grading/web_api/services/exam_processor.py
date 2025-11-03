@@ -805,18 +805,13 @@ class ExamProcessor:
 
             # Detect blank if requested
             if detect_blank:
-                heuristic_result = self.is_blank_heuristic(problem_image_base64)
-                problem_dict["is_blank"] = heuristic_result["is_blank"]
-                problem_dict["blank_confidence"] = heuristic_result["confidence"]
-                problem_dict["blank_method"] = "heuristic"
-
-                if use_ai_for_borderline and heuristic_result["confidence"] < blank_confidence_threshold:
-                    log.info(f"Problem {problem_number}: Low confidence ({heuristic_result['confidence']:.2f}), using AI verification")
-                    ai_result = self.is_blank_ai(problem_image_base64)
-                    problem_dict["is_blank"] = ai_result["is_blank"]
-                    problem_dict["blank_confidence"] = ai_result["confidence"]
-                    problem_dict["blank_method"] = "ai"
-                    problem_dict["blank_reasoning"] = ai_result.get("reasoning", "")
+                # Priority order: Ollama -> Heuristic -> Paid AI
+                blank_result = self.is_blank_with_fallback(problem_image_base64)
+                problem_dict["is_blank"] = blank_result["is_blank"]
+                problem_dict["blank_confidence"] = blank_result["confidence"]
+                problem_dict["blank_method"] = blank_result["method"]
+                if "reasoning" in blank_result:
+                    problem_dict["blank_reasoning"] = blank_result["reasoning"]
 
             # Extract max points from score box
             if problem_max_points and problem_number in problem_max_points:
@@ -950,6 +945,108 @@ class ExamProcessor:
             "edge_density": edge_density,
             "pixel_variance": pixel_variance
         }
+
+    def is_blank_with_fallback(self, image_base64: str) -> Dict:
+        """
+        Detect blank pages with fallback priority: Ollama -> Heuristic -> Paid AI
+
+        For Ollama, downscales images to 50 DPI for faster processing.
+
+        Args:
+            image_base64: Base64 encoded image (at normal 150 DPI)
+
+        Returns:
+            Dict with {is_blank: bool, confidence: float, method: str, reasoning: str (optional)}
+        """
+        # First, try Ollama if available
+        if self.ai_provider == "ollama":
+            try:
+                log.info("Attempting blank detection with Ollama...")
+
+                # Downscale image for Ollama (50 DPI is plenty for blank detection)
+                downscaled_image = self._downscale_image(image_base64, target_dpi=50, original_dpi=150)
+
+                result = self.is_blank_ai(downscaled_image)
+                result["method"] = "ollama"
+                log.info(f"Ollama blank detection succeeded: {result}")
+                return result
+            except Exception as e:
+                # Ollama client timeout or other errors will be caught here
+                log.warning(f"Ollama blank detection failed: {e}, falling back to heuristic")
+
+        # Second, try heuristic method
+        try:
+            log.info("Using heuristic blank detection...")
+            result = self.is_blank_heuristic(image_base64)
+            result["method"] = "heuristic"
+            log.info(f"Heuristic blank detection: {result}")
+            return result
+        except Exception as e:
+            log.error(f"Heuristic blank detection failed: {e}")
+
+        # Third, fall back to paid AI (Anthropic/OpenAI)
+        try:
+            log.warning("Falling back to paid AI for blank detection...")
+            # Temporarily switch to Anthropic
+            original_provider = self.ai_provider
+            original_helper = self.ai_helper_class
+
+            self.ai_provider = "anthropic"
+            self.ai_helper_class = ai_helper.AI_Helper__Anthropic
+
+            result = self.is_blank_ai(image_base64)
+            result["method"] = "anthropic_fallback"
+
+            # Restore original provider
+            self.ai_provider = original_provider
+            self.ai_helper_class = original_helper
+
+            log.info(f"Paid AI blank detection: {result}")
+            return result
+        except Exception as e:
+            log.error(f"All blank detection methods failed: {e}")
+            # Return safe default (not blank to avoid skipping real content)
+            return {
+                "is_blank": False,
+                "confidence": 0.0,
+                "method": "failed",
+                "reasoning": f"All detection methods failed: {str(e)}"
+            }
+
+    def _downscale_image(self, image_base64: str, target_dpi: int = 50, original_dpi: int = 150) -> str:
+        """
+        Downscale an image to reduce size for faster AI processing.
+
+        Args:
+            image_base64: Original base64 encoded image
+            target_dpi: Target DPI (default 50)
+            original_dpi: Original DPI (default 150)
+
+        Returns:
+            Downscaled image as base64 string
+        """
+        import io
+        from PIL import Image
+
+        # Decode image
+        img_bytes = base64.b64decode(image_base64)
+        img = Image.open(io.BytesIO(img_bytes))
+
+        # Calculate scale factor
+        scale = target_dpi / original_dpi
+        new_size = (int(img.width * scale), int(img.height * scale))
+
+        # Resize image
+        img_resized = img.resize(new_size, Image.Resampling.LANCZOS)
+
+        # Encode back to base64
+        buffer = io.BytesIO()
+        img_resized.save(buffer, format='PNG')
+        downscaled_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+        log.debug(f"Downscaled image from {img.size} to {new_size} ({original_dpi} DPI -> {target_dpi} DPI)")
+
+        return downscaled_b64
 
     def is_blank_ai(self, image_base64: str) -> Dict:
         """
