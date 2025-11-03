@@ -1,6 +1,9 @@
 """
 Problem grading endpoints.
 """
+import textwrap
+import os
+
 from fastapi import APIRouter, HTTPException
 from datetime import datetime
 from typing import Optional
@@ -523,12 +526,13 @@ async def get_problem_in_context(problem_id: int):
 
 
 @router.post("/{problem_id}/decipher")
-async def decipher_handwriting(problem_id: int, use_premium_model: bool = False):
+async def decipher_handwriting(problem_id: int, model: str = "default"):
     """Use AI to transcribe handwritten text from a problem image
 
     Args:
         problem_id: ID of the problem to transcribe
-        use_premium_model: If True, use a more capable (and expensive) model
+        model: AI model to use ("default", "ollama", "sonnet", "opus")
+               "default" uses the user's global AI provider setting (typically Ollama)
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -542,42 +546,31 @@ async def decipher_handwriting(problem_id: int, use_premium_model: bool = False)
         # Get image data (extract from PDF if needed)
         image_base64 = get_problem_image_data(row, cursor)
 
-    # Query AI to transcribe handwriting
-    if use_premium_model:
-        query = """Please transcribe all handwritten text from this exam answer with maximum accuracy.
+    # Single comprehensive prompt for all models
+    query = textwrap.dedent(
+      """
+      Please transcribe all handwritten text from this exam answer with maximum accuracy.
 
-Instructions:
-- Transcribe ONLY handwritten text (ignore printed questions/instructions)
-- Preserve the structure and organization of the answer exactly
-- For unclear text, make your best interpretation and note uncertainty with [possibly: "alternative"]
-- Describe any diagrams, drawings, or mathematical figures in detail within [brackets]
-- Maintain all mathematical notation, equations, and symbols precisely
-- Note any corrections, cross-outs, or marginal notes
-
-Respond with just the transcribed text, being as thorough and accurate as possible."""
-    else:
-        query = """Please transcribe all handwritten text from this exam answer.
-
-Instructions:
-- Transcribe ONLY handwritten text (ignore printed questions/instructions)
-- Preserve the structure and organization of the answer
-- If text is unclear, use [unclear] notation
-- If there are diagrams or drawings, describe them briefly in [brackets]
-- Maintain mathematical notation as best as possible
-
-Respond with just the transcribed text."""
+      Instructions:
+      - Transcribe ONLY handwritten text (ignore printed questions/instructions)
+      - Preserve the structure and organization of the answer exactly
+      - For unclear text, make your best interpretation and note uncertainty with [possibly: "alternative"]
+      - Describe any diagrams, drawings, or mathematical figures in detail within [brackets]
+      - Maintain all mathematical notation, equations, and symbols precisely
+      - Note any corrections, cross-outs, or marginal notes
+      
+      Respond with just the transcribed text, being as thorough and accurate as possible.
+      """
+    )
 
     try:
-        # Use Anthropic's AI with appropriate model
-        ai = ai_helper.AI_Helper__Anthropic()
-
-        # Override model if premium requested
-        if use_premium_model:
-            # Temporarily override the model in the client
-            original_model = None
+        # Select AI provider based on model parameter
+        if model == "opus":
+            # Use Opus directly via Anthropic client
+            ai = ai_helper.AI_Helper__Anthropic()
             response = ai._client.messages.create(
                 model="claude-opus-4-20250514",  # Most capable model
-                max_tokens=2000,  # More tokens for detailed transcription
+                max_tokens=2000,
                 messages=[{
                     "role": "user",
                     "content": [
@@ -594,19 +587,34 @@ Respond with just the transcribed text."""
                 }]
             )
             transcription = response.content[0].text
-        else:
-            response, _ = ai.query_ai(
-                query,
-                attachments=[("png", image_base64)]
-            )
+            model_name = "Opus (Premium)"
+        elif model == "sonnet":
+            # Use Sonnet via standard query_ai
+            ai = ai_helper.AI_Helper__Anthropic()
+            response, _ = ai.query_ai(query, attachments=[("png", image_base64)])
             transcription = response
+            model_name = "Sonnet"
+        elif model == "ollama":
+            # Use Ollama explicitly
+            ai = ai_helper.AI_Helper__Ollama()
+            response, _ = ai.query_ai(query, attachments=[("png", image_base64)])
+            transcription = response
+            model_name = f"Ollama ({os.getenv('OLLAMA_MODEL', 'qwen3-vl:2b')})"
+        else:  # "default" or any other value
+            # Default to Ollama (user's typical choice for cost-effective processing)
+            ai = ai_helper.AI_Helper__Ollama()
+            response, _ = ai.query_ai(query, attachments=[("png", image_base64)])
+            transcription = response
+            model_name = f"Ollama ({os.getenv('OLLAMA_MODEL', 'qwen3-vl:2b')})"
 
         return {
             "problem_id": problem_id,
             "transcription": transcription.strip(),
-            "model": "premium (Opus)" if use_premium_model else "standard (Sonnet)"
+            "model": model_name
         }
     except Exception as e:
+        import traceback
+        log.error(f"Transcription failed: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 

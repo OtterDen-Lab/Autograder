@@ -627,19 +627,13 @@ async def process_exam_files(
                         problem.get("qr_encrypted_data")  # Encrypted QR data
                     ))
 
-            # Update session status
-            if unmatched:
-                cursor.execute("""
-                    UPDATE grading_sessions
-                    SET status = 'name_matching_needed', updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                """, (session_id,))
-            else:
-                cursor.execute("""
-                    UPDATE grading_sessions
-                    SET status = 'ready', updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                """, (session_id,))
+            # Update session status - always require name matching confirmation
+            # Even if all names were auto-matched, user should review and confirm
+            cursor.execute("""
+                UPDATE grading_sessions
+                SET status = 'name_matching_needed', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (session_id,))
 
         log.info(f"Completed processing for session {session_id}: {len(matched)} matched, {len(unmatched)} unmatched")
 

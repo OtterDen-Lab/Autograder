@@ -192,8 +192,9 @@ class ExamProcessor:
                     message=f"Processing exam {index + 1}/{len(input_files)}: Extracted name: {approximate_name}"
                 )
 
-            # Try to match to Canvas student
-            matched_student = None
+            # Find best match to Canvas student (but always require manual confirmation)
+            suggested_match = None
+            match_confidence = 0
             if approximate_name and unmatched_students:
                 best_score = 0
                 best_match = None
@@ -204,19 +205,22 @@ class ExamProcessor:
                         best_score = score
                         best_match = student
 
-                if best_score >= NAME_SIMILARITY_THRESHOLD:
-                    matched_student = best_match
-                    unmatched_students.remove(best_match)
-                    log.info(f"  Matched to: {matched_student['name']} ({best_score}%)")
+                # Store suggestion for user confirmation (never auto-match)
+                if best_match and best_score >= NAME_SIMILARITY_THRESHOLD:
+                    suggested_match = best_match
+                    match_confidence = best_score
+                    log.info(f"  Suggested match: {suggested_match['name']} ({match_confidence}%) - requires confirmation")
+                elif best_match:
+                    log.warning(f"  Weak match suggestion: {best_match['name']} at {best_score}%")
                 else:
-                    log.warning(f"  No good match found (best: {best_match['name']} at {best_score}%)")
+                    log.warning(f"  No match found for: {approximate_name}")
 
-            # Report progress: matched student
+            # Report progress: suggested match
             if progress_callback:
-                match_msg = f"Matched to: {matched_student['name']}" if matched_student else "No match found"
+                match_msg = f"Suggested: {suggested_match['name']} ({match_confidence}%)" if suggested_match else "No match found"
                 progress_callback(
                     processed=index,
-                    matched=len(matched_submissions) + (1 if matched_student else 0),
+                    matched=len(matched_submissions),  # No auto-matching, so this stays same
                     message=f"Processing exam {index + 1}/{len(input_files)}: {match_msg}"
                 )
 

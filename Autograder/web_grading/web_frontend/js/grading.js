@@ -1268,8 +1268,8 @@ closeTranscription.addEventListener('click', () => {
 });
 
 // Function to fetch transcription (with caching)
-async function fetchTranscription(problemId, usePremium = false) {
-    const cacheKey = usePremium ? 'premium' : 'standard';
+async function fetchTranscription(problemId, model = 'default') {
+    const cacheKey = model;
 
     // Check cache first
     if (transcriptionCache[problemId] && transcriptionCache[problemId][cacheKey]) {
@@ -1278,7 +1278,7 @@ async function fetchTranscription(problemId, usePremium = false) {
     }
 
     // Fetch from API
-    const url = `${API_BASE}/problems/${problemId}/decipher?use_premium_model=${usePremium}`;
+    const url = `${API_BASE}/problems/${problemId}/decipher?model=${model}`;
     const response = await fetch(url, { method: 'POST' });
 
     if (!response.ok) {
@@ -1303,7 +1303,52 @@ async function fetchTranscription(problemId, usePremium = false) {
 function displayTranscription(transcription) {
     transcriptionText.textContent = transcription.text;
     modelUsed.textContent = `Model used: ${transcription.model}`;
+
+    // Show model selection buttons
     transcriptionActions.style.display = 'block';
+    transcriptionActions.innerHTML = `
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px;">
+            <button id="retry-ollama-btn" class="btn-secondary" style="flex: 1; min-width: 120px;">
+                Try Ollama
+            </button>
+            <button id="retry-sonnet-btn" class="btn-secondary" style="flex: 1; min-width: 120px;">
+                Try Sonnet
+            </button>
+            <button id="retry-opus-btn" class="btn-secondary" style="flex: 1; min-width: 120px;">
+                Try Opus (Premium)
+            </button>
+        </div>
+    `;
+
+    // Add event listeners for the new buttons
+    document.getElementById('retry-ollama-btn').addEventListener('click', () => retryWithModel('ollama'));
+    document.getElementById('retry-sonnet-btn').addEventListener('click', () => retryWithModel('sonnet'));
+    document.getElementById('retry-opus-btn').addEventListener('click', () => retryWithModel('opus'));
+}
+
+// Function to retry transcription with a specific model
+async function retryWithModel(model) {
+    if (!currentProblem) return;
+
+    const modelNames = {
+        'ollama': 'Ollama (Local)',
+        'sonnet': 'Sonnet',
+        'opus': 'Opus (Premium)'
+    };
+
+    // Show loading state
+    transcriptionText.innerHTML = `<div class="transcription-loading">Transcribing with ${modelNames[model]}...</div>`;
+    transcriptionActions.style.display = 'none';
+
+    try {
+        const transcription = await fetchTranscription(currentProblem.id, model);
+        displayTranscription(transcription);
+    } catch (error) {
+        console.error(`Failed to decipher with ${model}:`, error);
+        transcriptionText.innerHTML = `<div style="color: var(--danger-color);">Failed to transcribe with ${modelNames[model]}. Please try again.</div>`;
+        // Show buttons again so user can retry
+        transcriptionActions.style.display = 'block';
+    }
 }
 
 // Show in Context button
@@ -1376,7 +1421,7 @@ contextDialog.addEventListener('click', (e) => {
     }
 });
 
-// Decipher handwriting button (standard model)
+// Decipher handwriting button (defaults to Ollama)
 decipherBtn.addEventListener('click', async () => {
     if (!currentProblem) {
         alert('No problem loaded');
@@ -1384,34 +1429,18 @@ decipherBtn.addEventListener('click', async () => {
     }
 
     // Show dialog with loading state
-    transcriptionText.innerHTML = '<div class="transcription-loading">Transcribing handwriting...</div>';
+    transcriptionText.innerHTML = '<div class="transcription-loading">Transcribing handwriting with Ollama...</div>';
     transcriptionActions.style.display = 'none';
     transcriptionDialog.style.display = 'flex';
 
     try {
-        const transcription = await fetchTranscription(currentProblem.id, false);
+        // Default to 'default' which uses Ollama
+        const transcription = await fetchTranscription(currentProblem.id, 'default');
         displayTranscription(transcription);
     } catch (error) {
         console.error('Failed to decipher handwriting:', error);
         transcriptionText.innerHTML = '<div style="color: var(--danger-color);">Failed to transcribe handwriting. Please try again.</div>';
-        transcriptionActions.style.display = 'none';
-    }
-});
-
-// Retry with premium model button
-retryPremiumBtn.addEventListener('click', async () => {
-    if (!currentProblem) return;
-
-    // Show loading state
-    transcriptionText.innerHTML = '<div class="transcription-loading">Transcribing with better model (Opus)...</div>';
-    transcriptionActions.style.display = 'none';
-
-    try {
-        const transcription = await fetchTranscription(currentProblem.id, true);
-        displayTranscription(transcription);
-    } catch (error) {
-        console.error('Failed to decipher with premium model:', error);
-        transcriptionText.innerHTML = '<div style="color: var(--danger-color);">Failed to transcribe with premium model. Please try again.</div>';
+        transcriptionActions.style.display = 'block';  // Show buttons so user can try different model
     }
 });
 
