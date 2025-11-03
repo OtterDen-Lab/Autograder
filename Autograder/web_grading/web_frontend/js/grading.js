@@ -1269,13 +1269,16 @@ closeTranscription.addEventListener('click', () => {
 
 // Function to fetch transcription (with caching)
 async function fetchTranscription(problemId, model = 'default') {
-    const cacheKey = model;
+    // Normalize 'default' to 'ollama' for caching since they use the same backend model
+    const cacheKey = model === 'default' ? 'ollama' : model;
 
     // Check cache first
     if (transcriptionCache[problemId] && transcriptionCache[problemId][cacheKey]) {
         console.log(`Using cached ${cacheKey} transcription for problem ${problemId}`);
         return transcriptionCache[problemId][cacheKey];
     }
+
+    console.log(`Fetching new ${model} transcription for problem ${problemId}`);
 
     // Fetch from API
     const url = `${API_BASE}/problems/${problemId}/decipher?model=${model}`;
@@ -1295,6 +1298,8 @@ async function fetchTranscription(problemId, model = 'default') {
         text: data.transcription,
         model: data.model
     };
+
+    console.log(`Cached ${cacheKey} transcription for problem ${problemId}`);
 
     return transcriptionCache[problemId][cacheKey];
 }
