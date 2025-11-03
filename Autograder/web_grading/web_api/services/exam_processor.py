@@ -37,13 +37,14 @@ class ExamProcessor:
     Can be used by both the web API and the original CLI.
     """
 
-    def __init__(self, name_rect: Optional[dict] = None):
+    def __init__(self, name_rect: Optional[dict] = None, ai_provider: str = "anthropic"):
         """
         Initialize exam processor.
 
         Args:
             name_rect: Rectangle coordinates for name detection
                       {x, y, width, height} in pixels
+            ai_provider: AI provider to use ("anthropic", "openai", or "ollama")
         """
         self.name_rect = name_rect or {
             "x": 350,
@@ -58,6 +59,18 @@ class ExamProcessor:
             self.name_rect["y"] + self.name_rect["height"],
         ])
         self.qr_scanner = QRScanner()
+
+        # Select AI provider
+        self.ai_provider = ai_provider.lower()
+        if self.ai_provider == "anthropic":
+            self.ai_helper_class = ai_helper.AI_Helper__Anthropic
+        elif self.ai_provider == "openai":
+            self.ai_helper_class = ai_helper.AI_Helper__OpenAI
+        elif self.ai_provider == "ollama":
+            self.ai_helper_class = ai_helper.AI_Helper__Ollama
+        else:
+            log.warning(f"Unknown AI provider '{ai_provider}', defaulting to Anthropic")
+            self.ai_helper_class = ai_helper.AI_Helper__Anthropic
 
     def process_exams(
         self,
@@ -311,7 +324,7 @@ class ExamProcessor:
             if student_names:
                 query += "\n\nPossible names (use as guide):\n - " + "\n - ".join(sorted(student_names))
 
-            response, _ = ai_helper.AI_Helper__Anthropic().query_ai(query, attachments=[("png", base64_str)])
+            response, _ = self.ai_helper_class().query_ai(query, attachments=[("png", base64_str)])
             return response.strip(), base64_str
         except Exception as e:
             log.error(f"Name extraction failed: {e}")
@@ -959,7 +972,7 @@ Ignore printed text, lines, and page numbers - only look for handwriting/student
 Respond with ONLY a JSON object in this format:
 {"is_blank": true/false, "confidence": 0.0-1.0, "reasoning": "brief explanation"}"""
 
-            response, _ = ai_helper.AI_Helper__Anthropic().query_ai(
+            response, _ = self.ai_helper_class().query_ai(
                 query,
                 attachments=[("png", image_base64)]
             )
@@ -1018,7 +1031,7 @@ It should contain text like "___/8" or "____ / 10" where the number after the sl
 Extract ONLY the number after the slash. If you cannot find a clear score box pattern, respond with "NOT_FOUND".
 Your response should be either a single number (e.g., "8" or "10") or "NOT_FOUND"."""
 
-            response, _ = ai_helper.AI_Helper__Anthropic().query_ai(query, attachments=[("png", cropped_b64)])
+            response, _ = self.ai_helper_class().query_ai(query, attachments=[("png", cropped_b64)])
             text = response.strip()
 
             # Try to extract a number

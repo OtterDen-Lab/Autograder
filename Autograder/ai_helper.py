@@ -160,10 +160,12 @@ class AI_Helper__OpenAI(AI_Helper):
 class AI_Helper__Ollama(AI_Helper):
   def __init__(self):
     super().__init__()
-    self.__class__._client = ollama.Client(
-      host='http://worker:11434'
-    )
-  
+    # Initialize client if not already done
+    if self.__class__._client is None:
+      ollama_host = os.getenv('OLLAMA_HOST', 'http://workhorse:11434')
+      log.info(f"Initializing Ollama client with host: {ollama_host}")
+      self.__class__._client = ollama.Client(host=ollama_host)
+
   @classmethod
   def query_ai(
       cls,
@@ -171,37 +173,63 @@ class AI_Helper__Ollama(AI_Helper):
       attachments: List[Tuple[str, str]],
       max_response_tokens: int = DEFAULT_MAX_TOKENS,
       max_retries: int = DEFAULT_MAX_RETRIES
-  ) -> Tuple[Dict, Dict]:
-    
-    response = ollama.chat(
-      model='gemma3',
-      messages=[
-        {
-          'role': 'user',
-          'content': message,
-          'images' : attachments[0]
-        }
-      ]
-    )
-    
-    
-    
-    # Extract usage information
-    usage_info = {
-      "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-      "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-      "total_tokens": response.usage.total_tokens if response.usage else 0,
-      "provider": "ollama"
+  ) -> Tuple[str, Dict]:
+
+    # Ensure client is initialized
+    if cls._client is None:
+      ollama_host = os.getenv('OLLAMA_HOST', 'http://workhorse:11434')
+      log.info(f"Lazily initializing Ollama client with host: {ollama_host}")
+      cls._client = ollama.Client(host=ollama_host)
+
+    # Extract base64 images from attachments (format: [("png", base64_str), ...])
+    images = [att[1] for att in attachments if att[0] in ("png", "jpg", "jpeg")]
+
+    # Build message for Ollama
+    msg_content = {
+      'role': 'user',
+      'content': message
     }
-    
+
+    # Add images if present
+    if images:
+      msg_content['images'] = images
+
     try:
-      content = json.loads(response.choices[0].message.content)
+      # Use the client instance to make the request
+      # Model can be configured via environment variable or default to qwen3-vl:2b
+      model = os.getenv('OLLAMA_MODEL', 'qwen3-vl:2b')
+
+      log.info(f"Ollama: Using model {model} with host {cls._client._client.base_url}")
+      log.debug(f"Ollama: Message content has {len(images)} images")
+
+      response = cls._client.chat(
+        model=model,
+        messages=[msg_content]
+      )
+
+      log.debug(f"Ollama response: {response}")
+
+      # Extract usage information (Ollama provides these in response metadata)
+      usage_info = {
+        "prompt_tokens": response.get('prompt_eval_count', 0),
+        "completion_tokens": response.get('eval_count', 0),
+        "total_tokens": response.get('prompt_eval_count', 0) + response.get('eval_count', 0),
+        "provider": "ollama"
+      }
+
+      # Return the text content (similar to Anthropic interface)
+      content = response['message']['content']
+
+      log.info(f"Ollama: Received response with {len(content)} characters")
+
       return content, usage_info
-    except TypeError:
-      if max_retries > 0:
-        return cls.query_ai(message, attachments, max_response_tokens, max_retries - 1)
-      else:
-        return {}, usage_info
+
+    except Exception as e:
+      log.error(f"Ollama error: {str(e)}")
+      log.error(f"Ollama error type: {type(e)}")
+      import traceback
+      log.error(f"Traceback: {traceback.format_exc()}")
+      raise
 
 
   

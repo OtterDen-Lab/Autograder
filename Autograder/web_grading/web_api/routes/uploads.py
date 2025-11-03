@@ -24,6 +24,7 @@ class SplitPointsSubmission(BaseModel):
     split_points: Dict[str, List[int]]
     skip_first_region: bool = True  # Default to skipping first region (header/title)
     last_page_blank: bool = False  # Default to not skipping last page
+    ai_provider: str = "anthropic"  # AI provider for name extraction (anthropic, openai, ollama)
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -288,7 +289,8 @@ async def submit_alignment(
         stream_id,
         manual_split_points,  # Pass manual splits
         submission.skip_first_region,  # Pass skip_first_region flag
-        submission.last_page_blank  # Pass last_page_blank flag
+        submission.last_page_blank,  # Pass last_page_blank flag
+        submission.ai_provider  # Pass AI provider selection
     )
 
     # Update session status
@@ -318,7 +320,8 @@ async def process_exam_files(
     stream_id: str,
     manual_split_points: Dict[int, List[int]] = None,
     skip_first_region: bool = True,
-    last_page_blank: bool = False
+    last_page_blank: bool = False,
+    ai_provider: str = "anthropic"
 ):
     """
     Background task to process uploaded exam files.
@@ -331,6 +334,7 @@ async def process_exam_files(
         manual_split_points: Manual split points (optional)
         skip_first_region: Skip first region when splitting (default True, for header/title)
         last_page_blank: Skip last page when splitting (default False)
+        ai_provider: AI provider to use for name extraction (anthropic, openai, ollama)
     """
     import logging
     import json
@@ -508,7 +512,7 @@ async def process_exam_files(
         log.info(f"Loaded {len(problem_max_points)} existing max_points values from metadata")
 
         # Process exams in thread executor so event loop can send SSE events
-        processor = ExamProcessor()
+        processor = ExamProcessor(ai_provider=ai_provider)
         loop = asyncio.get_event_loop()
         matched, unmatched = await loop.run_in_executor(
             None,  # Use default thread pool

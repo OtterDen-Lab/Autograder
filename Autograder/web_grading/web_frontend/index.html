@@ -134,6 +134,21 @@
             <section id="session-section" class="section active">
                 <h2>Start Grading Session</h2>
 
+                <!-- AI Provider Selection -->
+                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                    <label style="display: flex; align-items: center; gap: 10px;">
+                        <strong style="min-width: 180px;">🤖 AI Provider for Name Extraction:</strong>
+                        <select id="global-ai-provider-select" style="flex: 1; max-width: 300px; padding: 8px; border-radius: 4px; border: 1px solid #d1d5db;">
+                            <option value="anthropic" selected>Anthropic (Claude) - Default</option>
+                            <option value="openai">OpenAI (GPT)</option>
+                            <option value="ollama">Ollama (Local)</option>
+                        </select>
+                    </label>
+                    <small style="display: block; margin-top: 8px; color: var(--gray-600);">
+                        ℹ️ This setting applies to all exam processing. Choose which AI model to use for extracting student names from exam headers and other AI-powered features.
+                    </small>
+                </div>
+
                 <!-- Existing Sessions -->
                 <div id="existing-sessions">
                     <h3>Recent Sessions</h3>

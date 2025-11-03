@@ -14,6 +14,9 @@ services:
       - GRADING_DB_PATH=/data/grading.db
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app/Autograder/web_grading:/app/QuizGeneration
+      # Ollama configuration (via Tailscale)
+      - OLLAMA_HOST=http://100.84.102.113:11434
+      - OLLAMA_MODEL=qwen3-vl:2b
     volumes:
       # Persistent storage for database
       - grading-data:/data
