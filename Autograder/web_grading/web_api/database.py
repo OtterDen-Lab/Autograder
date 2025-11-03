@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 19
+CURRENT_SCHEMA_VERSION = 20
 
 
 def get_db_path() -> Path:
@@ -305,6 +305,10 @@ def run_migrations(cursor, from_version: int):
         migrate_to_v19(cursor)
         cursor.execute("INSERT INTO _schema_version (version) VALUES (19)")
 
+    if from_version < 20:
+        migrate_to_v20(cursor)
+        cursor.execute("INSERT INTO _schema_version (version) VALUES (20)")
+
 
 def migrate_to_v2(cursor):
     """Add progress tracking columns to grading_sessions"""
@@ -566,6 +570,27 @@ def migrate_to_v19(cursor):
     if 'default_feedback_threshold' not in existing_columns:
         cursor.execute("ALTER TABLE problem_metadata ADD COLUMN default_feedback_threshold REAL DEFAULT 50.0")
         log.info("Added default_feedback_threshold column")
+
+
+def migrate_to_v20(cursor):
+    """Add transcription caching columns to problems table"""
+    log.info("Migrating to schema version 20: adding transcription cache columns to problems")
+
+    # Check if columns already exist
+    cursor.execute("PRAGMA table_info(problems)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+
+    if 'transcription' not in existing_columns:
+        cursor.execute("ALTER TABLE problems ADD COLUMN transcription TEXT")
+        log.info("Added transcription column")
+
+    if 'transcription_model' not in existing_columns:
+        cursor.execute("ALTER TABLE problems ADD COLUMN transcription_model TEXT")
+        log.info("Added transcription_model column")
+
+    if 'transcription_cached_at' not in existing_columns:
+        cursor.execute("ALTER TABLE problems ADD COLUMN transcription_cached_at TIMESTAMP")
+        log.info("Added transcription_cached_at column")
 
 
 def update_problem_stats(session_id: int):

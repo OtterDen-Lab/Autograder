@@ -21,9 +21,16 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler for startup/shutdown"""
     # Startup: Initialize database
     init_database()
+
+    # Start transcription queue worker
+    from .services.transcription_queue import get_transcription_queue
+    queue = get_transcription_queue()
+    queue.start()
+
     yield
-    # Shutdown: cleanup if needed
-    pass
+
+    # Shutdown: Stop transcription queue
+    queue.stop()
 
 
 # Initialize FastAPI app

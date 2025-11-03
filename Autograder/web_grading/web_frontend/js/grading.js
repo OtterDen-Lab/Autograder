@@ -110,9 +110,36 @@ async function loadProblemNumbers() {
             await loadProblemOrMostRecent();
         };
 
+        // Auto-queue background transcriptions for all problems
+        queueBackgroundTranscriptions();
+
         loadNextProblem();
     } catch (error) {
         console.error('Failed to load problem numbers:', error);
+    }
+}
+
+// Queue all problems for background transcription with Ollama
+async function queueBackgroundTranscriptions() {
+    try {
+        console.log(`Queueing background transcriptions for session ${currentSession.id}`);
+        const response = await fetch(
+            `${API_BASE}/sessions/${currentSession.id}/queue-transcriptions`,
+            { method: 'POST' }
+        );
+
+        if (response.ok) {
+            const data = await response.json();
+            console.log(`Queued ${data.queued_count} problems for background transcription`);
+
+            // Show a subtle notification
+            if (data.queued_count > 0) {
+                showNotification(`Queueing ${data.queued_count} problems for background transcription`, 'info');
+            }
+        }
+    } catch (error) {
+        console.error('Failed to queue background transcriptions:', error);
+        // Don't show error to user - this is a nice-to-have feature
     }
 }
 

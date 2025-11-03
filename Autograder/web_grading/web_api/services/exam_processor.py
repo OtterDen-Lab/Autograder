@@ -228,7 +228,7 @@ class ExamProcessor:
             if progress_callback:
                 progress_callback(
                     processed=index,
-                    matched=len(matched_submissions) + (1 if matched_student else 0),
+                    matched=len(matched_submissions),  # No auto-matching, so this stays same
                     message=f"Processing exam {index + 1}/{len(input_files)}: Splitting into problems..."
                 )
 
@@ -272,13 +272,13 @@ class ExamProcessor:
 
                     problem_doc.close()
 
-            # Create submission dict
+            # Create submission dict (no auto-matching - always goes to unmatched for manual confirmation)
             submission = {
                 "document_id": document_id,
                 "approximate_name": approximate_name,
                 "name_image_data": name_image,
-                "student_name": matched_student["name"] if matched_student else None,
-                "canvas_user_id": matched_student["user_id"] if matched_student else None,
+                "student_name": None,  # No auto-matching - requires manual confirmation
+                "canvas_user_id": None,  # No auto-matching - requires manual confirmation
                 "page_mappings": page_mappings_by_submission[document_id] if page_mappings_by_submission else [],
                 "problems": problems,
                 "pdf_data": pdf_data,  # Base64 PDF (None for manual page ranges)
@@ -286,10 +286,8 @@ class ExamProcessor:
                 "original_filename": file_metadata[pdf_path]["original_filename"] if file_metadata and pdf_path in file_metadata else pdf_path.name
             }
 
-            if matched_student:
-                matched_submissions.append(submission)
-            else:
-                unmatched_submissions.append(submission)
+            # Always add to unmatched (no auto-matching, requires manual confirmation)
+            unmatched_submissions.append(submission)
 
             # Report progress: completed exam
             if progress_callback:
