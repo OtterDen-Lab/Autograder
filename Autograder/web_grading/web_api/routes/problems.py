@@ -543,22 +543,8 @@ async def decipher_handwriting(problem_id: int, model: str = "default"):
         # Get image data (extract from PDF if needed)
         image_base64 = get_problem_image_data(row, cursor)
 
-    # Single comprehensive prompt for all models
-    query = textwrap.dedent(
-      """
-      Please transcribe all handwritten text from this exam answer with maximum accuracy.
-
-      Instructions:
-      - Transcribe ONLY handwritten text (ignore printed questions/instructions)
-      - Preserve the structure and organization of the answer exactly
-      - For unclear text, make your best interpretation and note uncertainty with [possibly: "alternative"]
-      - Describe any diagrams, drawings, or mathematical figures in detail within [brackets]
-      - Maintain all mathematical notation, equations, and symbols precisely
-      - Note any corrections, cross-outs, or marginal notes
-      
-      Respond with just the transcribed text, being as thorough and accurate as possible.
-      """
-    )
+    # Simple, direct prompt to avoid editorializing or commentary
+    query = "Transcribe all handwritten text from this image. Output only the transcribed text."
 
     try:
         # Select AI provider based on model parameter
@@ -603,6 +589,12 @@ async def decipher_handwriting(problem_id: int, model: str = "default"):
             response, _ = ai.query_ai(query, attachments=[("png", image_base64)])
             transcription = response
             model_name = f"Ollama ({os.getenv('OLLAMA_MODEL', 'qwen3-vl:2b')})"
+
+        # Validate transcription is not empty
+        if not transcription or not transcription.strip():
+            error_msg = f"Model returned empty transcription. Try a different model (Sonnet or Opus)."
+            log.warning(f"Empty transcription from {model_name} for problem {problem_id}")
+            raise HTTPException(status_code=500, detail=error_msg)
 
         # Cache Ollama results for future use (to avoid repeated slow requests)
         if model == "ollama":

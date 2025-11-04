@@ -1481,7 +1481,23 @@ decipherBtn.addEventListener('click', async () => {
     } catch (error) {
         console.error('Failed to decipher handwriting:', error);
         transcriptionText.innerHTML = '<div style="color: var(--danger-color);">Failed to transcribe handwriting. Please try again.</div>';
-        transcriptionActions.style.display = 'block';  // Show buttons so user can try different model
+
+        // Show model selection buttons
+        transcriptionActions.style.display = 'block';
+        transcriptionActions.innerHTML = `
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px;">
+                <button id="retry-sonnet-btn" class="btn btn-secondary" style="flex: 1; min-width: 120px;">
+                    Try Sonnet
+                </button>
+                <button id="retry-opus-btn" class="btn btn-primary" style="flex: 1; min-width: 120px;">
+                    Try Opus (Premium)
+                </button>
+            </div>
+        `;
+
+        // Add event listeners for the buttons
+        document.getElementById('retry-sonnet-btn').addEventListener('click', () => retryWithModel('sonnet'));
+        document.getElementById('retry-opus-btn').addEventListener('click', () => retryWithModel('opus'));
     }
 });
 
