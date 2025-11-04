@@ -312,7 +312,7 @@ class TranscriptionQueue:
             img = Image.open(io.BytesIO(img_bytes))
 
             # Resize to 50% (equivalent to reducing DPI from 150 to 75)
-            new_size = (img.width // 2, img.height // 2)
+            new_size = (img.width // 4, img.height // 4)
             img = img.resize(new_size, Image.Resampling.LANCZOS)
 
             # Convert RGBA to RGB if needed (JPEG doesn't support transparency)

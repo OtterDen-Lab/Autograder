@@ -220,7 +220,7 @@ class AI_Helper__Ollama(AI_Helper):
 
       for chunk in stream:
         chunk_count += 1
-        if chunk_count % 10 == 0:
+        if chunk_count % 1000 == 0:
           log.debug(f"Ollama: Received chunk {chunk_count}, content length: {len(content)}")
 
         content += chunk['message']['content']
