@@ -207,10 +207,18 @@ class AI_Helper__Ollama(AI_Helper):
     try:
       # Use streaming mode - timeout resets on each chunk received
       # This differentiates between "actively processing" vs "broken connection"
+      # Add options to reduce overthinking/hallucination
+      options = {
+        'temperature': 0.1,  # Lower temperature = more focused, less creative
+        'top_p': 0.9,  # Nucleus sampling
+        'num_predict': 500,  # Limit output length to prevent rambling
+      }
+
       stream = cls._client.chat(
         model=model,
         messages=[msg_content],
-        stream=True
+        stream=True,
+        options=options
       )
 
       # Collect the streamed response

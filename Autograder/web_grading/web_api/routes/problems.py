@@ -529,10 +529,8 @@ async def decipher_handwriting(problem_id: int, model: str = "default"):
     Args:
         problem_id: ID of the problem to transcribe
         model: AI model to use ("default", "ollama", "sonnet", "opus")
-               "default" uses the user's global AI provider setting (typically Ollama)
+               "default" uses Ollama (cheapest, may have quality issues)
     """
-    from ..services.transcription_queue import get_transcription_queue
-
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
@@ -541,26 +539,6 @@ async def decipher_handwriting(problem_id: int, model: str = "default"):
 
         if not row:
             raise HTTPException(status_code=404, detail="Problem not found")
-
-        # Check cache first for Ollama/default requests
-        if model in ("default", "ollama"):
-            cursor.execute("""
-                SELECT transcription, transcription_model FROM problems
-                WHERE id = ? AND transcription IS NOT NULL
-            """, (problem_id,))
-            cached = cursor.fetchone()
-            if cached:
-                log.info(f"Returning cached transcription for problem {problem_id}")
-                return {
-                    "problem_id": problem_id,
-                    "transcription": cached[0].strip(),
-                    "model": cached[1] or "Ollama (cached)"
-                }
-
-            # Not cached - bump priority in queue and process immediately
-            log.info(f"Cache miss for problem {problem_id}, queueing with high priority")
-            queue = get_transcription_queue()
-            queue.bump_priority(problem_id, new_priority=0)
 
         # Get image data (extract from PDF if needed)
         image_base64 = get_problem_image_data(row, cursor)
@@ -620,14 +598,14 @@ async def decipher_handwriting(problem_id: int, model: str = "default"):
             transcription = response
             model_name = f"Ollama ({os.getenv('OLLAMA_MODEL', 'qwen3-vl:2b')})"
         else:  # "default" or any other value
-            # Default to Ollama (user's typical choice for cost-effective processing)
+            # Default to Ollama (cheapest, may have quality issues)
             ai = ai_helper.AI_Helper__Ollama()
             response, _ = ai.query_ai(query, attachments=[("png", image_base64)])
             transcription = response
             model_name = f"Ollama ({os.getenv('OLLAMA_MODEL', 'qwen3-vl:2b')})"
 
-        # Cache Ollama results for future use
-        if model in ("default", "ollama"):
+        # Cache Ollama results for future use (to avoid repeated slow requests)
+        if model == "ollama":
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""

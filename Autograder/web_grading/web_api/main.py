@@ -22,15 +22,10 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database
     init_database()
 
-    # Start transcription queue worker
-    from .services.transcription_queue import get_transcription_queue
-    queue = get_transcription_queue()
-    queue.start()
-
     yield
 
-    # Shutdown: Stop transcription queue
-    queue.stop()
+    # Shutdown: cleanup if needed
+    pass
 
 
 # Initialize FastAPI app

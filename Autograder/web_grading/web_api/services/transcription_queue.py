@@ -282,20 +282,8 @@ class TranscriptionQueue:
                         f.write(compressed_image)
                     log.info(f"Problem {problem_id}: Saved compressed base64 to {debug_file}")
 
-                # Transcribe with Ollama
-                query = textwrap.dedent("""
-                    /no_think
-                    Please transcribe all handwritten text from this exam answer with maximum accuracy.
-
-                    Instructions:
-                    - Transcribe ONLY handwritten text (ignore printed questions/instructions)
-                    - Preserve the structure and organization of the answer exactly
-                    - For unclear text, make your best interpretation and note uncertainty with [possibly: "alternative"]
-                    - Maintain all mathematical notation, equations, and symbols precisely
-                    - Note any corrections, cross-outs, or marginal notes
-
-                    Respond with just the transcribed text, being as thorough and accurate as possible.
-                """)
+                # Transcribe with Ollama - simple prompt to reduce overthinking
+                query = "Transcribe the handwritten text from this image. Only output the handwritten text you read."
 
                 try:
                     transcription, usage_info = self.ai_helper.query_ai(
@@ -303,11 +291,15 @@ class TranscriptionQueue:
                         attachments=[("jpeg", compressed_image)]
                     )
 
-                    # Save to cache
-                    model_name = f"Ollama (background)"
-                    self._save_to_cache(problem_id, transcription, model_name)
-
-                    log.info(f"Successfully transcribed problem {problem_id}")
+                    # Check if transcription is empty or just whitespace
+                    if not transcription or not transcription.strip():
+                        log.warning(f"Problem {problem_id}: Model returned empty transcription")
+                        # Don't cache empty results - let it retry later
+                    else:
+                        # Save to cache
+                        model_name = f"Ollama (background)"
+                        self._save_to_cache(problem_id, transcription, model_name)
+                        log.info(f"Successfully transcribed problem {problem_id} ({len(transcription)} chars)")
 
                 except Exception as e:
                     log.error(f"Error transcribing problem {problem_id}: {e}")
@@ -357,7 +349,7 @@ class TranscriptionQueue:
 
             # Compress to JPEG with quality=50 (lower quality for smaller size)
             buffer = io.BytesIO()
-            img.save(buffer, format='JPEG', quality=60, optimize=True)
+            img.save(buffer, format='JPEG', quality=90, optimize=True)
             compressed_bytes = buffer.getvalue()
 
             # Encode back to base64
