@@ -96,10 +96,27 @@ class TranscriptionQueue:
             log.debug(f"Problem {problem_id} already being processed")
             return
 
-        # Add to queue with priority, then problem_id for ordering
-        # This ensures problems are processed in numerical order within the same priority
-        self.task_queue.put((priority, problem_id, time.time()))
-        log.debug(f"Added problem {problem_id} to transcription queue with priority {priority}")
+        # Get problem_number and submission_id for proper ordering
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT problem_number, submission_id FROM problems WHERE id = ?
+                """, (problem_id,))
+                row = cursor.fetchone()
+                if not row:
+                    log.error(f"Problem {problem_id} not found in database")
+                    return
+                problem_number = row[0]
+                submission_id = row[1]
+        except Exception as e:
+            log.error(f"Error fetching problem metadata for {problem_id}: {e}")
+            return
+
+        # Add to queue with priority, then problem_number, then submission_id for ordering
+        # This ensures problems are processed by question number (all Q1s, then Q2s, etc.)
+        self.task_queue.put((priority, problem_number, submission_id, problem_id))
+        log.debug(f"Added problem {problem_id} (Q{problem_number}, sub{submission_id}) to queue with priority {priority}")
 
     def bump_priority(self, problem_id: int, new_priority: int = 0):
         """
@@ -119,9 +136,26 @@ class TranscriptionQueue:
             log.debug(f"Problem {problem_id} already processing, cannot bump")
             return
 
+        # Get problem_number and submission_id for proper ordering
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT problem_number, submission_id FROM problems WHERE id = ?
+                """, (problem_id,))
+                row = cursor.fetchone()
+                if not row:
+                    log.error(f"Problem {problem_id} not found in database")
+                    return
+                problem_number = row[0]
+                submission_id = row[1]
+        except Exception as e:
+            log.error(f"Error fetching problem metadata for {problem_id}: {e}")
+            return
+
         # Add with high priority (will be processed before lower priority items)
-        self.task_queue.put((new_priority, problem_id, time.time()))
-        log.info(f"Bumped problem {problem_id} to priority {new_priority}")
+        self.task_queue.put((new_priority, problem_number, submission_id, problem_id))
+        log.info(f"Bumped problem {problem_id} (Q{problem_number}, sub{submission_id}) to priority {new_priority}")
 
     def get_status(self, problem_id: int) -> Dict:
         """
@@ -213,14 +247,14 @@ class TranscriptionQueue:
             try:
                 # Get next task (blocks with timeout)
                 try:
-                    priority, problem_id, timestamp = self.task_queue.get(timeout=1.0)
+                    priority, problem_number, submission_id, problem_id = self.task_queue.get(timeout=1.0)
                 except queue.Empty:
                     continue
 
                 # Mark as processing
                 self.processing[problem_id] = datetime.now()
 
-                log.info(f"Processing transcription for problem {problem_id} (priority {priority})")
+                log.info(f"Processing transcription for problem {problem_id} (Q{problem_number}, sub{submission_id}, priority {priority})")
 
                 # Get problem image from database
                 image_base64 = self._get_problem_image(problem_id)
@@ -250,21 +284,16 @@ class TranscriptionQueue:
 
                 # Transcribe with Ollama
                 query = textwrap.dedent("""
+                    /no_think
                     Please transcribe all handwritten text from this exam answer with maximum accuracy.
 
                     Instructions:
                     - Transcribe ONLY handwritten text (ignore printed questions/instructions)
                     - Preserve the structure and organization of the answer exactly
                     - For unclear text, make your best interpretation and note uncertainty with [possibly: "alternative"]
-                    - Describe any diagrams, drawings, or mathematical figures in detail within [brackets]
                     - Maintain all mathematical notation, equations, and symbols precisely
                     - Note any corrections, cross-outs, or marginal notes
 
-                    Respond with just the transcribed text, being as thorough and accurate as possible.
-                """)
-                query = textwrap.dedent("""
-                    Please transcribe all handwritten text from this exam answer.
-                    Transcribe ONLY handwritten text (ignore printed questions/instructions).
                     Respond with just the transcribed text, being as thorough and accurate as possible.
                 """)
 
@@ -312,7 +341,7 @@ class TranscriptionQueue:
             img = Image.open(io.BytesIO(img_bytes))
 
             # Resize to 50% (equivalent to reducing DPI from 150 to 75)
-            new_size = (img.width // 4, img.height // 4)
+            new_size = (img.width, img.height)
             img = img.resize(new_size, Image.Resampling.LANCZOS)
 
             # Convert RGBA to RGB if needed (JPEG doesn't support transparency)
@@ -328,7 +357,7 @@ class TranscriptionQueue:
 
             # Compress to JPEG with quality=50 (lower quality for smaller size)
             buffer = io.BytesIO()
-            img.save(buffer, format='JPEG', quality=50, optimize=True)
+            img.save(buffer, format='JPEG', quality=60, optimize=True)
             compressed_bytes = buffer.getvalue()
 
             # Encode back to base64
