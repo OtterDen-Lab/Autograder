@@ -74,7 +74,7 @@ services:
       # Ollama configuration (local container)
       - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL=qwen3-vl:2b
-      - OLLAMA_TIMEOUT=60
+      - OLLAMA_TIMEOUT=300
     volumes:
       # Persistent storage for database
       - grading-data:/data

@@ -96,8 +96,9 @@ class TranscriptionQueue:
             log.debug(f"Problem {problem_id} already being processed")
             return
 
-        # Add to queue with priority
-        self.task_queue.put((priority, time.time(), problem_id))
+        # Add to queue with priority, then problem_id for ordering
+        # This ensures problems are processed in numerical order within the same priority
+        self.task_queue.put((priority, problem_id, time.time()))
         log.debug(f"Added problem {problem_id} to transcription queue with priority {priority}")
 
     def bump_priority(self, problem_id: int, new_priority: int = 0):
@@ -119,7 +120,7 @@ class TranscriptionQueue:
             return
 
         # Add with high priority (will be processed before lower priority items)
-        self.task_queue.put((new_priority, time.time(), problem_id))
+        self.task_queue.put((new_priority, problem_id, time.time()))
         log.info(f"Bumped problem {problem_id} to priority {new_priority}")
 
     def get_status(self, problem_id: int) -> Dict:
@@ -212,7 +213,7 @@ class TranscriptionQueue:
             try:
                 # Get next task (blocks with timeout)
                 try:
-                    priority, timestamp, problem_id = self.task_queue.get(timeout=1.0)
+                    priority, problem_id, timestamp = self.task_queue.get(timeout=1.0)
                 except queue.Empty:
                     continue
 
@@ -261,6 +262,11 @@ class TranscriptionQueue:
 
                     Respond with just the transcribed text, being as thorough and accurate as possible.
                 """)
+                query = textwrap.dedent("""
+                    Please transcribe all handwritten text from this exam answer.
+                    Transcribe ONLY handwritten text (ignore printed questions/instructions).
+                    Respond with just the transcribed text, being as thorough and accurate as possible.
+                """)
 
                 try:
                     transcription, usage_info = self.ai_helper.query_ai(
@@ -306,7 +312,7 @@ class TranscriptionQueue:
             img = Image.open(io.BytesIO(img_bytes))
 
             # Resize to 50% (equivalent to reducing DPI from 150 to 75)
-            new_size = (img.width // 4, img.height // 4)
+            new_size = (img.width // 2, img.height // 2)
             img = img.resize(new_size, Image.Resampling.LANCZOS)
 
             # Convert RGBA to RGB if needed (JPEG doesn't support transparency)

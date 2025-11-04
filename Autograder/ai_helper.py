@@ -205,37 +205,48 @@ class AI_Helper__Ollama(AI_Helper):
     log.debug(f"Ollama: Message content has {len(images)} images")
 
     try:
-      response = cls._client.chat(
+      # Use streaming mode - timeout resets on each chunk received
+      # This differentiates between "actively processing" vs "broken connection"
+      stream = cls._client.chat(
         model=model,
-        messages=[msg_content]
+        messages=[msg_content],
+        stream=True
       )
+
+      # Collect the streamed response
+      content = ""
+      last_response = None
+      chunk_count = 0
+
+      for chunk in stream:
+        chunk_count += 1
+        if chunk_count % 10 == 0:
+          log.debug(f"Ollama: Received chunk {chunk_count}, content length: {len(content)}")
+
+        content += chunk['message']['content']
+        last_response = chunk  # Keep last chunk for metadata
+
+      log.info(f"Ollama: Received {chunk_count} chunks, total {len(content)} characters")
+
+      # Extract usage information from final chunk
+      prompt_tokens = last_response.get('prompt_eval_count') or 0 if last_response else 0
+      completion_tokens = last_response.get('eval_count') or 0 if last_response else 0
+      usage_info = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "provider": "ollama"
+      }
+
+      return content, usage_info
+
     except httpx.ReadTimeout:
       timeout = os.getenv('OLLAMA_TIMEOUT', '30')
-      log.info(f"Ollama request timed out after {timeout}s")
+      log.error(f"Ollama request timed out after {timeout}s (no data received)")
       raise
     except Exception as e:
       log.error(f"Ollama error ({type(e).__name__}): {str(e)}")
       raise
-
-    log.debug(f"Ollama response: {response}")
-
-    # Extract usage information (Ollama provides these in response metadata)
-    # Note: These can be None in streaming responses
-    prompt_tokens = response.get('prompt_eval_count') or 0
-    completion_tokens = response.get('eval_count') or 0
-    usage_info = {
-      "prompt_tokens": prompt_tokens,
-      "completion_tokens": completion_tokens,
-      "total_tokens": prompt_tokens + completion_tokens,
-      "provider": "ollama"
-    }
-
-    # Return the text content (similar to Anthropic interface)
-    content = response['message']['content']
-
-    log.info(f"Ollama: Received response with {len(content)} characters")
-
-    return content, usage_info
 
 
   
