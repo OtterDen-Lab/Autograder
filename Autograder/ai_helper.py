@@ -220,10 +220,13 @@ class AI_Helper__Ollama(AI_Helper):
     log.debug(f"Ollama response: {response}")
 
     # Extract usage information (Ollama provides these in response metadata)
+    # Note: These can be None in streaming responses
+    prompt_tokens = response.get('prompt_eval_count') or 0
+    completion_tokens = response.get('eval_count') or 0
     usage_info = {
-      "prompt_tokens": response.get('prompt_eval_count', 0),
-      "completion_tokens": response.get('eval_count', 0),
-      "total_tokens": response.get('prompt_eval_count', 0) + response.get('eval_count', 0),
+      "prompt_tokens": prompt_tokens,
+      "completion_tokens": completion_tokens,
+      "total_tokens": prompt_tokens + completion_tokens,
       "provider": "ollama"
     }
 

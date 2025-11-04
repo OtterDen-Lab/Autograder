@@ -10,9 +10,12 @@ import queue
 import threading
 import time
 import json
-from typing import Optional, Dict, Tuple
+import base64
+import io
+from typing import Optional, Dict
 from datetime import datetime
 import textwrap
+from PIL import Image
 
 from ..database import get_db_connection
 from Autograder.ai_helper import AI_Helper__Ollama
@@ -225,6 +228,25 @@ class TranscriptionQueue:
                     del self.processing[problem_id]
                     continue
 
+                # Log image details for debugging
+                image_size_kb = len(image_base64) / 1024
+                log.info(f"Problem {problem_id}: Image size = {image_size_kb:.1f} KB (base64)")
+                log.debug(f"Problem {problem_id}: Base64 data (first 100 chars): {image_base64[:100]}...")
+                log.debug(f"Problem {problem_id}: Full base64 length: {len(image_base64)}")
+
+                # Compress image for Ollama (JPEG, lower quality) to reduce timeout issues
+                compressed_image = self._compress_image_for_ollama(image_base64)
+                compressed_size_kb = len(compressed_image) / 1024
+                log.info(f"Problem {problem_id}: Compressed to {compressed_size_kb:.1f} KB (was {image_size_kb:.1f} KB)")
+
+                # Optionally save to file for curl testing (set DEBUG_SAVE_IMAGES=1 in env)
+                import os
+                if os.getenv("DEBUG_SAVE_IMAGES") == "1":
+                    debug_file = f"/tmp/problem_{problem_id}_image.base64"
+                    with open(debug_file, "w") as f:
+                        f.write(compressed_image)
+                    log.info(f"Problem {problem_id}: Saved compressed base64 to {debug_file}")
+
                 # Transcribe with Ollama
                 query = textwrap.dedent("""
                     Please transcribe all handwritten text from this exam answer with maximum accuracy.
@@ -243,7 +265,7 @@ class TranscriptionQueue:
                 try:
                     transcription, usage_info = self.ai_helper.query_ai(
                         query,
-                        attachments=[("png", image_base64)]
+                        attachments=[("jpeg", compressed_image)]
                     )
 
                     # Save to cache
@@ -266,6 +288,49 @@ class TranscriptionQueue:
                 time.sleep(1)  # Avoid tight loop on repeated errors
 
         log.info("TranscriptionQueue worker stopped")
+
+    def _compress_image_for_ollama(self, image_base64: str) -> str:
+        """
+        Compress and resize image to JPEG for faster Ollama processing.
+        Reduces to 50% size and JPEG quality=50.
+
+        Args:
+            image_base64: Base64-encoded PNG image
+
+        Returns:
+            Base64-encoded JPEG image (compressed and resized)
+        """
+        try:
+            # Decode base64 to image
+            img_bytes = base64.b64decode(image_base64)
+            img = Image.open(io.BytesIO(img_bytes))
+
+            # Resize to 50% (equivalent to reducing DPI from 150 to 75)
+            new_size = (img.width // 4, img.height // 4)
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+
+            # Convert RGBA to RGB if needed (JPEG doesn't support transparency)
+            if img.mode in ('RGBA', 'LA', 'P'):
+                # Create white background
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                if img.mode == 'P':
+                    img = img.convert('RGBA')
+                background.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                img = background
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+
+            # Compress to JPEG with quality=50 (lower quality for smaller size)
+            buffer = io.BytesIO()
+            img.save(buffer, format='JPEG', quality=50, optimize=True)
+            compressed_bytes = buffer.getvalue()
+
+            # Encode back to base64
+            return base64.b64encode(compressed_bytes).decode('utf-8')
+        except Exception as e:
+            log.error(f"Error compressing image: {e}")
+            # Return original if compression fails
+            return image_base64
 
     def _get_problem_image(self, problem_id: int) -> Optional[str]:
         """Get base64-encoded image data for a problem by extracting from PDF."""

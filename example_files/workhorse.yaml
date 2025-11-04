@@ -1,5 +1,5 @@
 prod: True
-push: True
+push: False
 
 # Define assignment types with default graders and settings
 assignment_types:

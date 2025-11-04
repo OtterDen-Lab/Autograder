@@ -553,6 +553,7 @@ class Grader__template_grader(Grader__docker):
     # In this case that means we need to get the repo from either locally or remotely and then run `uv sync` in the right directory
 
     with tempfile.TemporaryDirectory() as temp_build_dir:
+      log.info(f"temp_build_dir: {temp_build_dir}")
       
       # Get the main repo
       self._get_repo(self.source_repo, os.path.join(temp_build_dir, "repo"), depth=1)
@@ -577,6 +578,7 @@ class Grader__template_grader(Grader__docker):
       # Set up dockerfile
       dockerfile_lines = [
         f"FROM {self.base_image_name}",
+        "USER root",
       ]
 
       # Add any extra Dockerfile lines after FROM but before copying repo
@@ -597,7 +599,8 @@ class Grader__template_grader(Grader__docker):
         "RUN rm -rf .venv",
         "USER root",
         "RUN uv lock",
-        "RUN uv sync --locked"
+        "RUN uv sync --locked",
+        "USER dockeruser"
       ])
       
       # Next, we want to save our dockerfile
