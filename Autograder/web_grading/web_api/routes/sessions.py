@@ -14,6 +14,7 @@ from ..models import (
     SessionStatsResponse,
     ProblemStatsResponse,
     SessionStatusUpdate,
+    SessionStatusChange,
 )
 from ..database import get_db_connection
 from lms_interface.canvas_interface import CanvasInterface
@@ -97,7 +98,7 @@ async def get_session(session_id: int):
 
 
 @router.patch("/{session_id}/status")
-async def update_session_status(session_id: int, status_update: SessionStatusUpdate):
+async def update_session_status(session_id: int, status_update: SessionStatusChange):
     """Update session status (e.g., from name_matching_needed to ready)"""
     with get_db_connection() as conn:
         cursor = conn.cursor()

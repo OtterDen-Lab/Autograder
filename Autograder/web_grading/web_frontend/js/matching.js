@@ -207,9 +207,51 @@ async function confirmAllMatches() {
         });
     }
 
+    // Check if all submissions are already matched (even if no pending changes)
+    const unmatchedCount = allSubmissions.filter(s => !s.is_matched).length;
+
     if (pendingMatches.length === 0) {
-        alert('No new matches to confirm. Please select students from the dropdowns.');
-        return;
+        // No pending changes, but check if we should update status
+        if (unmatchedCount === 0) {
+            // All already matched - just update status to 'ready' and navigate
+            console.log('All submissions already matched. Updating status to ready...');
+
+            try {
+                const statusResponse = await fetch(`${API_BASE}/sessions/${currentSession.id}/status`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'ready' })
+                });
+
+                if (!statusResponse.ok) {
+                    let errorMessage = `HTTP ${statusResponse.status}`;
+                    try {
+                        const errorData = await statusResponse.json();
+                        errorMessage = errorData.detail || JSON.stringify(errorData);
+                    } catch (e) {
+                        errorMessage = statusResponse.statusText || errorMessage;
+                    }
+                    alert(`Failed to update status: ${errorMessage}`);
+                    return;
+                }
+
+                console.log('Status successfully updated to ready');
+
+                // Reload session and navigate
+                const response = await fetch(`${API_BASE}/sessions/${currentSession.id}`);
+                currentSession = await response.json();
+                console.log(`Session reloaded. Current status: ${currentSession.status}`);
+                updateSessionInfo();
+                navigateToSection('grading-section');
+            } catch (error) {
+                console.error('Failed to update status:', error);
+                alert('Failed to update status: ' + error.message);
+            }
+            return;
+        } else {
+            alert('No new matches to confirm. Please select students from the dropdowns.');
+            return;
+        }
     }
 
     // Show confirmation dialog with warnings if any
@@ -268,19 +310,35 @@ async function confirmAllMatches() {
 
         if (unmatchedCount === 0) {
             // All matched - update session status to 'ready'
-            await fetch(`${API_BASE}/sessions/${currentSession.id}/status`, {
+            console.log(`All ${allSubmissions.length} submissions matched. Updating status to 'ready'...`);
+            const statusResponse = await fetch(`${API_BASE}/sessions/${currentSession.id}/status`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'ready' })
             });
 
+            if (!statusResponse.ok) {
+                let errorMessage = `HTTP ${statusResponse.status}`;
+                try {
+                    const errorData = await statusResponse.json();
+                    errorMessage = errorData.detail || JSON.stringify(errorData);
+                } catch (e) {
+                    errorMessage = statusResponse.statusText || errorMessage;
+                }
+                throw new Error(`Failed to update status: ${errorMessage}`);
+            }
+
+            console.log('Status successfully updated to ready');
+
             // Reload session and navigate
             const response = await fetch(`${API_BASE}/sessions/${currentSession.id}`);
             currentSession = await response.json();
+            console.log(`Session reloaded. Current status: ${currentSession.status}`);
             updateSessionInfo();
             navigateToSection('grading-section');
         } else {
             // Some submissions still unmatched
+            console.log(`${unmatchedCount} submissions still need matching`);
             alert(`${unmatchedCount} submission(s) still need to be matched. Please select students for all submissions.`);
         }
 
