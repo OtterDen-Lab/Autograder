@@ -10,6 +10,9 @@ Implements a 3-phase grading approach:
 
 from typing import List, Dict
 import logging
+import os
+import requests
+from datetime import datetime
 
 from Autograder.grader import Grader
 from Autograder.registry import GraderRegistry
@@ -151,7 +154,7 @@ Please consolidate these questions by:
 1. Identifying questions that ask about the same underlying concept or topic
 2. Grouping similar questions together
 3. Creating a single, clearly phrased canonical question for each group
-4. Making the canonical questions professional and precise (e.g., "Could you give a quick refresher on SGD and how it works?")
+4. Making the canonical questions professional and precise
 
 Return a JSON response with:
 {{
@@ -159,7 +162,7 @@ Return a JSON response with:
     {{
       "canonical_question": "The clearly phrased version of the question",
       "original_questions": ["list", "of", "original", "questions", "that", "map", "to", "this"],
-      "topic": "Brief topic name (e.g., 'SGD', 'Neural Networks', 'Backpropagation')"
+      "topic": "Brief topic name describing the question subject"
     }}
   ]
 }}
@@ -208,6 +211,7 @@ class TextSubmissionGrader(Grader):
     self.support_needed_students = []
     self.consolidated_questions = []
     self.slack_channel = kwargs.get('slack_channel')
+    self.records_dir = None
 
   def can_grade_submission(self, submission: Submission) -> bool:
     """
@@ -264,8 +268,9 @@ class TextSubmissionGrader(Grader):
     self.assignment_name = assignment.lms_assignment.name
     self.course_name = kwargs.get('course_name', 'Unknown Course')
 
-    # Store AI provider preference
+    # Store AI provider preference and records directory
     self.prefer_anthropic = kwargs.get('prefer_anthropic', False)
+    self.records_dir = kwargs.get('records_dir')
 
     # Initialize token tracking
     self.total_tokens = 0
@@ -994,23 +999,56 @@ class TextSubmissionGrader(Grader):
     Args:
         report_data: Compiled report data
     """
-    # Send to Slack if configured
+    # Save questions to records directory if configured
+    if self.records_dir and self.consolidated_questions:
+      self._save_questions_to_records()
+
+    # Send to Slack if configured (includes question file attachment)
     self._send_slack_notification(report_data)
 
     # Also print to console
     self._print_report_to_console(report_data)
 
+  def _save_questions_to_records(self) -> None:
+    """
+    Save consolidated questions to records directory as markdown file.
+    Filename format: [course_name].[assignment_name].learning-log.md
+    """
+    if not self.records_dir or not self.consolidated_questions:
+      return
+
+    try:
+      # Ensure records directory exists
+      if not os.path.exists(self.records_dir):
+        os.makedirs(self.records_dir)
+        log.info(f"Created records directory: {self.records_dir}")
+
+      # Sanitize course and assignment names for filename
+      course_safe = self.course_name.replace(' ', '_').replace('/', '-')
+      assignment_safe = self.assignment_name.replace(' ', '_').replace('/', '-')
+      filename = f"{course_safe}.{assignment_safe}.learning-log.md"
+      filepath = os.path.join(self.records_dir, filename)
+
+      # Generate markdown content
+      markdown_content = self._generate_questions_markdown()
+
+      # Write to file
+      with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(markdown_content)
+
+      log.info(f"Saved questions to records: {filepath}")
+
+    except Exception as e:
+      log.error(f"Failed to save questions to records directory: {e}")
+
   def _send_slack_notification(self, report_data: Dict) -> None:
     """
     Send summary notification to Slack if configured.
+    Includes markdown file attachment if there are student questions.
 
     Args:
         report_data: Report data to send
     """
-    import os
-    import requests
-
-    # Check for Slack configuration
     slack_token = os.getenv('SLACK_BOT_TOKEN')
     slack_channel = self.slack_channel
 
@@ -1022,7 +1060,7 @@ class TextSubmissionGrader(Grader):
       # Create concise summary
       message = self._create_slack_summary(report_data)
 
-      # Send to Slack
+      # Send message to Slack
       response = requests.post(
         "https://slack.com/api/chat.postMessage",
         headers={"Authorization": f"Bearer {slack_token}"},
@@ -1036,13 +1074,114 @@ class TextSubmissionGrader(Grader):
         timeout=10
       )
 
-      if response.json().get('ok'):
-        log.info("Slack notification sent successfully")
-      else:
+      if not response.json().get('ok'):
         log.warning(f"Slack notification failed: {response.json().get('error')}")
+        return
+
+      log.info("Slack notification sent successfully")
+
+      # Upload questions markdown file if there are questions
+      if self.consolidated_questions:
+        self._upload_questions_to_slack(slack_token, slack_channel)
 
     except Exception as e:
       log.warning(f"Failed to send Slack notification: {e}")
+
+  def _upload_questions_to_slack(self, slack_token: str, slack_channel: str) -> None:
+    """
+    Upload student questions markdown file to Slack.
+
+    Args:
+        slack_token: Slack bot token
+        slack_channel: Slack channel ID or name
+    """
+    try:
+      # Generate markdown content
+      markdown_content = self._generate_questions_markdown()
+
+      # Generate filename
+      timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+      course_safe = self.course_name.replace(' ', '_').replace('/', '-')
+      assignment_safe = self.assignment_name.replace(' ', '_').replace('/', '-')
+      filename = f"questions_{course_safe}_{assignment_safe}_{timestamp}.md"
+
+      # Upload file to Slack
+      response = requests.post(
+        "https://slack.com/api/files.upload",
+        headers={"Authorization": f"Bearer {slack_token}"},
+        data={
+          "channels": slack_channel,
+          "filename": filename,
+          "filetype": "markdown",
+          "initial_comment": f"Student questions from {self.assignment_name} ({len(self.consolidated_questions)} topics)"
+        },
+        files={"file": (filename, markdown_content, "text/markdown")},
+        timeout=30
+      )
+
+      if response.json().get('ok'):
+        log.info(f"Questions file uploaded to Slack: {filename}")
+      else:
+        log.warning(f"Failed to upload questions file: {response.json().get('error')}")
+
+    except Exception as e:
+      log.warning(f"Failed to upload questions to Slack: {e}")
+
+  def _generate_questions_markdown(self) -> str:
+    """
+    Generate markdown content for student questions.
+
+    Returns:
+        Markdown-formatted string with all student questions
+    """
+    if not self.consolidated_questions:
+      return ""
+
+    lines = [
+      f"# Student Questions: {self.course_name} - {self.assignment_name}",
+      f"*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+      "",
+      f"Total unique question topics: {len(self.consolidated_questions)}",
+      "",
+      "---",
+      ""
+    ]
+
+    # Add each consolidated question group
+    for i, q_group in enumerate(self.consolidated_questions, 1):
+      canonical = q_group.get("canonical_question", "")
+      topic = q_group.get("topic", "General")
+      original_questions = q_group.get("original_questions", [])
+      student_count = len(original_questions)
+
+      lines.append(f"## {i}. {topic}")
+      lines.append("")
+      lines.append(f"**Question:** {canonical}")
+      lines.append("")
+      lines.append(f"*Asked by {student_count} student{'s' if student_count > 1 else ''}*")
+      lines.append("")
+
+      # Add space for instructor's answer
+      lines.append("**Answer:**")
+      lines.append("")
+      lines.append("<!-- Your answer here -->")
+      lines.append("")
+
+      # Show original questions in a collapsible section if there are multiple
+      if len(original_questions) > 1:
+        lines.append("<details>")
+        lines.append("<summary>Show original questions from students</summary>")
+        lines.append("")
+        for orig_q in original_questions:
+          lines.append(f"- {orig_q}")
+        lines.append("")
+        lines.append("</details>")
+        lines.append("")
+
+      lines.append("---")
+      lines.append("")
+
+    return '\n'.join(lines)
 
   def _create_slack_summary(self, report_data: Dict) -> str:
     """

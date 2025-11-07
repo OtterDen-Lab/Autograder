@@ -59,6 +59,11 @@ class SessionStatusUpdate(BaseModel):
     current_step: Optional[str] = None
 
 
+class SessionStatusChange(BaseModel):
+    """Simple status change for PATCH endpoint (no session_id needed)"""
+    status: SessionStatus
+
+
 class SubmissionResponse(BaseModel):
     """Response model for submission details"""
     id: int

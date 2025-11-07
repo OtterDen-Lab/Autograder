@@ -3,7 +3,7 @@ Session management endpoints.
 """
 from fastapi import APIRouter, HTTPException, Response, UploadFile, File
 from fastapi.responses import StreamingResponse
-from typing import List
+from typing import List, Optional
 import json
 import io
 from datetime import datetime
@@ -13,6 +13,8 @@ from ..models import (
     SessionResponse,
     SessionStatsResponse,
     ProblemStatsResponse,
+    SessionStatusUpdate,
+    SessionStatusChange,
 )
 from ..database import get_db_connection
 from lms_interface.canvas_interface import CanvasInterface
@@ -93,6 +95,27 @@ async def get_session(session_id: int):
             matched_exams=row_dict.get("matched_exams", 0),
             processing_message=row_dict.get("processing_message"),
         )
+
+
+@router.patch("/{session_id}/status")
+async def update_session_status(session_id: int, status_update: SessionStatusChange):
+    """Update session status (e.g., from name_matching_needed to ready)"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Verify session exists
+        cursor.execute("SELECT id FROM grading_sessions WHERE id = ?", (session_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Update status
+        cursor.execute("""
+            UPDATE grading_sessions
+            SET status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (status_update.status, session_id))
+
+        return {"status": "updated", "session_id": session_id, "new_status": status_update.status}
 
 
 @router.get("", response_model=List[SessionResponse])
@@ -310,8 +333,9 @@ async def get_canvas_info(session_id: int):
             raise HTTPException(status_code=404, detail="Session not found")
 
     # Get Canvas environment from session (default to False for older sessions)
+    # Note: SQLite stores booleans as INTEGER (0 or 1)
     try:
-        use_prod = bool(row["use_prod_canvas"] if row["use_prod_canvas"] is not None else 0)
+        use_prod = bool(row.get("use_prod_canvas", 0))
     except (KeyError, IndexError):
         use_prod = False
     canvas = CanvasInterface(prod=use_prod)

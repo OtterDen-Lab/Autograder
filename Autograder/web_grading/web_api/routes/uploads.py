@@ -24,6 +24,7 @@ class SplitPointsSubmission(BaseModel):
     split_points: Dict[str, List[int]]
     skip_first_region: bool = True  # Default to skipping first region (header/title)
     last_page_blank: bool = False  # Default to not skipping last page
+    ai_provider: str = "anthropic"  # AI provider for name extraction (anthropic, openai, ollama)
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -288,7 +289,8 @@ async def submit_alignment(
         stream_id,
         manual_split_points,  # Pass manual splits
         submission.skip_first_region,  # Pass skip_first_region flag
-        submission.last_page_blank  # Pass last_page_blank flag
+        submission.last_page_blank,  # Pass last_page_blank flag
+        submission.ai_provider  # Pass AI provider selection
     )
 
     # Update session status
@@ -318,7 +320,8 @@ async def process_exam_files(
     stream_id: str,
     manual_split_points: Dict[int, List[int]] = None,
     skip_first_region: bool = True,
-    last_page_blank: bool = False
+    last_page_blank: bool = False,
+    ai_provider: str = "anthropic"
 ):
     """
     Background task to process uploaded exam files.
@@ -331,6 +334,7 @@ async def process_exam_files(
         manual_split_points: Manual split points (optional)
         skip_first_region: Skip first region when splitting (default True, for header/title)
         last_page_blank: Skip last page when splitting (default False)
+        ai_provider: AI provider to use for name extraction (anthropic, openai, ollama)
     """
     import logging
     import json
@@ -355,8 +359,15 @@ async def process_exam_files(
             course_id = session["course_id"]
             assignment_id = session["assignment_id"]
 
+        # Get Canvas environment from session (default to False for older sessions)
+        # Note: SQLite stores booleans as INTEGER (0 or 1)
+        try:
+            use_prod = bool(session.get("use_prod_canvas", 0))
+        except (KeyError, IndexError):
+            use_prod = False
+
         # Get Canvas students
-        canvas_interface = CanvasInterface(prod=False)  # Use dev by default
+        canvas_interface = CanvasInterface(prod=use_prod)
         course = canvas_interface.get_course(course_id)
         assignment = course.get_assignment(assignment_id)
         students = assignment.get_students()
@@ -508,7 +519,7 @@ async def process_exam_files(
         log.info(f"Loaded {len(problem_max_points)} existing max_points values from metadata")
 
         # Process exams in thread executor so event loop can send SSE events
-        processor = ExamProcessor()
+        processor = ExamProcessor(ai_provider=ai_provider)
         loop = asyncio.get_event_loop()
         matched, unmatched = await loop.run_in_executor(
             None,  # Use default thread pool
@@ -517,7 +528,7 @@ async def process_exam_files(
                 canvas_students=canvas_students,
                 page_ranges=None,  # TODO: Get from session config
                 use_ai=True,
-                detect_blank=True,  # Enable blank detection
+                detect_blank=False,  # Disabled for faster testing (was: True)
                 blank_confidence_threshold=0.8,
                 use_ai_for_borderline=False,  # Only use heuristics to save cost
                 progress_callback=update_progress,
@@ -603,17 +614,17 @@ async def process_exam_files(
                         region_coords = json.dumps(coords_dict)
 
                     # Insert problem with region metadata and QR encrypted data if available
+                    # Note: image_data column removed in v21, using PDF-based storage only
                     cursor.execute("""
                         INSERT INTO problems
-                        (session_id, submission_id, problem_number, image_data, graded,
+                        (session_id, submission_id, problem_number, graded,
                          is_blank, blank_confidence, blank_method, blank_reasoning, max_points,
                          region_coords, qr_encrypted_data)
-                        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         session_id,
                         submission_id,
                         problem_number,
-                        problem.get("image_base64"),  # May be None for new PDF-based storage
                         1 if problem.get("is_blank", False) else 0,
                         problem.get("blank_confidence", 0.0),
                         problem.get("blank_method"),
@@ -623,19 +634,13 @@ async def process_exam_files(
                         problem.get("qr_encrypted_data")  # Encrypted QR data
                     ))
 
-            # Update session status
-            if unmatched:
-                cursor.execute("""
-                    UPDATE grading_sessions
-                    SET status = 'name_matching_needed', updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                """, (session_id,))
-            else:
-                cursor.execute("""
-                    UPDATE grading_sessions
-                    SET status = 'ready', updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                """, (session_id,))
+            # Update session status - always require name matching confirmation
+            # Even if all names were auto-matched, user should review and confirm
+            cursor.execute("""
+                UPDATE grading_sessions
+                SET status = 'name_matching_needed', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (session_id,))
 
         log.info(f"Completed processing for session {session_id}: {len(matched)} matched, {len(unmatched)} unmatched")
 

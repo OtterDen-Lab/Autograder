@@ -62,7 +62,28 @@ async function readDirectory(directoryEntry) {
 document.addEventListener('DOMContentLoaded', () => {
     loadSessions();
     setupEventListeners();
+    initializeAIProvider();
 });
+
+// Initialize AI provider dropdown from localStorage
+function initializeAIProvider() {
+    const aiProviderSelect = document.getElementById('global-ai-provider-select');
+
+    // Load saved preference from localStorage (default to 'anthropic')
+    const savedProvider = localStorage.getItem('ai_provider') || 'anthropic';
+    aiProviderSelect.value = savedProvider;
+
+    // Save to localStorage whenever user changes selection
+    aiProviderSelect.addEventListener('change', (e) => {
+        localStorage.setItem('ai_provider', e.target.value);
+        console.log(`AI provider changed to: ${e.target.value}`);
+    });
+}
+
+// Get current AI provider selection
+function getAIProvider() {
+    return localStorage.getItem('ai_provider') || 'anthropic';
+}
 
 // Get status badge HTML with color coding
 function getStatusBadge(status) {
@@ -1087,6 +1108,9 @@ async function submitAlignment() {
             splitPointsInt[pageNum] = points.map(y => Math.round(y));
         }
 
+        // Get AI provider from localStorage
+        const aiProvider = getAIProvider();
+
         // Submit split points to backend
         const response = await fetch(`${API_BASE}/uploads/${currentSession.id}/submit-alignment`, {
             method: 'POST',
@@ -1094,7 +1118,8 @@ async function submitAlignment() {
             body: JSON.stringify({
                 split_points: splitPointsInt,
                 skip_first_region: skipFirstRegion,
-                last_page_blank: lastPageBlank
+                last_page_blank: lastPageBlank,
+                ai_provider: aiProvider
             })
         });
 

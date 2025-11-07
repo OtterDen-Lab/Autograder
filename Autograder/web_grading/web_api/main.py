@@ -21,7 +21,9 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler for startup/shutdown"""
     # Startup: Initialize database
     init_database()
+
     yield
+
     # Shutdown: cleanup if needed
     pass
 

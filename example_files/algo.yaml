@@ -11,14 +11,38 @@ assignment_types:
 
 courses:
   - name: CST370
-    id: 29324
+    id: 29978
 
     assignment_groups:
       - name: Programming Assignments
         type: programming
         settings:
-          source_repo: "https://github.com/CSUMB-SCD-instructors/CST370"
-        assignments:
-          - id: 480061
-            repo_path: HW3
+          base_image_name: "samogden/cst334"
+          source_repo: "https://github.com/ImagineWagons8487/CST370_AutoGrader"
 
+        extra_dockerfile_lines:
+          - "ENV DEBIAN_FRONTEND=noninteractive"
+          - "RUN apt update -y"
+          - "RUN apt install -y clang"
+          - "RUN apt install -y openjdk-21-jdk"
+          - "RUN apt install -y make"
+
+        student_code_path: "src"
+
+        file_paths:
+          '.*_1.*\.java':
+            path: "" # subdir within assignment folder
+            name: "hw3_1.java" # target filename, will force to change into this
+          '.*_2.*\.java':
+            path: ""
+            name: "hw3_2.java"
+          '.*_1.*\.cpp':
+            path: ""
+            name: "hw3_1.cpp"
+          '.*_2.*\.cpp':
+            path: ""
+            name: "hw3_2.cpp"
+
+        assignments:
+          - id: 506889
+            repo_path: HW3

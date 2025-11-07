@@ -95,7 +95,7 @@ class QRScanner:
 
             # Log what we found
             if encrypted_metadata:
-                log.info(f"Successfully scanned QR code: Q{question_number}, {max_points} pts (has encrypted metadata)")
+                log.info(f"Successfully scanned QR code: Q{question_number}, {max_points} pts (has encrypted metadata) : \"{encrypted_metadata}\"")
             else:
                 log.info(f"Successfully scanned QR code: Q{question_number}, {max_points} pts (no metadata)")
 

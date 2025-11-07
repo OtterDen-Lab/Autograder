@@ -37,13 +37,14 @@ class ExamProcessor:
     Can be used by both the web API and the original CLI.
     """
 
-    def __init__(self, name_rect: Optional[dict] = None):
+    def __init__(self, name_rect: Optional[dict] = None, ai_provider: str = "anthropic"):
         """
         Initialize exam processor.
 
         Args:
             name_rect: Rectangle coordinates for name detection
                       {x, y, width, height} in pixels
+            ai_provider: AI provider to use ("anthropic", "openai", or "ollama")
         """
         self.name_rect = name_rect or {
             "x": 350,
@@ -58,6 +59,18 @@ class ExamProcessor:
             self.name_rect["y"] + self.name_rect["height"],
         ])
         self.qr_scanner = QRScanner()
+
+        # Select AI provider
+        self.ai_provider = ai_provider.lower()
+        if self.ai_provider == "anthropic":
+            self.ai_helper_class = ai_helper.AI_Helper__Anthropic
+        elif self.ai_provider == "openai":
+            self.ai_helper_class = ai_helper.AI_Helper__OpenAI
+        elif self.ai_provider == "ollama":
+            self.ai_helper_class = ai_helper.AI_Helper__Ollama
+        else:
+            log.warning(f"Unknown AI provider '{ai_provider}', defaulting to Anthropic")
+            self.ai_helper_class = ai_helper.AI_Helper__Anthropic
 
     def process_exams(
         self,
@@ -179,8 +192,9 @@ class ExamProcessor:
                     message=f"Processing exam {index + 1}/{len(input_files)}: Extracted name: {approximate_name}"
                 )
 
-            # Try to match to Canvas student
-            matched_student = None
+            # Find best match to Canvas student (but always require manual confirmation)
+            suggested_match = None
+            match_confidence = 0
             if approximate_name and unmatched_students:
                 best_score = 0
                 best_match = None
@@ -191,19 +205,22 @@ class ExamProcessor:
                         best_score = score
                         best_match = student
 
-                if best_score >= NAME_SIMILARITY_THRESHOLD:
-                    matched_student = best_match
-                    unmatched_students.remove(best_match)
-                    log.info(f"  Matched to: {matched_student['name']} ({best_score}%)")
+                # Store suggestion for user confirmation (never auto-match)
+                if best_match and best_score >= NAME_SIMILARITY_THRESHOLD:
+                    suggested_match = best_match
+                    match_confidence = best_score
+                    log.info(f"  Suggested match: {suggested_match['name']} ({match_confidence}%) - requires confirmation")
+                elif best_match:
+                    log.warning(f"  Weak match suggestion: {best_match['name']} at {best_score}%")
                 else:
-                    log.warning(f"  No good match found (best: {best_match['name']} at {best_score}%)")
+                    log.warning(f"  No match found for: {approximate_name}")
 
-            # Report progress: matched student
+            # Report progress: suggested match
             if progress_callback:
-                match_msg = f"Matched to: {matched_student['name']}" if matched_student else "No match found"
+                match_msg = f"Suggested: {suggested_match['name']} ({match_confidence}%)" if suggested_match else "No match found"
                 progress_callback(
                     processed=index,
-                    matched=len(matched_submissions) + (1 if matched_student else 0),
+                    matched=len(matched_submissions),  # No auto-matching, so this stays same
                     message=f"Processing exam {index + 1}/{len(input_files)}: {match_msg}"
                 )
 
@@ -211,7 +228,7 @@ class ExamProcessor:
             if progress_callback:
                 progress_callback(
                     processed=index,
-                    matched=len(matched_submissions) + (1 if matched_student else 0),
+                    matched=len(matched_submissions),  # No auto-matching, so this stays same
                     message=f"Processing exam {index + 1}/{len(input_files)}: Splitting into problems..."
                 )
 
@@ -255,13 +272,15 @@ class ExamProcessor:
 
                     problem_doc.close()
 
-            # Create submission dict
+            # Create submission dict (no auto-matching - always goes to unmatched for manual confirmation)
+            # But store the suggested match for pre-filling the dropdown
             submission = {
                 "document_id": document_id,
                 "approximate_name": approximate_name,
                 "name_image_data": name_image,
-                "student_name": matched_student["name"] if matched_student else None,
-                "canvas_user_id": matched_student["user_id"] if matched_student else None,
+                "student_name": None,  # No auto-matching - requires manual confirmation
+                "canvas_user_id": None,  # No auto-matching - requires manual confirmation
+                "suggested_canvas_user_id": suggested_match["user_id"] if suggested_match else None,  # Pre-fill suggestion
                 "page_mappings": page_mappings_by_submission[document_id] if page_mappings_by_submission else [],
                 "problems": problems,
                 "pdf_data": pdf_data,  # Base64 PDF (None for manual page ranges)
@@ -269,10 +288,8 @@ class ExamProcessor:
                 "original_filename": file_metadata[pdf_path]["original_filename"] if file_metadata and pdf_path in file_metadata else pdf_path.name
             }
 
-            if matched_student:
-                matched_submissions.append(submission)
-            else:
-                unmatched_submissions.append(submission)
+            # Always add to unmatched (no auto-matching, requires manual confirmation)
+            unmatched_submissions.append(submission)
 
             # Report progress: completed exam
             if progress_callback:
@@ -311,7 +328,7 @@ class ExamProcessor:
             if student_names:
                 query += "\n\nPossible names (use as guide):\n - " + "\n - ".join(sorted(student_names))
 
-            response, _ = ai_helper.AI_Helper__Anthropic().query_ai(query, attachments=[("png", base64_str)])
+            response, _ = self.ai_helper_class().query_ai(query, attachments=[("png", base64_str)])
             return response.strip(), base64_str
         except Exception as e:
             log.error(f"Name extraction failed: {e}")
@@ -792,18 +809,13 @@ class ExamProcessor:
 
             # Detect blank if requested
             if detect_blank:
-                heuristic_result = self.is_blank_heuristic(problem_image_base64)
-                problem_dict["is_blank"] = heuristic_result["is_blank"]
-                problem_dict["blank_confidence"] = heuristic_result["confidence"]
-                problem_dict["blank_method"] = "heuristic"
-
-                if use_ai_for_borderline and heuristic_result["confidence"] < blank_confidence_threshold:
-                    log.info(f"Problem {problem_number}: Low confidence ({heuristic_result['confidence']:.2f}), using AI verification")
-                    ai_result = self.is_blank_ai(problem_image_base64)
-                    problem_dict["is_blank"] = ai_result["is_blank"]
-                    problem_dict["blank_confidence"] = ai_result["confidence"]
-                    problem_dict["blank_method"] = "ai"
-                    problem_dict["blank_reasoning"] = ai_result.get("reasoning", "")
+                # Priority order: Ollama -> Heuristic -> Paid AI
+                blank_result = self.is_blank_with_fallback(problem_image_base64)
+                problem_dict["is_blank"] = blank_result["is_blank"]
+                problem_dict["blank_confidence"] = blank_result["confidence"]
+                problem_dict["blank_method"] = blank_result["method"]
+                if "reasoning" in blank_result:
+                    problem_dict["blank_reasoning"] = blank_result["reasoning"]
 
             # Extract max points from score box
             if problem_max_points and problem_number in problem_max_points:
@@ -938,6 +950,108 @@ class ExamProcessor:
             "pixel_variance": pixel_variance
         }
 
+    def is_blank_with_fallback(self, image_base64: str) -> Dict:
+        """
+        Detect blank pages with fallback priority: Ollama -> Heuristic -> Paid AI
+
+        For Ollama, downscales images to 50 DPI for faster processing.
+
+        Args:
+            image_base64: Base64 encoded image (at normal 150 DPI)
+
+        Returns:
+            Dict with {is_blank: bool, confidence: float, method: str, reasoning: str (optional)}
+        """
+        # First, try Ollama if available
+        if self.ai_provider == "ollama":
+            try:
+                log.info("Attempting blank detection with Ollama...")
+
+                # Downscale image for Ollama (50 DPI is plenty for blank detection)
+                downscaled_image = self._downscale_image(image_base64, target_dpi=50, original_dpi=150)
+
+                result = self.is_blank_ai(downscaled_image)
+                result["method"] = "ollama"
+                log.info(f"Ollama blank detection succeeded: {result}")
+                return result
+            except Exception as e:
+                # Ollama client timeout or other errors will be caught here
+                log.warning(f"Ollama blank detection failed: {e}, falling back to heuristic")
+
+        # Second, try heuristic method
+        try:
+            log.info("Using heuristic blank detection...")
+            result = self.is_blank_heuristic(image_base64)
+            result["method"] = "heuristic"
+            log.info(f"Heuristic blank detection: {result}")
+            return result
+        except Exception as e:
+            log.error(f"Heuristic blank detection failed: {e}")
+
+        # Third, fall back to paid AI (Anthropic/OpenAI)
+        try:
+            log.warning("Falling back to paid AI for blank detection...")
+            # Temporarily switch to Anthropic
+            original_provider = self.ai_provider
+            original_helper = self.ai_helper_class
+
+            self.ai_provider = "anthropic"
+            self.ai_helper_class = ai_helper.AI_Helper__Anthropic
+
+            result = self.is_blank_ai(image_base64)
+            result["method"] = "anthropic_fallback"
+
+            # Restore original provider
+            self.ai_provider = original_provider
+            self.ai_helper_class = original_helper
+
+            log.info(f"Paid AI blank detection: {result}")
+            return result
+        except Exception as e:
+            log.error(f"All blank detection methods failed: {e}")
+            # Return safe default (not blank to avoid skipping real content)
+            return {
+                "is_blank": False,
+                "confidence": 0.0,
+                "method": "failed",
+                "reasoning": f"All detection methods failed: {str(e)}"
+            }
+
+    def _downscale_image(self, image_base64: str, target_dpi: int = 50, original_dpi: int = 150) -> str:
+        """
+        Downscale an image to reduce size for faster AI processing.
+
+        Args:
+            image_base64: Original base64 encoded image
+            target_dpi: Target DPI (default 50)
+            original_dpi: Original DPI (default 150)
+
+        Returns:
+            Downscaled image as base64 string
+        """
+        import io
+        from PIL import Image
+
+        # Decode image
+        img_bytes = base64.b64decode(image_base64)
+        img = Image.open(io.BytesIO(img_bytes))
+
+        # Calculate scale factor
+        scale = target_dpi / original_dpi
+        new_size = (int(img.width * scale), int(img.height * scale))
+
+        # Resize image
+        img_resized = img.resize(new_size, Image.Resampling.LANCZOS)
+
+        # Encode back to base64
+        buffer = io.BytesIO()
+        img_resized.save(buffer, format='PNG')
+        downscaled_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+        log.debug(f"Downscaled image from {img.size} to {new_size} ({original_dpi} DPI -> {target_dpi} DPI)")
+
+        return downscaled_b64
+
     def is_blank_ai(self, image_base64: str) -> Dict:
         """
         Use AI to determine if a problem image is blank/unanswered.
@@ -959,7 +1073,7 @@ Ignore printed text, lines, and page numbers - only look for handwriting/student
 Respond with ONLY a JSON object in this format:
 {"is_blank": true/false, "confidence": 0.0-1.0, "reasoning": "brief explanation"}"""
 
-            response, _ = ai_helper.AI_Helper__Anthropic().query_ai(
+            response, _ = self.ai_helper_class().query_ai(
                 query,
                 attachments=[("png", image_base64)]
             )
@@ -1018,7 +1132,7 @@ It should contain text like "___/8" or "____ / 10" where the number after the sl
 Extract ONLY the number after the slash. If you cannot find a clear score box pattern, respond with "NOT_FOUND".
 Your response should be either a single number (e.g., "8" or "10") or "NOT_FOUND"."""
 
-            response, _ = ai_helper.AI_Helper__Anthropic().query_ai(query, attachments=[("png", cropped_b64)])
+            response, _ = self.ai_helper_class().query_ai(query, attachments=[("png", cropped_b64)])
             text = response.strip()
 
             # Try to extract a number
