@@ -211,6 +211,7 @@ class TextSubmissionGrader(Grader):
     self.support_needed_students = []
     self.consolidated_questions = []
     self.slack_channel = kwargs.get('slack_channel')
+    self.records_dir = None
 
   def can_grade_submission(self, submission: Submission) -> bool:
     """
@@ -267,8 +268,9 @@ class TextSubmissionGrader(Grader):
     self.assignment_name = assignment.lms_assignment.name
     self.course_name = kwargs.get('course_name', 'Unknown Course')
 
-    # Store AI provider preference
+    # Store AI provider preference and records directory
     self.prefer_anthropic = kwargs.get('prefer_anthropic', False)
+    self.records_dir = kwargs.get('records_dir')
 
     # Initialize token tracking
     self.total_tokens = 0
@@ -997,11 +999,47 @@ class TextSubmissionGrader(Grader):
     Args:
         report_data: Compiled report data
     """
+    # Save questions to records directory if configured
+    if self.records_dir and self.consolidated_questions:
+      self._save_questions_to_records()
+
     # Send to Slack if configured (includes question file attachment)
     self._send_slack_notification(report_data)
 
     # Also print to console
     self._print_report_to_console(report_data)
+
+  def _save_questions_to_records(self) -> None:
+    """
+    Save consolidated questions to records directory as markdown file.
+    Filename format: [course_name].[assignment_name].learning-log.md
+    """
+    if not self.records_dir or not self.consolidated_questions:
+      return
+
+    try:
+      # Ensure records directory exists
+      if not os.path.exists(self.records_dir):
+        os.makedirs(self.records_dir)
+        log.info(f"Created records directory: {self.records_dir}")
+
+      # Sanitize course and assignment names for filename
+      course_safe = self.course_name.replace(' ', '_').replace('/', '-')
+      assignment_safe = self.assignment_name.replace(' ', '_').replace('/', '-')
+      filename = f"{course_safe}.{assignment_safe}.learning-log.md"
+      filepath = os.path.join(self.records_dir, filename)
+
+      # Generate markdown content
+      markdown_content = self._generate_questions_markdown()
+
+      # Write to file
+      with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(markdown_content)
+
+      log.info(f"Saved questions to records: {filepath}")
+
+    except Exception as e:
+      log.error(f"Failed to save questions to records directory: {e}")
 
   def _send_slack_notification(self, report_data: Dict) -> None:
     """
