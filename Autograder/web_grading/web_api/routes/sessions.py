@@ -333,8 +333,9 @@ async def get_canvas_info(session_id: int):
             raise HTTPException(status_code=404, detail="Session not found")
 
     # Get Canvas environment from session (default to False for older sessions)
+    # Note: SQLite stores booleans as INTEGER (0 or 1)
     try:
-        use_prod = bool(row["use_prod_canvas"] if row["use_prod_canvas"] is not None else 0)
+        use_prod = bool(row.get("use_prod_canvas", 0))
     except (KeyError, IndexError):
         use_prod = False
     canvas = CanvasInterface(prod=use_prod)

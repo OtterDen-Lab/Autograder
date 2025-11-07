@@ -359,8 +359,15 @@ async def process_exam_files(
             course_id = session["course_id"]
             assignment_id = session["assignment_id"]
 
+        # Get Canvas environment from session (default to False for older sessions)
+        # Note: SQLite stores booleans as INTEGER (0 or 1)
+        try:
+            use_prod = bool(session.get("use_prod_canvas", 0))
+        except (KeyError, IndexError):
+            use_prod = False
+
         # Get Canvas students
-        canvas_interface = CanvasInterface(prod=False)  # Use dev by default
+        canvas_interface = CanvasInterface(prod=use_prod)
         course = canvas_interface.get_course(course_id)
         assignment = course.get_assignment(assignment_id)
         students = assignment.get_students()

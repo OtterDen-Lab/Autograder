@@ -50,13 +50,17 @@ async def get_all_students(session_id: int):
         cursor = conn.cursor()
 
         # Get session info
-        cursor.execute("SELECT course_id, assignment_id FROM grading_sessions WHERE id = ?", (session_id,))
+        cursor.execute("SELECT course_id, assignment_id, use_prod_canvas FROM grading_sessions WHERE id = ?", (session_id,))
         session = cursor.fetchone()
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
+        # Get Canvas environment from session (default to False for older sessions)
+        # Note: SQLite stores booleans as INTEGER (0 or 1)
+        use_prod = bool(session.get("use_prod_canvas", 0))
+
         # Get Canvas students
-        canvas_interface = CanvasInterface(prod=False)
+        canvas_interface = CanvasInterface(prod=use_prod)
         course = canvas_interface.get_course(session["course_id"])
         assignment = course.get_assignment(session["assignment_id"])
         all_students = assignment.get_students()
@@ -101,10 +105,14 @@ async def match_submission(session_id: int, match: NameMatchRequest):
             raise HTTPException(status_code=404, detail="Submission not found")
 
         # Get student name from Canvas
-        cursor.execute("SELECT course_id, assignment_id FROM grading_sessions WHERE id = ?", (session_id,))
+        cursor.execute("SELECT course_id, assignment_id, use_prod_canvas FROM grading_sessions WHERE id = ?", (session_id,))
         session = cursor.fetchone()
 
-        canvas_interface = CanvasInterface(prod=False)
+        # Get Canvas environment from session (default to False for older sessions)
+        # Note: SQLite stores booleans as INTEGER (0 or 1)
+        use_prod = bool(session.get("use_prod_canvas", 0))
+
+        canvas_interface = CanvasInterface(prod=use_prod)
         course = canvas_interface.get_course(session["course_id"])
         assignment = course.get_assignment(session["assignment_id"])
         students = assignment.get_students()
