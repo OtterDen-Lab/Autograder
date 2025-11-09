@@ -1103,6 +1103,91 @@ document.getElementById('export-session-btn').onclick = async () => {
     }
 };
 
+// Re-scan QR code button (for current problem instance only)
+document.getElementById('rescan-problem-qr-btn').onclick = async () => {
+    if (!currentProblem) {
+        alert('No problem loaded');
+        return;
+    }
+
+    // Ask user for confirmation and DPI selection
+    const dpiInput = prompt(
+        `Re-scan QR code for this submission's Problem ${currentProblem.problem_number} at higher DPI?\n\n` +
+        'Enter DPI value (default: 600, higher = better for complex QR codes):\n' +
+        'Recommended values:\n' +
+        '  - 600 (default): Good for 2x upsampling from 300 DPI scans\n' +
+        '  - 450: Lighter, faster processing\n' +
+        '  - 900: Very high quality, slower (3x upsampling)',
+        '600'
+    );
+
+    if (!dpiInput) {
+        // User cancelled
+        return;
+    }
+
+    const dpi = parseInt(dpiInput);
+    if (isNaN(dpi) || dpi < 72 || dpi > 1200) {
+        alert('Invalid DPI value. Please enter a number between 72 and 1200.');
+        return;
+    }
+
+    try {
+        // Disable button during processing
+        const rescanBtn = document.getElementById('rescan-problem-qr-btn');
+        const originalText = rescanBtn.textContent;
+        rescanBtn.disabled = true;
+        rescanBtn.textContent = '🔄 Scanning...';
+
+        // Make API call to rescan QR code for this specific problem instance
+        const response = await fetch(`${API_BASE}/problems/${currentProblem.id}/rescan-qr?dpi=${dpi}`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'QR re-scan failed');
+        }
+
+        const result = await response.json();
+
+        // Show results
+        if (result.qr_found) {
+            alert(`QR Code Found!\n\n` +
+                  `Problem ${result.problem_number}\n` +
+                  `Max Points: ${result.max_points}\n` +
+                  `DPI: ${result.dpi_used}`);
+
+            // Reload max points and update UI
+            await loadProblemMaxPoints();
+            updateMaxPointsDropdown();
+
+            // Update the current problem's has_qr_data flag
+            currentProblem.has_qr_data = true;
+
+            // Show the "Show Answer" button now that we have QR data
+            const showAnswerBtn = document.getElementById('show-answer-btn');
+            if (showAnswerBtn) {
+                showAnswerBtn.style.display = 'inline-block';
+            }
+        } else {
+            alert(`No QR Code Found\n\n` +
+                  `Problem ${result.problem_number}\n` +
+                  `DPI Used: ${result.dpi_used}\n\n` +
+                  `Try increasing the DPI or check if the QR code is present on the exam.`);
+        }
+
+    } catch (error) {
+        console.error('QR re-scan failed:', error);
+        alert(`Failed to re-scan QR code: ${error.message}`);
+    } finally {
+        // Re-enable button
+        const rescanBtn = document.getElementById('rescan-problem-qr-btn');
+        rescanBtn.disabled = false;
+        rescanBtn.textContent = originalText;
+    }
+};
+
 // Finalize and upload to Canvas
 document.getElementById('finalize-btn').onclick = async () => {
     if (!currentSession) return;

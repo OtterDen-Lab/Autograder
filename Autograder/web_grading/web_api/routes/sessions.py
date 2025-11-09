@@ -8,6 +8,13 @@ import json
 import io
 from datetime import datetime
 
+import logging
+import json
+import base64
+import fitz
+from ..services.qr_scanner import QRScanner
+from ..services.exam_processor import ExamProcessor
+
 from ..models import (
     SessionCreate,
     SessionResponse,
@@ -793,3 +800,136 @@ async def set_encryption_key(encryption_key: str):
         "status": "success",
         "message": "Encryption key set for current session. This will be lost when the server restarts."
     }
+
+
+@router.post("/{session_id}/rescan-qr")
+async def rescan_qr_codes(session_id: int, dpi: int = 600):
+    """
+    Re-scan QR codes for all problems in a session at a specified DPI.
+    This is useful when the initial scan fails to detect QR codes.
+
+    Args:
+        session_id: The session ID to re-scan
+        dpi: DPI to use for rendering (default 600, higher = better for complex QR codes)
+
+    Returns:
+        Statistics about QR codes found and updated
+    """
+    log = logging.getLogger(__name__)
+    log.info(f"Re-scanning QR codes for session {session_id} at {dpi} DPI")
+
+    # Initialize QR scanner
+    qr_scanner = QRScanner()
+    if not qr_scanner.available:
+        raise HTTPException(status_code=400, detail="QR scanner not available (opencv-python or pyzbar not installed)")
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Verify session exists
+        cursor.execute("SELECT id FROM grading_sessions WHERE id = ?", (session_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Get all submissions with their PDF data and problems
+        cursor.execute("""
+            SELECT id, exam_pdf_data
+            FROM submissions
+            WHERE session_id = ? AND exam_pdf_data IS NOT NULL
+        """, (session_id,))
+
+        submissions = cursor.fetchall()
+
+        if not submissions:
+            raise HTTPException(status_code=400, detail="No submissions with PDF data found in this session")
+
+        total_submissions = len(submissions)
+        total_problems_scanned = 0
+        total_qr_codes_found = 0
+        problems_updated = 0
+
+        for submission in submissions:
+            submission_id = submission["id"]
+            pdf_base64 = submission["exam_pdf_data"]
+
+            # Decode PDF
+            pdf_bytes = base64.b64decode(pdf_base64)
+            pdf_document = fitz.open("pdf", pdf_bytes)
+
+            # Get all problems for this submission
+            cursor.execute("""
+                SELECT id, problem_number, region_coords
+                FROM problems
+                WHERE session_id = ? AND submission_id = ?
+                ORDER BY problem_number
+            """, (session_id, submission_id))
+
+            problems = cursor.fetchall()
+
+            for problem in problems:
+                problem_id = problem["id"]
+                problem_number = problem["problem_number"]
+                region_coords_json = problem["region_coords"]
+
+                if not region_coords_json:
+                    log.warning(f"Problem {problem_id} (number {problem_number}) has no region coordinates, skipping")
+                    continue
+
+                # Parse region coordinates
+                region_coords = json.loads(region_coords_json)
+                start_page = region_coords["page_number"]
+                start_y = region_coords["region_y_start"]
+                end_page = region_coords.get("end_page_number", start_page)
+                end_y = region_coords["region_y_end"]
+
+                # Use ExamProcessor to extract the region at higher DPI
+                exam_processor = ExamProcessor()
+                problem_image_base64, _ = exam_processor._extract_cross_page_region(
+                    pdf_document,
+                    start_page, start_y,
+                    end_page, end_y,
+                    dpi=dpi
+                )
+
+                total_problems_scanned += 1
+
+                # Scan for QR code
+                qr_data = qr_scanner.scan_qr_from_image(problem_image_base64)
+
+                if qr_data:
+                    log.info(f"Problem {problem_number} (ID {problem_id}): Found QR code with max_points={qr_data['max_points']}")
+                    total_qr_codes_found += 1
+
+                    # Update problem with QR data
+                    cursor.execute("""
+                        UPDATE problems
+                        SET max_points = ?,
+                            qr_encrypted_data = ?
+                        WHERE id = ?
+                    """, (qr_data["max_points"], qr_data.get("encrypted_data"), problem_id))
+
+                    # Also update problem_metadata for this session
+                    cursor.execute("""
+                        INSERT INTO problem_metadata (session_id, problem_number, max_points)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(session_id, problem_number)
+                        DO UPDATE SET max_points = excluded.max_points, updated_at = CURRENT_TIMESTAMP
+                    """, (session_id, problem_number, qr_data["max_points"]))
+
+                    problems_updated += 1
+                else:
+                    log.debug(f"Problem {problem_number} (ID {problem_id}): No QR code found")
+
+            pdf_document.close()
+
+        log.info(f"QR re-scan complete: {total_qr_codes_found} codes found in {total_problems_scanned} problems across {total_submissions} submissions")
+
+        return {
+            "status": "success",
+            "total_submissions": total_submissions,
+            "total_problems_scanned": total_problems_scanned,
+            "qr_codes_found": total_qr_codes_found,
+            "problems_updated": problems_updated,
+            "dpi_used": dpi,
+            "message": f"Re-scanned {total_problems_scanned} problems at {dpi} DPI. Found {total_qr_codes_found} QR codes and updated {problems_updated} problems."
+        }

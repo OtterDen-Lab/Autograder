@@ -735,7 +735,7 @@ class ExamProcessor:
                     pdf_document_original,
                     start_page, start_y,
                     end_page, end_y,
-                    dpi=300  # Higher DPI for complex QR codes
+                    dpi=450  # Higher DPI for complex QR codes
                 )
 
                 # Scan for QR code in this problem region

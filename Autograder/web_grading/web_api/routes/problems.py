@@ -787,3 +787,119 @@ async def regenerate_answer(problem_id: int):
             status_code=500,
             detail=f"Unexpected error during answer regeneration: {str(e)}"
         )
+
+
+@router.post("/{problem_id}/rescan-qr")
+async def rescan_qr_for_single_problem(problem_id: int, dpi: int = 600):
+    """
+    Re-scan QR code for a specific problem instance at a specified DPI.
+    This is useful when the initial scan fails to detect the QR code.
+
+    Args:
+        problem_id: The specific problem ID to re-scan
+        dpi: DPI to use for rendering (default 600, higher = better for complex QR codes)
+
+    Returns:
+        Statistics about QR code found and updated
+    """
+    # Import required modules
+    from ..services.qr_scanner import QRScanner
+    from ..services.exam_processor import ExamProcessor
+
+    log.info(f"Re-scanning QR code for problem ID {problem_id} at {dpi} DPI")
+
+    # Initialize QR scanner
+    qr_scanner = QRScanner()
+    if not qr_scanner.available:
+        raise HTTPException(status_code=400, detail="QR scanner not available (opencv-python or pyzbar not installed)")
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get this specific problem with its submission
+        cursor.execute("""
+            SELECT p.id, p.problem_number, p.region_coords, p.session_id, s.exam_pdf_data
+            FROM problems p
+            JOIN submissions s ON p.submission_id = s.id
+            WHERE p.id = ? AND s.exam_pdf_data IS NOT NULL
+        """, (problem_id,))
+
+        problem = cursor.fetchone()
+
+        if not problem:
+            raise HTTPException(status_code=404, detail=f"Problem {problem_id} not found or has no PDF data")
+
+        problem_number = problem["problem_number"]
+        session_id = problem["session_id"]
+        region_coords_json = problem["region_coords"]
+        pdf_base64 = problem["exam_pdf_data"]
+
+        if not region_coords_json:
+            raise HTTPException(status_code=400, detail="Problem has no region coordinates")
+
+        # Decode PDF
+        pdf_bytes = base64.b64decode(pdf_base64)
+        pdf_document = fitz.open("pdf", pdf_bytes)
+
+        # Parse region coordinates
+        region_coords = json.loads(region_coords_json)
+        start_page = region_coords["page_number"]
+        start_y = region_coords["region_y_start"]
+        end_page = region_coords.get("end_page_number", start_page)
+        end_y = region_coords["region_y_end"]
+
+        # Use ExamProcessor to extract the region at higher DPI
+        exam_processor = ExamProcessor()
+        problem_image_base64, _ = exam_processor._extract_cross_page_region(
+            pdf_document,
+            start_page, start_y,
+            end_page, end_y,
+            dpi=dpi
+        )
+
+        # Scan for QR code
+        qr_data = qr_scanner.scan_qr_from_image(problem_image_base64)
+
+        pdf_document.close()
+
+        if qr_data:
+            log.info(f"Problem {problem_number} (ID {problem_id}): Found QR code with max_points={qr_data['max_points']}")
+
+            # Update problem with QR data
+            cursor.execute("""
+                UPDATE problems
+                SET max_points = ?,
+                    qr_encrypted_data = ?
+                WHERE id = ?
+            """, (qr_data["max_points"], qr_data.get("encrypted_data"), problem_id))
+
+            # Also update problem_metadata for this session
+            cursor.execute("""
+                INSERT INTO problem_metadata (session_id, problem_number, max_points)
+                VALUES (?, ?, ?)
+                ON CONFLICT(session_id, problem_number)
+                DO UPDATE SET max_points = excluded.max_points, updated_at = CURRENT_TIMESTAMP
+            """, (session_id, problem_number, qr_data["max_points"]))
+
+            log.info(f"QR re-scan complete for problem ID {problem_id}: QR code found and updated")
+
+            return {
+                "status": "success",
+                "problem_id": problem_id,
+                "problem_number": problem_number,
+                "qr_found": True,
+                "max_points": qr_data["max_points"],
+                "dpi_used": dpi,
+                "message": f"Successfully found and updated QR code for Problem {problem_number} (max points: {qr_data['max_points']}) at {dpi} DPI."
+            }
+        else:
+            log.warning(f"Problem {problem_number} (ID {problem_id}): No QR code found at {dpi} DPI")
+
+            return {
+                "status": "success",
+                "problem_id": problem_id,
+                "problem_number": problem_number,
+                "qr_found": False,
+                "dpi_used": dpi,
+                "message": f"No QR code found for Problem {problem_number} at {dpi} DPI. Try increasing DPI or check if QR code is present."
+            }
