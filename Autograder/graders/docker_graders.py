@@ -598,6 +598,7 @@ class Grader__template_grader(Grader__docker):
         "WORKDIR /repo",
         "RUN rm -rf .venv",
         "USER root",
+        "RUN rm -rf uv.lock .venv"
         "RUN uv lock",
         "RUN uv sync --locked",
         "USER dockeruser"
