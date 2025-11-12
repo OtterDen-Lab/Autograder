@@ -597,11 +597,11 @@ class Grader__template_grader(Grader__docker):
         "COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /bin/",
         "WORKDIR /repo",
         "RUN rm -rf .venv",
-        "USER root",
-        "RUN rm -rf uv.lock .venv"
+        "RUN rm -rf uv.lock .venv",
         "RUN uv lock",
-        "RUN uv sync --locked",
-        "USER dockeruser"
+        "RUN uv sync",
+        "RUN chown -R dockeruser /repo",
+        # "USER dockeruser",
       ])
       
       # Next, we want to save our dockerfile
