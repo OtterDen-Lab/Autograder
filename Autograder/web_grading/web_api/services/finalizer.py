@@ -94,11 +94,11 @@ class FinalizationService:
             # Handle older sessions without use_prod_canvas column
             # Note: SQLite stores booleans as INTEGER (0 or 1)
             try:
-                use_prod = row.get("use_prod_canvas", 0)
+                use_prod = row["use_prod_canvas"] if "use_prod_canvas" in row.keys() else 0
             except (KeyError, IndexError):
                 use_prod = 0
 
-            log.info(f"Session {self.session_id}: use_prod_canvas from DB = {row.get('use_prod_canvas', 'NOT FOUND')} (type: {type(row.get('use_prod_canvas')) if 'use_prod_canvas' in row.keys() else 'N/A'}), computed use_prod = {use_prod}")
+            log.info(f"Session {self.session_id}: use_prod_canvas from DB = {row['use_prod_canvas'] if 'use_prod_canvas' in row.keys() else 'NOT FOUND'} (type: {type(row['use_prod_canvas']) if 'use_prod_canvas' in row.keys() else 'N/A'}), computed use_prod = {use_prod}")
 
             return {
                 "course_id": row["course_id"],
