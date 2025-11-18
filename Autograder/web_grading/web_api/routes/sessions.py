@@ -342,7 +342,7 @@ async def get_canvas_info(session_id: int):
     # Get Canvas environment from session (default to False for older sessions)
     # Note: SQLite stores booleans as INTEGER (0 or 1)
     try:
-        use_prod = bool(row.get("use_prod_canvas", 0))
+        use_prod = bool(row["use_prod_canvas"]) if "use_prod_canvas" in row.keys() else False
     except (KeyError, IndexError):
         use_prod = False
     canvas = CanvasInterface(prod=use_prod)
@@ -500,12 +500,12 @@ async def get_default_feedback(session_id: int, problem_number: int):
         if row:
             return {
                 "default_feedback": row["default_feedback"],
-                "default_feedback_threshold": row["default_feedback_threshold"] or 50.0
+                "default_feedback_threshold": row["default_feedback_threshold"] or 100.0
             }
         else:
             return {
                 "default_feedback": None,
-                "default_feedback_threshold": 50.0
+                "default_feedback_threshold": 100.0
             }
 
 
@@ -514,7 +514,7 @@ async def update_default_feedback(
     session_id: int,
     problem_number: int,
     default_feedback: str = None,
-    threshold: float = 50.0
+    threshold: float = 100.0
 ):
     """Update default feedback for a specific problem number"""
     with get_db_connection() as conn:
@@ -594,13 +594,18 @@ async def export_session(session_id: int):
         cursor.execute("SELECT * FROM problem_stats WHERE session_id = ?", (session_id,))
         problem_stats = [dict(row) for row in cursor.fetchall()]
 
+        # Get problem metadata (max_points, default_feedback, etc.)
+        cursor.execute("SELECT * FROM problem_metadata WHERE session_id = ?", (session_id,))
+        problem_metadata = [dict(row) for row in cursor.fetchall()]
+
         # Build export structure
         export_data = {
             "export_version": 1,
             "exported_at": datetime.now().isoformat(),
             "session": session_data,
             "submissions": submissions,
-            "problem_stats": problem_stats
+            "problem_stats": problem_stats,
+            "problem_metadata": problem_metadata
         }
 
         # Create JSON response
@@ -638,6 +643,7 @@ async def import_session(file: UploadFile = File(...)):
         session_data = import_data["session"]
         submissions = import_data["submissions"]
         problem_stats = import_data.get("problem_stats", [])
+        problem_metadata = import_data.get("problem_metadata", [])
 
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -701,15 +707,14 @@ async def import_session(file: UploadFile = File(...)):
                 for problem in submission.get("problems", []):
                     cursor.execute("""
                         INSERT INTO problems
-                        (session_id, submission_id, problem_number, image_data, score, feedback,
+                        (session_id, submission_id, problem_number, score, feedback,
                          graded, graded_at, is_blank, blank_confidence, blank_method, blank_reasoning, max_points,
-                         region_coords, qr_encrypted_data, ai_reasoning)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         region_coords, qr_encrypted_data, ai_reasoning, transcription, transcription_model, transcription_cached_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         new_session_id,
                         new_submission_id,
                         problem["problem_number"],
-                        problem.get("image_data"),
                         problem.get("score"),
                         problem.get("feedback"),
                         problem.get("graded", 0),
@@ -721,7 +726,10 @@ async def import_session(file: UploadFile = File(...)):
                         problem.get("max_points"),
                         problem.get("region_coords"),
                         problem.get("qr_encrypted_data"),
-                        problem.get("ai_reasoning")
+                        problem.get("ai_reasoning"),
+                        problem.get("transcription"),
+                        problem.get("transcription_model"),
+                        problem.get("transcription_cached_at")
                     ))
 
             # Import problem stats
@@ -739,7 +747,21 @@ async def import_session(file: UploadFile = File(...)):
                     datetime.now()
                 ))
 
-            log.info(f"Imported {len(submissions)} submissions and {sum(len(s.get('problems', [])) for s in submissions)} problems")
+            # Import problem metadata (max_points, default_feedback, etc.)
+            for metadata in problem_metadata:
+                cursor.execute("""
+                    INSERT INTO problem_metadata
+                    (session_id, problem_number, max_points, default_feedback, default_feedback_threshold)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    new_session_id,
+                    metadata["problem_number"],
+                    metadata.get("max_points"),
+                    metadata.get("default_feedback"),
+                    metadata.get("default_feedback_threshold", 100.0)
+                ))
+
+            log.info(f"Imported {len(submissions)} submissions, {sum(len(s.get('problems', [])) for s in submissions)} problems, and {len(problem_metadata)} metadata entries")
 
         return {
             "status": "imported",

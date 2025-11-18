@@ -316,23 +316,31 @@ class ExamProcessor:
         if not use_ai:
             return "", ""
 
+        # First extract the name image (always do this)
+        name_image_base64 = ""
         try:
             document = fitz.open(str(pdf_path))
             page = document[0]
             pix = page.get_pixmap(clip=list(self.fitz_name_rect))
             image_bytes = pix.tobytes("png")
-            base64_str = base64.b64encode(image_bytes).decode("utf-8")
+            name_image_base64 = base64.b64encode(image_bytes).decode("utf-8")
             document.close()
+        except Exception as e:
+            log.error(f"Failed to extract name image: {e}")
+            return "", ""
 
+        # Then try AI name extraction (may fail if AI service unavailable)
+        try:
             query = "What name is written in this picture? Please respond with only the name."
             if student_names:
                 query += "\n\nPossible names (use as guide):\n - " + "\n - ".join(sorted(student_names))
 
-            response, _ = self.ai_helper_class().query_ai(query, attachments=[("png", base64_str)])
-            return response.strip(), base64_str
+            response, _ = self.ai_helper_class().query_ai(query, attachments=[("png", name_image_base64)])
+            return response.strip(), name_image_base64
         except Exception as e:
-            log.error(f"Name extraction failed: {e}")
-            return "", ""
+            log.warning(f"AI name extraction failed (falling back to image only): {e}")
+            # Return empty name but still include the image so user can manually match
+            return "", name_image_base64
 
     def redact_and_split(
         self,
@@ -731,11 +739,12 @@ class ExamProcessor:
                     end_y = pdf_document_original[end_page].rect.height
 
                 # Extract region from ORIGINAL unredacted PDF at higher DPI for QR detection
+                # Use high DPI (900) since we're rendering from vector PDF - no quality loss
                 problem_image_base64, _ = self._extract_cross_page_region(
                     pdf_document_original,
                     start_page, start_y,
                     end_page, end_y,
-                    dpi=450  # Higher DPI for complex QR codes
+                    dpi=900  # High DPI for QR code scanning - PDF is vector so no quality loss
                 )
 
                 # Scan for QR code in this problem region

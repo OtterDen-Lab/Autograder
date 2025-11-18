@@ -198,7 +198,7 @@ def create_schema(cursor):
             question_text TEXT,
             grading_rubric TEXT,
             default_feedback TEXT,
-            default_feedback_threshold REAL DEFAULT 50.0,
+            default_feedback_threshold REAL DEFAULT 100.0,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (session_id) REFERENCES grading_sessions(id),
             UNIQUE(session_id, problem_number)
@@ -574,7 +574,7 @@ def migrate_to_v19(cursor):
         log.info("Added default_feedback column")
 
     if 'default_feedback_threshold' not in existing_columns:
-        cursor.execute("ALTER TABLE problem_metadata ADD COLUMN default_feedback_threshold REAL DEFAULT 50.0")
+        cursor.execute("ALTER TABLE problem_metadata ADD COLUMN default_feedback_threshold REAL DEFAULT 100.0")
         log.info("Added default_feedback_threshold column")
 
 

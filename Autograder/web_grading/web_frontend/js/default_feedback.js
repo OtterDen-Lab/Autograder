@@ -3,7 +3,7 @@
 
 let currentDefaultFeedback = {
     text: null,
-    threshold: 50.0,
+    threshold: 100.0,
     applyOnZero: true,
     applyOnBlank: true,
     applyOnThreshold: false
@@ -24,7 +24,7 @@ async function loadDefaultFeedback(sessionId, problemNumber) {
         const data = await response.json();
 
         currentDefaultFeedback.text = data.default_feedback;
-        currentDefaultFeedback.threshold = data.default_feedback_threshold || 50.0;
+        currentDefaultFeedback.threshold = data.default_feedback_threshold || 100.0;
 
         // Load apply conditions from localStorage (per session/problem)
         const storageKey = `defaultFeedback_${sessionId}_${problemNumber}`;
@@ -77,7 +77,7 @@ function showEditDefaultFeedbackDialog() {
 
     // Populate current values
     document.getElementById('default-feedback-text').value = currentDefaultFeedback.text || '';
-    document.getElementById('threshold-percentage').value = currentDefaultFeedback.threshold || 50.0;
+    document.getElementById('threshold-percentage').value = currentDefaultFeedback.threshold || 100.0;
     document.getElementById('apply-on-zero').checked = currentDefaultFeedback.applyOnZero;
     document.getElementById('apply-on-blank').checked = currentDefaultFeedback.applyOnBlank;
     document.getElementById('apply-on-threshold').checked = currentDefaultFeedback.applyOnThreshold;
@@ -102,7 +102,7 @@ function clearDefaultFeedback() {
     document.getElementById('apply-on-zero').checked = true;
     document.getElementById('apply-on-blank').checked = true;
     document.getElementById('apply-on-threshold').checked = false;
-    document.getElementById('threshold-percentage').value = 50.0;
+    document.getElementById('threshold-percentage').value = 100.0;
 }
 
 async function saveDefaultFeedback() {
@@ -115,7 +115,7 @@ async function saveDefaultFeedback() {
     if (!textArea || !thresholdInput) return;
 
     const feedbackText = textArea.value.trim();
-    const threshold = parseFloat(thresholdInput.value) || 50.0;
+    const threshold = parseFloat(thresholdInput.value) || 100.0;
 
     // Validate
     if (feedbackText && feedbackText.length > 2000) {

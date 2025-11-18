@@ -410,6 +410,9 @@ function displayCurrentProblem() {
         loadFeedbackTags(currentSession.id, currentProblemNumber);
         loadDefaultFeedback(currentSession.id, currentProblemNumber);
     }
+
+    // Load explanation from QR code if available
+    loadExplanation();
 }
 
 // Load problem for current problem number (ungraded if available, otherwise most recent)
@@ -587,7 +590,22 @@ async function submitGrade() {
         applyDefaultFeedbackToTextarea();
     }
 
-    const feedback = document.getElementById('feedback-input').value;
+    let feedback = document.getElementById('feedback-input').value;
+
+    // Auto-include explanation if checkbox is enabled and explanation is available
+    const includeExplanation = document.getElementById('include-explanation-checkbox');
+    if (includeExplanation && includeExplanation.checked && currentProblem && explanationCache[currentProblem.id]) {
+        const explanation = explanationCache[currentProblem.id];
+        const explanationWithDisclaimer = 'Note: The explanation below is automatically generated and might not be correct.\n\n' + explanation;
+
+        if (feedback.trim()) {
+            // Append explanation with separator if there's existing feedback
+            feedback = feedback + '\n\n---\n\n' + explanationWithDisclaimer;
+        } else {
+            // Use explanation alone if no custom feedback
+            feedback = explanationWithDisclaimer;
+        }
+    }
 
     // Show loading state
     const submitBtn = document.getElementById('submit-grade-btn');
@@ -2208,5 +2226,65 @@ function updateSortIndicators(column) {
         if (indicator) {
             indicator.textContent = currentSortDirection === 'asc' ? ' ▲' : ' ▼';
         }
+    }
+}
+
+// =============================================================================
+// EXPLANATION LOADING AND AUTO-INCLUDE IN FEEDBACK
+// =============================================================================
+
+// Cache for explanations { problemId: markdownText }
+let explanationCache = {};
+
+// Load explanation from QR code if available
+async function loadExplanation() {
+    const container = document.getElementById('explanation-container');
+    const content = document.getElementById('explanation-content');
+
+    if (!currentProblem || !currentProblem.has_qr_data) {
+        // No QR data - hide explanation container
+        container.style.display = 'none';
+        return;
+    }
+
+    // Check cache first
+    if (explanationCache[currentProblem.id]) {
+        content.innerHTML = explanationCache[currentProblem.id];
+        container.style.display = 'block';
+        return;
+    }
+
+    // Show loading state
+    container.style.display = 'block';
+    content.innerHTML = '<span class="explanation-placeholder">Loading explanation...</span>';
+
+    try {
+        const response = await fetch(`${API_BASE}/problems/${currentProblem.id}/regenerate-answer`);
+
+        if (!response.ok) {
+            // Failed to load - hide container
+            container.style.display = 'none';
+            return;
+        }
+
+        const data = await response.json();
+
+        if (data.explanation_markdown) {
+            // Cache and display explanation
+            explanationCache[currentProblem.id] = data.explanation_markdown;
+            content.innerHTML = data.explanation_markdown;
+
+            // Render MathJax if available
+            if (typeof MathJax !== 'undefined') {
+                MathJax.typesetPromise([content]).catch((err) => console.error('MathJax typesetting failed:', err));
+            }
+        } else {
+            // No explanation available
+            container.style.display = 'none';
+        }
+
+    } catch (error) {
+        console.error('Failed to load explanation:', error);
+        container.style.display = 'none';
     }
 }

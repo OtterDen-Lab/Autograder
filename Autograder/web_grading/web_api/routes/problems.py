@@ -775,6 +775,10 @@ async def regenerate_answer(problem_id: int):
         if 'answer_key_html' in result:
             response['answer_key_html'] = result['answer_key_html']
 
+        # Include explanation markdown if available
+        if 'explanation_markdown' in result:
+            response['explanation_markdown'] = result['explanation_markdown']
+
         return response
 
     except ValueError as e:

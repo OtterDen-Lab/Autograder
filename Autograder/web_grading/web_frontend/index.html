@@ -330,6 +330,20 @@
                                 <span class="default-feedback-placeholder">No default feedback set. Click "Edit" to add feedback for low scores.</span>
                             </div>
                         </div>
+
+                        <!-- Explanation from QR Code -->
+                        <div id="explanation-container" class="explanation-container" style="display: none; background: #f0fdf4; border: 2px solid #10b981; border-radius: 8px; padding: 15px; margin-top: 15px;">
+                            <div class="explanation-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <strong style="color: #047857;">📝 Explanation:</strong>
+                                <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; font-size: 14px; cursor: pointer;">
+                                    <input type="checkbox" id="include-explanation-checkbox" checked style="cursor: pointer;">
+                                    <span>Include in student feedback</span>
+                                </label>
+                            </div>
+                            <div id="explanation-content" class="explanation-content" style="line-height: 1.6; color: #064e3b;">
+                                <span class="explanation-placeholder">Loading explanation...</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -477,7 +491,7 @@
                         <input type="checkbox" id="apply-on-threshold">
                         <span style="display: flex; align-items: center; gap: 5px;">
                             Score is below
-                            <input type="number" id="threshold-percentage" min="0" max="100" value="50" style="width: 60px; padding: 4px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                            <input type="number" id="threshold-percentage" min="0" max="100" value="100" style="width: 60px; padding: 4px; border: 1px solid var(--gray-300); border-radius: 4px;">
                             % of max points
                         </span>
                     </label>

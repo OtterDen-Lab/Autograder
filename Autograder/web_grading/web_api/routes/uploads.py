@@ -139,6 +139,13 @@ async def upload_exams(
         row = cursor.fetchone()
         existing_data = json.loads(row["metadata"]) if row and row["metadata"] else None
 
+        # Check if we have existing split points from a previous upload
+        has_existing_split_points = (
+            existing_data and
+            "split_points" in existing_data and
+            existing_data["split_points"]
+        )
+
         if existing_data and "file_paths" in existing_data:
             # Append to existing files
             log.info(f"Appending {len(saved_files)} files to existing {len(existing_data['file_paths'])} files")
@@ -164,11 +171,21 @@ async def upload_exams(
             # Use the first temp_dir or create new one
             temp_dir_to_use = existing_data.get("temp_dir", str(temp_dir))
 
+            # Preserve existing split points and settings if they exist
             session_data = {
                 "temp_dir": temp_dir_to_use,
                 "file_paths": [str(f) for f in existing_files],
                 "file_metadata": {str(k): v for k, v in existing_metadata.items()}
             }
+
+            # Preserve split points and other settings from previous upload
+            if has_existing_split_points:
+                session_data["split_points"] = existing_data["split_points"]
+                session_data["skip_first_region"] = existing_data.get("skip_first_region", True)
+                session_data["last_page_blank"] = existing_data.get("last_page_blank", False)
+                session_data["ai_provider"] = existing_data.get("ai_provider", "anthropic")
+                session_data["composite_dimensions"] = existing_data.get("composite_dimensions", {})
+                log.info(f"Reusing existing split points from previous upload")
 
             total_files = len(existing_files)
         else:
@@ -191,7 +208,47 @@ async def upload_exams(
             WHERE id = ?
         """, (total_files, json.dumps(session_data), session_id))
 
-    # Generate composite images using ALL files (existing + new)
+    # If we already have split points from a previous upload, auto-submit and skip alignment UI
+    if has_existing_split_points:
+        log.info(f"Auto-processing new files with existing split points")
+
+        # Create SSE stream for progress
+        stream_id = sse.make_stream_id("upload", session_id)
+        sse.create_stream(stream_id)
+
+        # Get file paths and metadata
+        file_paths = [Path(p) for p in session_data["file_paths"]]
+        file_metadata_dict = {Path(k): v for k, v in session_data["file_metadata"].items()}
+
+        # Start background processing with existing split points
+        from fastapi import BackgroundTasks
+        background_tasks = BackgroundTasks()
+        background_tasks.add_task(
+            process_exam_files,
+            session_id,
+            file_paths,
+            file_metadata_dict,
+            stream_id,
+            session_data["split_points"],
+            session_data.get("skip_first_region", True),
+            session_data.get("last_page_blank", False),
+            session_data.get("ai_provider", "anthropic")
+        )
+
+        # Execute background tasks (they run after response is sent)
+        import asyncio
+        asyncio.create_task(background_tasks())
+
+        return {
+            "session_id": session_id,
+            "files_uploaded": len(saved_files),
+            "status": "processing",
+            "message": f"Uploaded {len(saved_files)} exam(s). Auto-processing with existing split points.",
+            "num_exams": total_files,
+            "auto_processed": True
+        }
+
+    # Otherwise, generate composite images for alignment UI (first upload only)
     all_file_paths = [Path(p) for p in session_data["file_paths"]]
     alignment_service = ManualAlignmentService()
     composites, composite_dimensions = alignment_service.create_composite_images(all_file_paths)
@@ -222,7 +279,8 @@ async def upload_exams(
         "message": f"Uploaded {len(saved_files)} exam(s). Total: {total_files} exam(s). Please set split points.",
         "composites": composites,
         "page_dimensions": page_dimensions,
-        "num_exams": total_files
+        "num_exams": total_files,
+        "auto_processed": False
     }
 
 
@@ -275,6 +333,22 @@ async def submit_alignment(
             # Fallback: if no composite dimensions, pass through as-is
             log.warning(f"No composite dimensions for page {page_num}, using absolute coordinates")
             manual_split_points[page_num] = y_positions
+
+    # Save split points and settings to session metadata for reuse in future uploads
+    session_data["split_points"] = manual_split_points
+    session_data["skip_first_region"] = submission.skip_first_region
+    session_data["last_page_blank"] = submission.last_page_blank
+    session_data["ai_provider"] = submission.ai_provider
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE grading_sessions
+            SET metadata = ?
+            WHERE id = ?
+        """, (json.dumps(session_data), session_id))
+
+    log.info(f"Saved split points and settings to session metadata for future uploads")
 
     # Create SSE stream for progress updates
     stream_id = sse.make_stream_id("upload", session_id)
@@ -362,7 +436,7 @@ async def process_exam_files(
         # Get Canvas environment from session (default to False for older sessions)
         # Note: SQLite stores booleans as INTEGER (0 or 1)
         try:
-            use_prod = bool(session.get("use_prod_canvas", 0))
+            use_prod = bool(session["use_prod_canvas"]) if "use_prod_canvas" in session.keys() else False
         except (KeyError, IndexError):
             use_prod = False
 

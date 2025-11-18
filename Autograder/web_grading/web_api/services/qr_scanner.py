@@ -33,9 +33,51 @@ class QRScanner:
         if not PYZBAR_AVAILABLE:
             log.warning("QR scanner unavailable: pyzbar not installed")
 
+    def _preprocess_image_for_qr(self, image: Image.Image) -> List[Image.Image]:
+        """
+        Apply multiple preprocessing strategies to improve QR detection.
+
+        Args:
+            image: PIL Image to preprocess
+
+        Returns:
+            List of preprocessed images to try scanning
+        """
+        from PIL import ImageEnhance, ImageFilter
+
+        variants = []
+
+        # 1. Original image
+        variants.append(image.copy())
+
+        # 2. Sharpened image (helps with blurry QR codes)
+        sharpened = image.filter(ImageFilter.SHARPEN)
+        variants.append(sharpened)
+
+        # 3. High contrast (helps with faded QR codes)
+        enhancer = ImageEnhance.Contrast(image)
+        high_contrast = enhancer.enhance(2.0)
+        variants.append(high_contrast)
+
+        # 4. Grayscale with adaptive threshold simulation (convert to L mode)
+        grayscale = image.convert('L')
+        # Enhance contrast on grayscale
+        enhancer_gray = ImageEnhance.Contrast(grayscale)
+        high_contrast_gray = enhancer_gray.enhance(2.5)
+        variants.append(high_contrast_gray.convert('RGB'))
+
+        # 5. Sharpened + high contrast combo
+        sharpened_contrast = sharpened.copy()
+        enhancer_combo = ImageEnhance.Contrast(sharpened_contrast)
+        combo = enhancer_combo.enhance(1.5)
+        variants.append(combo)
+
+        return variants
+
     def scan_qr_from_image(self, image_base64: str) -> Optional[Dict]:
         """
         Scan QR code from a base64-encoded image.
+        Uses multiple preprocessing strategies to improve detection rate.
 
         Args:
             image_base64: Base64 encoded PNG/JPEG image
@@ -63,43 +105,51 @@ class QRScanner:
             if image.mode != 'RGB':
                 image = image.convert('RGB')
 
-            # Scan for QR codes
-            qr_codes = pyzbar.decode(image)
+            # Try multiple preprocessing strategies
+            image_variants = self._preprocess_image_for_qr(image)
 
-            if not qr_codes:
-                log.debug("No QR codes found in image")
-                return None
+            for idx, variant in enumerate(image_variants):
+                # Scan for QR codes
+                qr_codes = pyzbar.decode(variant)
 
-            # Process first QR code found
-            qr_data = qr_codes[0].data.decode('utf-8')
-            log.debug(f"Found QR code data: {qr_data[:100]}...")
+                if qr_codes:
+                    if idx > 0:
+                        log.info(f"QR code found using preprocessing strategy #{idx}")
 
-            # Parse JSON from QR code
-            qr_json = json.loads(qr_data)
+                    # Process first QR code found
+                    qr_data = qr_codes[0].data.decode('utf-8')
+                    log.debug(f"Found QR code data: {qr_data[:100]}...")
 
-            # Extract basic fields
-            question_number = qr_json.get('q')
-            max_points = qr_json.get('pts')
-            encrypted_metadata = qr_json.get('s')
+                    # Parse JSON from QR code
+                    qr_json = json.loads(qr_data)
 
-            # At minimum we need question number and points
-            if question_number is None or max_points is None:
-                log.warning(f"QR code missing required fields (q or pts): {qr_json}")
-                return None
+                    # Extract basic fields
+                    question_number = qr_json.get('q')
+                    max_points = qr_json.get('pts')
+                    encrypted_metadata = qr_json.get('s')
 
-            result = {
-                "question_number": question_number,
-                "max_points": float(max_points),
-                "encrypted_data": encrypted_metadata  # Store encrypted string directly
-            }
+                    # At minimum we need question number and points
+                    if question_number is None or max_points is None:
+                        log.warning(f"QR code missing required fields (q or pts): {qr_json}")
+                        continue  # Try next variant
 
-            # Log what we found
-            if encrypted_metadata:
-                log.info(f"Successfully scanned QR code: Q{question_number}, {max_points} pts (has encrypted metadata) : \"{encrypted_metadata}\"")
-            else:
-                log.info(f"Successfully scanned QR code: Q{question_number}, {max_points} pts (no metadata)")
+                    result = {
+                        "question_number": question_number,
+                        "max_points": float(max_points),
+                        "encrypted_data": encrypted_metadata  # Store encrypted string directly
+                    }
 
-            return result
+                    # Log what we found
+                    if encrypted_metadata:
+                        log.info(f"Successfully scanned QR code: Q{question_number}, {max_points} pts (has encrypted metadata) : \"{encrypted_metadata}\"")
+                    else:
+                        log.info(f"Successfully scanned QR code: Q{question_number}, {max_points} pts (no metadata)")
+
+                    return result
+
+            # No QR codes found in any variant
+            log.debug("No QR codes found in image after trying all preprocessing strategies")
+            return None
 
         except Exception as e:
             log.error(f"Error scanning QR code: {e}", exc_info=True)

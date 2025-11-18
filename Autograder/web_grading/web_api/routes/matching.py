@@ -57,7 +57,7 @@ async def get_all_students(session_id: int):
 
         # Get Canvas environment from session (default to False for older sessions)
         # Note: SQLite stores booleans as INTEGER (0 or 1)
-        use_prod = bool(session.get("use_prod_canvas", 0))
+        use_prod = bool(session["use_prod_canvas"]) if "use_prod_canvas" in session.keys() else False
 
         # Get Canvas students
         canvas_interface = CanvasInterface(prod=use_prod)
@@ -110,7 +110,7 @@ async def match_submission(session_id: int, match: NameMatchRequest):
 
         # Get Canvas environment from session (default to False for older sessions)
         # Note: SQLite stores booleans as INTEGER (0 or 1)
-        use_prod = bool(session.get("use_prod_canvas", 0))
+        use_prod = bool(session["use_prod_canvas"]) if "use_prod_canvas" in session.keys() else False
 
         canvas_interface = CanvasInterface(prod=use_prod)
         course = canvas_interface.get_course(session["course_id"])
