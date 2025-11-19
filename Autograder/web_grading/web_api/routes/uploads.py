@@ -146,6 +146,11 @@ async def upload_exams(
             existing_data["split_points"]
         )
 
+        if has_existing_split_points:
+            log.info(f"Found existing split points - will auto-process new uploads")
+        else:
+            log.info(f"No existing split points found - will show alignment UI")
+
         if existing_data and "file_paths" in existing_data:
             # Append to existing files
             log.info(f"Appending {len(saved_files)} files to existing {len(existing_data['file_paths'])} files")

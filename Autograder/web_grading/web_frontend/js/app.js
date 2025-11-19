@@ -392,6 +392,40 @@ function setupEventListeners() {
     };
 
     fileInput.onchange = uploadFiles;
+
+    // Upload more exams button from grading section
+    document.getElementById('upload-more-btn').onclick = () => {
+        if (!currentSession) return;
+
+        // Reset upload area
+        document.getElementById('upload-area').style.display = 'block';
+        document.getElementById('upload-progress-container').style.display = 'none';
+        document.getElementById('file-input').value = '';
+
+        // Show helpful message
+        const messageDiv = document.getElementById('initial-upload-message');
+        messageDiv.style.display = 'block';
+        messageDiv.innerHTML = '<strong>Adding more exams:</strong> Your existing split points and settings will be reused automatically.';
+
+        navigateToSection('upload-section');
+    };
+
+    // Upload more exams button from stats section
+    document.getElementById('upload-more-stats-btn').onclick = () => {
+        if (!currentSession) return;
+
+        // Reset upload area
+        document.getElementById('upload-area').style.display = 'block';
+        document.getElementById('upload-progress-container').style.display = 'none';
+        document.getElementById('file-input').value = '';
+
+        // Show helpful message
+        const messageDiv = document.getElementById('initial-upload-message');
+        messageDiv.style.display = 'block';
+        messageDiv.innerHTML = '<strong>Adding more exams:</strong> Your existing split points and settings will be reused automatically.';
+
+        navigateToSection('upload-section');
+    };
 }
 
 // Load courses from Canvas
@@ -541,11 +575,12 @@ async function uploadFiles() {
         console.log('Upload response:', result);
 
         // Check if we need to show alignment interface
-        if (result.status === 'awaiting_alignment' && result.composites) {
+        // Only show if awaiting alignment AND not auto-processed
+        if (result.status === 'awaiting_alignment' && result.composites && !result.auto_processed) {
             console.log('Showing alignment interface with', Object.keys(result.composites).length, 'pages');
             showAlignmentInterface(result.composites, result.page_dimensions, result.num_exams);
         } else {
-            console.log('Not showing alignment interface. Status:', result.status, 'Has composites:', !!result.composites);
+            console.log('Not showing alignment interface. Status:', result.status, 'Has composites:', !!result.composites, 'Auto-processed:', result.auto_processed);
             // Connect to SSE stream for processing updates
             listenForStatusUpdates();
             document.getElementById('upload-status').textContent = result.message;
