@@ -738,17 +738,24 @@ class ExamProcessor:
                     end_page = end_page - 1
                     end_y = pdf_document_original[end_page].rect.height
 
-                # Extract region from ORIGINAL unredacted PDF at higher DPI for QR detection
-                # Use high DPI (900) since we're rendering from vector PDF - no quality loss
-                problem_image_base64, _ = self._extract_cross_page_region(
-                    pdf_document_original,
-                    start_page, start_y,
-                    end_page, end_y,
-                    dpi=900  # High DPI for QR code scanning - PDF is vector so no quality loss
-                )
+                # Extract region from ORIGINAL unredacted PDF for QR detection
+                # Use progressive DPI: start low (fast), increase only if needed
+                # Since PDF is vector, higher DPI doesn't lose quality, just takes more time
+                qr_data = None
+                for dpi in [150, 300, 600, 900]:
+                    problem_image_base64, _ = self._extract_cross_page_region(
+                        pdf_document_original,
+                        start_page, start_y,
+                        end_page, end_y,
+                        dpi=dpi
+                    )
 
-                # Scan for QR code in this problem region
-                qr_data = self.qr_scanner.scan_qr_from_image(problem_image_base64)
+                    # Try scanning at this resolution
+                    qr_data = self.qr_scanner.scan_qr_from_image(problem_image_base64)
+                    if qr_data:
+                        if dpi > 150:
+                            log.info(f"QR code found at {dpi} DPI (after trying lower resolutions)")
+                        break  # Found it, no need to try higher DPI
                 if qr_data:
                     log.info(f"Pre-scan: Problem {problem_number_prescan}: "
                             f"Found QR code with max_points={qr_data['max_points']}")

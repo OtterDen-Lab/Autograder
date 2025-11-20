@@ -185,12 +185,14 @@ async def upload_exams(
 
             # Preserve split points and other settings from previous upload
             if has_existing_split_points:
-                session_data["split_points"] = existing_data["split_points"]
+                # Convert string keys back to integers (JSON serialization converts int keys to strings)
+                raw_split_points = existing_data["split_points"]
+                session_data["split_points"] = {int(k): v for k, v in raw_split_points.items()}
                 session_data["skip_first_region"] = existing_data.get("skip_first_region", True)
                 session_data["last_page_blank"] = existing_data.get("last_page_blank", False)
                 session_data["ai_provider"] = existing_data.get("ai_provider", "anthropic")
                 session_data["composite_dimensions"] = existing_data.get("composite_dimensions", {})
-                log.info(f"Reusing existing split points from previous upload")
+                log.info(f"Reusing existing split points from previous upload: {session_data['split_points']}")
 
             total_files = len(existing_files)
         else:
