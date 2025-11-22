@@ -609,7 +609,7 @@ async def process_exam_files(
                 canvas_students=canvas_students,
                 page_ranges=None,  # TODO: Get from session config
                 use_ai=True,
-                detect_blank=False,  # Disabled for faster testing (was: True)
+                detect_blank=True,  # Enabled with new band-based heuristic
                 blank_confidence_threshold=0.8,
                 use_ai_for_borderline=False,  # Only use heuristics to save cost
                 progress_callback=update_progress,

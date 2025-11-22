@@ -976,3 +976,134 @@ async def rescan_qr_codes(session_id: int, dpi: int = 600):
             "dpi_used": dpi,
             "message": f"Re-scanned {total_problems_scanned} problems at {dpi} DPI. Found {total_qr_codes_found} QR codes and updated {problems_updated} problems."
         }
+
+
+@router.post("/{session_id}/rerun-blank-detection")
+async def rerun_blank_detection(session_id: int):
+    """
+    Re-run blank detection for all problems in a session using the current algorithm.
+    This is useful for testing improvements to blank detection on existing sessions.
+
+    Uses Server-Sent Events to stream progress updates to the client.
+
+    Args:
+        session_id: The session ID to re-analyze
+
+    Returns:
+        SSE stream with progress updates and final results
+    """
+    log = logging.getLogger(__name__)
+    log.info(f"Re-running blank detection for session {session_id}")
+
+    from ..services.exam_processor import ExamProcessor
+    from fastapi.responses import StreamingResponse
+    import asyncio
+
+    async def event_generator():
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Verify session exists
+            cursor.execute("SELECT id FROM grading_sessions WHERE id = ?", (session_id,))
+            if not cursor.fetchone():
+                yield f"data: {json.dumps({'error': 'Session not found'})}\n\n"
+                return
+
+            # Get all problems with their region coordinates and submission PDFs
+            cursor.execute("""
+                SELECT
+                    p.id as problem_id,
+                    p.problem_number,
+                    p.region_coords,
+                    s.exam_pdf_data
+                FROM problems p
+                JOIN submissions s ON p.submission_id = s.id
+                WHERE s.session_id = ? AND s.exam_pdf_data IS NOT NULL AND p.region_coords IS NOT NULL
+                ORDER BY s.id, p.problem_number
+            """, (session_id,))
+
+            problems = cursor.fetchall()
+
+            if not problems:
+                yield f"data: {json.dumps({'error': 'No problems with PDF data found in this session'})}\n\n"
+                return
+
+            total_problems = len(problems)
+            blank_detected = 0
+            not_blank = 0
+            errors = 0
+
+            yield f"data: {json.dumps({'type': 'start', 'total': total_problems})}\n\n"
+            await asyncio.sleep(0)
+
+            exam_processor = ExamProcessor()
+
+            for idx, problem in enumerate(problems):
+                problem_id = problem["problem_id"]
+                problem_number = problem["problem_number"]
+                region_coords_json = problem["region_coords"]
+                pdf_base64 = problem["exam_pdf_data"]
+
+                try:
+                    # Parse region coordinates
+                    region_coords = json.loads(region_coords_json)
+                    start_page = region_coords["page_number"]
+                    start_y = region_coords["region_y_start"]
+                    end_page = region_coords.get("end_page_number", start_page)
+                    end_y = region_coords["region_y_end"]
+
+                    # Extract problem image at standard DPI (150)
+                    problem_image_base64, _ = exam_processor._extract_cross_page_region(
+                        fitz.open(stream=base64.b64decode(pdf_base64), filetype="pdf"),
+                        start_page, start_y,
+                        end_page, end_y,
+                        dpi=150
+                    )
+
+                    # Run blank detection using current heuristic
+                    blank_result = exam_processor.is_blank_heuristic(problem_image_base64)
+
+                    log.debug(f"Problem {problem_number} (ID {problem_id}): is_blank={blank_result['is_blank']}, "
+                             f"confidence={blank_result['confidence']:.2f}, method={blank_result.get('cluster_method', 'N/A')}")
+
+                    if blank_result["is_blank"]:
+                        blank_detected += 1
+                    else:
+                        not_blank += 1
+
+                    # Update problem with blank detection results
+                    cursor.execute("""
+                        UPDATE problems
+                        SET is_blank = ?,
+                            blank_confidence = ?,
+                            blank_method = ?,
+                            blank_reasoning = ?
+                        WHERE id = ?
+                    """, (
+                        blank_result["is_blank"],
+                        blank_result["confidence"],
+                        "heuristic-" + blank_result.get("cluster_method", "unknown"),
+                        f"Bands: {blank_result.get('band_count', 0)}, Question: {blank_result.get('question_bands', 0)}, "
+                        f"Answer: {blank_result.get('answer_bands', 0)}, Blank: {blank_result.get('blank_bands', 0)}, "
+                        f"Handwritten: {blank_result.get('handwritten_bands', 0)}",
+                        problem_id
+                    ))
+
+                    # Send progress update
+                    yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total_problems, 'is_blank': blank_result['is_blank'], 'problem_number': problem_number})}\n\n"
+                    await asyncio.sleep(0)
+
+                except Exception as e:
+                    log.error(f"Error processing problem {problem_number} (ID {problem_id}): {e}")
+                    errors += 1
+                    yield f"data: {json.dumps({'type': 'error', 'problem_number': problem_number, 'message': str(e)})}\n\n"
+                    await asyncio.sleep(0)
+
+            conn.commit()
+
+            log.info(f"Blank detection re-run complete: {blank_detected} blank, {not_blank} not blank, {errors} errors out of {total_problems} problems")
+
+            # Send completion event
+            yield f"data: {json.dumps({'type': 'complete', 'total_problems': total_problems, 'blank_detected': blank_detected, 'not_blank': not_blank, 'errors': errors})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
