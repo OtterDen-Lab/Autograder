@@ -598,6 +598,10 @@ async def export_session(session_id: int):
         cursor.execute("SELECT * FROM problem_metadata WHERE session_id = ?", (session_id,))
         problem_metadata = [dict(row) for row in cursor.fetchall()]
 
+        # Get feedback tags
+        cursor.execute("SELECT * FROM feedback_tags WHERE session_id = ?", (session_id,))
+        feedback_tags = [dict(row) for row in cursor.fetchall()]
+
         # Build export structure
         export_data = {
             "export_version": 1,
@@ -605,7 +609,8 @@ async def export_session(session_id: int):
             "session": session_data,
             "submissions": submissions,
             "problem_stats": problem_stats,
-            "problem_metadata": problem_metadata
+            "problem_metadata": problem_metadata,
+            "feedback_tags": feedback_tags
         }
 
         # Create JSON response
@@ -644,6 +649,7 @@ async def import_session(file: UploadFile = File(...)):
         submissions = import_data["submissions"]
         problem_stats = import_data.get("problem_stats", [])
         problem_metadata = import_data.get("problem_metadata", [])
+        feedback_tags = import_data.get("feedback_tags", [])
 
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -761,7 +767,22 @@ async def import_session(file: UploadFile = File(...)):
                     metadata.get("default_feedback_threshold", 100.0)
                 ))
 
-            log.info(f"Imported {len(submissions)} submissions, {sum(len(s.get('problems', [])) for s in submissions)} problems, and {len(problem_metadata)} metadata entries")
+            # Import feedback tags
+            for tag in feedback_tags:
+                cursor.execute("""
+                    INSERT INTO feedback_tags
+                    (session_id, problem_number, short_name, comment_text, use_count, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    new_session_id,
+                    tag["problem_number"],
+                    tag["short_name"],
+                    tag["comment_text"],
+                    tag.get("use_count", 0),
+                    tag.get("created_at", datetime.now())
+                ))
+
+            log.info(f"Imported {len(submissions)} submissions, {sum(len(s.get('problems', [])) for s in submissions)} problems, {len(problem_metadata)} metadata entries, and {len(feedback_tags)} feedback tags")
 
         return {
             "status": "imported",
