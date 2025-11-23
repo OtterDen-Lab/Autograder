@@ -989,6 +989,41 @@ async def rescan_qr_codes(session_id: int, dpi: int = 600):
         }
 
 
+@router.post("/{session_id}/fix-blank-counts")
+async def fix_blank_counts(session_id: int):
+    """
+    Fix is_blank flags for graded problems to match actual grades.
+    Sets is_blank=1 only for graded problems where score=0.
+    This repairs any corruption from rerun-blank-detection on already-graded problems.
+    """
+    log = logging.getLogger(__name__)
+    log.info(f"Fixing blank counts for session {session_id}")
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Reset is_blank to match actual grades for ALL graded problems
+        # If graded and score=0: is_blank=1
+        # If graded and score>0: is_blank=0
+        # If ungraded: leave is_blank unchanged (from auto-detection)
+        cursor.execute("""
+            UPDATE problems
+            SET is_blank = CASE
+                WHEN graded = 1 AND score = 0 THEN 1
+                WHEN graded = 1 AND score > 0 THEN 0
+                ELSE is_blank
+            END
+            WHERE session_id = (SELECT id FROM grading_sessions WHERE id = ?)
+        """, (session_id,))
+
+        rows_updated = cursor.rowcount
+        conn.commit()
+
+        log.info(f"Fixed blank flags for {rows_updated} problems in session {session_id}")
+
+        return {"status": "success", "rows_updated": rows_updated}
+
+
 @router.get("/{session_id}/rerun-blank-detection")
 async def rerun_blank_detection(session_id: int):
     """
@@ -1057,16 +1092,19 @@ async def rerun_blank_detection(session_id: int):
             # Process each problem number as a population
             for problem_num in problem_numbers:
                 try:
-                    # Get all submissions for this problem number
+                    # Get all UNGRADED submissions for this problem number
+                    # Don't overwrite blank detection on already-graded problems
                     cursor.execute("""
                         SELECT
                             p.id as problem_id,
                             p.region_coords,
-                            s.exam_pdf_data
+                            s.exam_pdf_data,
+                            p.graded
                         FROM problems p
                         JOIN submissions s ON p.submission_id = s.id
                         WHERE s.session_id = ? AND p.problem_number = ?
                           AND s.exam_pdf_data IS NOT NULL AND p.region_coords IS NOT NULL
+                          AND p.graded = 0
                         ORDER BY s.id
                     """, (session_id, problem_num))
 
