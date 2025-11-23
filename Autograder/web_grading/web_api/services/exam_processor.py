@@ -881,6 +881,131 @@ class ExamProcessor:
 
         return pdf_base64, problems
 
+    def is_blank_heuristic_population(
+        self,
+        images_base64: list,
+        percentile_threshold: float = 5.0
+    ) -> list:
+        """
+        Population-based blank detection using black pixel ratio clustering.
+
+        Analyzes all submissions for a problem together to find the natural blank baseline.
+
+        Args:
+            images_base64: List of base64 encoded images for all submissions of a problem
+            percentile_threshold: Percentile cutoff for blank detection (default: 5.0 = bottom 5%)
+
+        Returns:
+            List of dicts with {is_blank: bool, confidence: float, black_pixel_ratio: float}
+        """
+        import io
+        from PIL import Image, ImageFilter
+
+        # Step 1: Calculate black pixel ratio for each submission
+        black_pixel_ratios = []
+
+        for img_b64 in images_base64:
+            try:
+                # Decode image
+                img_bytes = base64.b64decode(img_b64)
+                img = Image.open(io.BytesIO(img_bytes))
+
+                # Convert to grayscale first
+                if img.mode != 'L':
+                    img = img.convert('L')
+
+                # Convert to pure black/white and apply median filter to remove dithering
+                img_bw = img.convert("1").filter(ImageFilter.MedianFilter(3))
+
+                # Convert to numpy array (1-bit image: 0 = black, 255 = white)
+                img_array = np.array(img_bw)
+
+                # Count black pixels (value = 0 in binary image)
+                black_pixels = np.sum(img_array == 0)
+                total_pixels = img_array.size
+                black_ratio = black_pixels / total_pixels if total_pixels > 0 else 0
+
+                black_pixel_ratios.append(black_ratio)
+
+            except Exception as e:
+                log.warning(f"Error processing image for blank detection: {e}")
+                black_pixel_ratios.append(0.0)  # Default to 0 on error
+
+        # Step 2: Find threshold by identifying the left-edge cluster
+        # Create histogram to find where the blank cluster ends
+        num_bins = 20
+        hist_counts, bin_edges = np.histogram(black_pixel_ratios, bins=num_bins)
+
+        log.info(f"black_pixel_ratios histogram: counts={hist_counts}, edges={bin_edges}")
+
+        # Find the first significant drop after we've seen at least 3% of submissions
+        # Strategy: Look for first drop of 2+ bins or hit 0 after minimum threshold
+        threshold_found = False
+        threshold = None
+
+        min_submissions_pct = 0.03  # At least 3% of submissions
+        min_submissions = max(1, int(len(black_pixel_ratios) * min_submissions_pct))
+        cumulative_count = 0
+        seen_minimum = False
+
+        for i in range(len(hist_counts) - 1):  # -1 because we check i+1
+            cumulative_count += hist_counts[i]
+
+            # Check if we've seen at least the minimum number of submissions
+            if cumulative_count >= min_submissions:
+                seen_minimum = True
+
+            # After seeing minimum, look for first significant drop or zero
+            if seen_minimum:
+                current_count = hist_counts[i]
+                next_count = hist_counts[i + 1]
+
+                # Significant drop: decrease of 2+ or hitting zero
+                if next_count == 0 or (current_count - next_count >= 2):
+                    # Threshold is the edge after this bin
+                    threshold = bin_edges[i + 1]
+                    threshold_found = True
+                    log.info(f"Found cluster boundary at bin {i+1}: "
+                            f"drop from {current_count} to {next_count}, "
+                            f"cumulative={cumulative_count}, threshold={threshold:.4f}")
+                    break
+
+        # Fallback to percentile if no clear drop-off found
+        if not threshold_found:
+            threshold = np.percentile(black_pixel_ratios, percentile_threshold)
+            log.info(f"No clear cluster boundary found, using {percentile_threshold}th percentile: "
+                    f"threshold={threshold:.4f}")
+
+        # Step 3: Classify each submission
+        results = []
+        num_blank = 0
+        for i, ratio in enumerate(black_pixel_ratios):
+            is_blank = ratio <= threshold
+            if is_blank:
+                num_blank += 1
+
+            # Confidence based on distance from threshold
+            # Further from threshold = higher confidence
+            distance_from_threshold = abs(ratio - threshold)
+            max_distance = max(abs(max(black_pixel_ratios) - threshold), abs(min(black_pixel_ratios) - threshold))
+            confidence = min(1.0, distance_from_threshold / max_distance) if max_distance > 0 else 0.5
+
+            results.append({
+                "is_blank": is_blank,
+                "confidence": confidence,
+                "black_pixel_ratio": ratio,
+                "threshold": threshold,
+                "method": "population-gap",
+                "reasoning": f"Black ratio: {ratio:.4f}, Threshold (gap): {threshold:.4f}"
+            })
+
+            log.debug(f"Submission {i}: black_ratio={ratio:.4f}, threshold={threshold:.4f}, is_blank={is_blank}, confidence={confidence:.2f}")
+
+        pct_blank = (num_blank / len(black_pixel_ratios) * 100) if len(black_pixel_ratios) > 0 else 0
+        log.info(f"Detected {num_blank}/{len(black_pixel_ratios)} ({pct_blank:.1f}%) as blank")
+
+        return results
+
     def is_blank_heuristic(
         self,
         image_base64: str,
@@ -998,6 +1123,11 @@ class ExamProcessor:
         for i, label in enumerate(best_clustering):
             band_stats[i]['cluster'] = label
 
+        # Log band clustering for debugging
+        log.debug(f"Band clustering results ({best_n_clusters} clusters):")
+        for i, band in enumerate(band_stats):
+            log.debug(f"  Band {i}: max_darkness={band['max_darkness']:.1f}, cluster={band['cluster']}")
+
         # Step 3: Identify question vs answer bands
         # Question bands are in the darkest cluster and typically at the top
         cluster_darkness = {}
@@ -1071,10 +1201,11 @@ class ExamProcessor:
         confidence = abs(blank_ratio - 0.5) * 2  # 0.5 = uncertain, 0 or 1 = certain
         confidence = max(0.0, min(1.0, confidence))
 
-        log.debug(f"Band-based blank detection: is_blank={is_blank}, "
+        log.info(f"Band-based blank detection: is_blank={is_blank}, "
                   f"blank_ratio={blank_ratio:.2f}, confidence={confidence:.2f}, "
-                  f"answer_bands={len(answer_bands)}, blank_bands={len(blank_bands)}, "
-                  f"handwritten_bands={len(handwritten_bands)}, cluster_method={best_n_clusters}-group")
+                  f"question_bands={len(question_bands_indices)}, answer_bands={len(answer_bands)}, "
+                  f"blank_bands={len(blank_bands)}, handwritten_bands={len(handwritten_bands)}, "
+                  f"cluster_method={best_n_clusters}-group, question_end={question_end}")
 
         return {
             "is_blank": is_blank,

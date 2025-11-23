@@ -1020,99 +1020,129 @@ async def rerun_blank_detection(session_id: int):
                 yield f"data: {json.dumps({'error': 'Session not found'})}\n\n"
                 return
 
-            # Get all problems with their region coordinates and submission PDFs
+            # Get distinct problem numbers
             cursor.execute("""
-                SELECT
-                    p.id as problem_id,
-                    p.problem_number,
-                    p.region_coords,
-                    s.exam_pdf_data
+                SELECT DISTINCT p.problem_number
                 FROM problems p
                 JOIN submissions s ON p.submission_id = s.id
                 WHERE s.session_id = ? AND s.exam_pdf_data IS NOT NULL AND p.region_coords IS NOT NULL
-                ORDER BY s.id, p.problem_number
+                ORDER BY p.problem_number
             """, (session_id,))
 
-            problems = cursor.fetchall()
+            problem_numbers = [row["problem_number"] for row in cursor.fetchall()]
 
-            if not problems:
+            if not problem_numbers:
                 yield f"data: {json.dumps({'error': 'No problems with PDF data found in this session'})}\n\n"
                 return
 
-            total_problems = len(problems)
+            # Count total problems for progress tracking
+            cursor.execute("""
+                SELECT COUNT(*) as total
+                FROM problems p
+                JOIN submissions s ON p.submission_id = s.id
+                WHERE s.session_id = ? AND s.exam_pdf_data IS NOT NULL AND p.region_coords IS NOT NULL
+            """, (session_id,))
+            total_problems = cursor.fetchone()["total"]
+
             blank_detected = 0
             not_blank = 0
             errors = 0
+            processed_count = 0
 
-            yield f"data: {json.dumps({'type': 'start', 'total': total_problems})}\n\n"
+            yield f"data: {json.dumps({'type': 'start', 'total': total_problems, 'problem_count': len(problem_numbers)})}\n\n"
             await asyncio.sleep(0)
 
             exam_processor = ExamProcessor()
 
-            for idx, problem in enumerate(problems):
-                problem_id = problem["problem_id"]
-                problem_number = problem["problem_number"]
-                region_coords_json = problem["region_coords"]
-                pdf_base64 = problem["exam_pdf_data"]
-
+            # Process each problem number as a population
+            for problem_num in problem_numbers:
                 try:
-                    # Parse region coordinates
-                    region_coords = json.loads(region_coords_json)
-                    start_page = region_coords["page_number"]
-                    start_y = region_coords["region_y_start"]
-                    end_page = region_coords.get("end_page_number", start_page)
-                    end_y = region_coords["region_y_end"]
+                    # Get all submissions for this problem number
+                    cursor.execute("""
+                        SELECT
+                            p.id as problem_id,
+                            p.region_coords,
+                            s.exam_pdf_data
+                        FROM problems p
+                        JOIN submissions s ON p.submission_id = s.id
+                        WHERE s.session_id = ? AND p.problem_number = ?
+                          AND s.exam_pdf_data IS NOT NULL AND p.region_coords IS NOT NULL
+                        ORDER BY s.id
+                    """, (session_id, problem_num))
 
-                    # Extract problem image at standard DPI (150)
-                    problem_image_base64, _ = exam_processor._extract_cross_page_region(
-                        fitz.open(stream=base64.b64decode(pdf_base64), filetype="pdf"),
-                        start_page, start_y,
-                        end_page, end_y,
-                        dpi=150
+                    problem_submissions = cursor.fetchall()
+
+                    if not problem_submissions:
+                        continue
+
+                    # Extract all images for this problem number
+                    images_base64 = []
+                    problem_ids = []
+                    for submission in problem_submissions:
+                        problem_ids.append(submission["problem_id"])
+                        region_coords = json.loads(submission["region_coords"])
+                        pdf_base64 = submission["exam_pdf_data"]
+
+                        start_page = region_coords["page_number"]
+                        start_y = region_coords["region_y_start"]
+                        end_page = region_coords.get("end_page_number", start_page)
+                        end_y = region_coords["region_y_end"]
+
+                        # Extract problem image at standard DPI (150)
+                        problem_image_base64, _ = exam_processor._extract_cross_page_region(
+                            fitz.open(stream=base64.b64decode(pdf_base64), filetype="pdf"),
+                            start_page, start_y,
+                            end_page, end_y,
+                            dpi=150
+                        )
+                        images_base64.append(problem_image_base64)
+
+                    # Run population-based blank detection
+                    blank_results = exam_processor.is_blank_heuristic_population(
+                        images_base64,
+                        percentile_threshold=5.0
                     )
 
-                    # Run blank detection using current heuristic
-                    blank_result = exam_processor.is_blank_heuristic(problem_image_base64)
+                    # Update all problems with their results
+                    for problem_id, blank_result in zip(problem_ids, blank_results):
+                        if blank_result["is_blank"]:
+                            blank_detected += 1
+                        else:
+                            not_blank += 1
 
-                    log.debug(f"Problem {problem_number} (ID {problem_id}): is_blank={blank_result['is_blank']}, "
-                             f"confidence={blank_result['confidence']:.2f}, method={blank_result.get('cluster_method', 'N/A')}")
+                        cursor.execute("""
+                            UPDATE problems
+                            SET is_blank = ?,
+                                blank_confidence = ?,
+                                blank_method = ?,
+                                blank_reasoning = ?
+                            WHERE id = ?
+                        """, (
+                            1 if blank_result["is_blank"] else 0,
+                            blank_result["confidence"],
+                            blank_result["method"],
+                            blank_result["reasoning"],
+                            problem_id
+                        ))
 
-                    if blank_result["is_blank"]:
-                        blank_detected += 1
-                    else:
-                        not_blank += 1
+                        processed_count += 1
+                        # Send progress update per submission
+                        is_blank_val = int(blank_result['is_blank']) == 1  # Convert to Python bool
+                        yield f"data: {json.dumps({'type': 'progress', 'current': processed_count, 'total': total_problems, 'is_blank': is_blank_val, 'problem_number': problem_num})}\n\n"
+                        await asyncio.sleep(0)
 
-                    # Update problem with blank detection results
-                    cursor.execute("""
-                        UPDATE problems
-                        SET is_blank = ?,
-                            blank_confidence = ?,
-                            blank_method = ?,
-                            blank_reasoning = ?
-                        WHERE id = ?
-                    """, (
-                        blank_result["is_blank"],
-                        blank_result["confidence"],
-                        "heuristic-" + blank_result.get("cluster_method", "unknown"),
-                        f"Bands: {blank_result.get('band_count', 0)}, Question: {blank_result.get('question_bands', 0)}, "
-                        f"Answer: {blank_result.get('answer_bands', 0)}, Blank: {blank_result.get('blank_bands', 0)}, "
-                        f"Handwritten: {blank_result.get('handwritten_bands', 0)}",
-                        problem_id
-                    ))
-
-                    # Send progress update
-                    yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total_problems, 'is_blank': blank_result['is_blank'], 'problem_number': problem_number})}\n\n"
-                    await asyncio.sleep(0)
+                    log.info(f"Problem {problem_num}: processed {len(problem_submissions)} submissions, "
+                            f"threshold={blank_results[0].get('threshold', 'N/A') if blank_results else 'N/A'}")
 
                 except Exception as e:
-                    log.error(f"Error processing problem {problem_number} (ID {problem_id}): {e}")
+                    log.error(f"Error processing problem number {problem_num}: {e}")
                     errors += 1
-                    yield f"data: {json.dumps({'type': 'error', 'problem_number': problem_number, 'message': str(e)})}\n\n"
+                    yield f"data: {json.dumps({'type': 'error', 'problem_number': problem_num, 'message': str(e)})}\n\n"
                     await asyncio.sleep(0)
 
             conn.commit()
 
-            log.info(f"Blank detection re-run complete: {blank_detected} blank, {not_blank} not blank, {errors} errors out of {total_problems} problems")
+            log.info(f"Population-based blank detection complete: {blank_detected} blank, {not_blank} not blank, {errors} errors out of {total_problems} problems")
 
             # Send completion event
             yield f"data: {json.dumps({'type': 'complete', 'total_problems': total_problems, 'blank_detected': blank_detected, 'not_blank': not_blank, 'errors': errors})}\n\n"
