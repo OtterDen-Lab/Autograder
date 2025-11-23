@@ -215,16 +215,25 @@ async def get_session_stats(session_id: int):
             max_points_row = cursor.fetchone()
             max_points = max_points_row["max_points"] if max_points_row else 8.0
 
-            # Get total count (including ungraded)
+            # Get total count (including ungraded) and count of ungraded blanks
             cursor.execute("""
                 SELECT COUNT(*) as num_total,
-                       SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as num_graded
+                       SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as num_graded,
+                       SUM(CASE WHEN graded = 0 AND is_blank = 1 THEN 1 ELSE 0 END) as num_blank_ungraded,
+                       SUM(CASE WHEN is_blank = 1 THEN 1 ELSE 0 END) as num_blank_total
                 FROM problems
                 WHERE session_id = ? AND problem_number = ?
             """, (session_id, problem_num))
             count_row = cursor.fetchone()
             num_total = count_row["num_total"]
             num_graded = count_row["num_graded"]
+            num_blank_ungraded = count_row["num_blank_ungraded"] or 0
+            num_blank_total = count_row["num_blank_total"] or 0
+
+            # Debug log to see what we're getting
+            import logging
+            log = logging.getLogger(__name__)
+            log.info(f"[STATS] Problem {problem_num}: total={num_total}, graded={num_graded}, blank_ungraded={num_blank_ungraded}, blank_total={num_blank_total}")
 
             # Calculate statistics
             import statistics
@@ -255,6 +264,8 @@ async def get_session_stats(session_id: int):
                 mean_normalized=mean_normalized,
                 stddev_normalized=stddev_normalized,
                 pct_blank=pct_blank,
+                num_blank=num_blank,
+                num_blank_ungraded=num_blank_ungraded,
                 num_graded=num_graded,
                 num_total=num_total,
                 max_points=max_points,
@@ -978,7 +989,7 @@ async def rescan_qr_codes(session_id: int, dpi: int = 600):
         }
 
 
-@router.post("/{session_id}/rerun-blank-detection")
+@router.get("/{session_id}/rerun-blank-detection")
 async def rerun_blank_detection(session_id: int):
     """
     Re-run blank detection for all problems in a session using the current algorithm.

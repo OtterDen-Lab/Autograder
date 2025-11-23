@@ -157,10 +157,29 @@ async function updateOverallProgress() {
             const redBar = document.getElementById('current-problem-progress-bg');
             redBar.style.left = `${redBarStart}%`;
             redBar.style.width = `${problemRemaining}%`;
+
+            // Yellow bar: shows blank-detected problems in UNGRADED portion of current problem
+            // Sized and positioned relative to the current problem's total count
+            const numBlankUngraded = currentProblemStats.num_blank_ungraded || 0;
+            const numTotalInProblem = currentProblemStats.num_total;
+
+            // Calculate width as proportion of total problems (to match gray box scale)
+            const blankWidth = (numBlankUngraded / stats.total_problems) * 100;
+
+            // Position at right end of the gray box (gray box ends at currentProblemStartPercent + problemGraded + problemRemaining)
+            const grayBoxEnd = currentProblemStartPercent + problemGraded + problemRemaining;
+            const yellowBarStart = grayBoxEnd - blankWidth;
+
+            const yellowBar = document.getElementById('blank-problems-bar');
+            yellowBar.style.left = `${yellowBarStart}%`;
+            yellowBar.style.width = `${blankWidth}%`;
+
+            console.log(`[DEBUG] Blank bar in current problem ${currentProblemNumber}: ${numBlankUngraded} blank (ungraded) out of ${numTotalInProblem} total, width=${blankWidth.toFixed(1)}%, left=${yellowBarStart.toFixed(1)}%`);
         } else {
-            // No current problem or no data - hide both bars
+            // No current problem or no data - hide all bars
             document.getElementById('current-problem-progress-bg').style.width = '0%';
             document.getElementById('current-problem-graded-outline').style.width = '0%';
+            document.getElementById('blank-problems-bar').style.width = '0%';
         }
     } catch (error) {
         console.error('Failed to update overall progress:', error);
