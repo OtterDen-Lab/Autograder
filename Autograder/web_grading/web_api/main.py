@@ -13,7 +13,7 @@ load_dotenv()
 
 from . import __version__
 from .database import init_database
-from .routes import sessions, problems, uploads, canvas, matching, finalize, ai_grader, alignment, feedback_tags
+from .routes import sessions, problems, uploads, canvas, matching, finalize, ai_grader, alignment, feedback_tags, debug
 
 
 @asynccontextmanager
@@ -64,6 +64,7 @@ app.include_router(finalize.router, prefix="/api/finalize", tags=["finalize"])
 app.include_router(ai_grader.router, prefix="/api/ai-grader", tags=["ai-grader"])
 app.include_router(alignment.router, prefix="/api/alignment", tags=["alignment"])
 app.include_router(feedback_tags.router, prefix="/api/feedback-tags", tags=["feedback-tags"])
+app.include_router(debug.router, prefix="/api", tags=["debug"])
 
 # Mount static files (frontend) - MUST BE LAST as it catches all routes
 frontend_path = Path(__file__).parent.parent / "web_frontend"

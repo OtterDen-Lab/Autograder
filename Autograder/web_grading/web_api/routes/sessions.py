@@ -335,6 +335,81 @@ async def get_student_scores(session_id: int):
         return {"students": students}
 
 
+@router.get("/{session_id}/submissions/{submission_id}/problems")
+async def get_submission_problems(session_id: int, submission_id: int):
+    """Get all problems for a specific submission"""
+    from ..models import ProblemResponse
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Verify submission belongs to this session and get PDF data
+        cursor.execute("""
+            SELECT id, exam_pdf_data FROM submissions
+            WHERE id = ? AND session_id = ?
+        """, (submission_id, session_id))
+
+        submission_row = cursor.fetchone()
+        if not submission_row:
+            raise HTTPException(status_code=404, detail="Submission not found in this session")
+
+        pdf_base64 = submission_row["exam_pdf_data"]
+
+        # Get all problems for this submission
+        cursor.execute("""
+            SELECT
+                id, problem_number, submission_id, region_coords,
+                score, feedback, graded, is_blank,
+                blank_confidence, blank_method, blank_reasoning
+            FROM problems
+            WHERE submission_id = ?
+            ORDER BY problem_number
+        """, (submission_id,))
+
+        problems = []
+        exam_processor = ExamProcessor()
+
+        for row in cursor.fetchall():
+            # Extract image from PDF using region coords
+            region_coords = json.loads(row["region_coords"])
+            start_page = region_coords["page_number"]
+            start_y = region_coords["region_y_start"]
+            end_page = region_coords.get("end_page_number", start_page)
+            end_y = region_coords["region_y_end"]
+
+            try:
+                problem_image_base64, _ = exam_processor._extract_cross_page_region(
+                    fitz.open(stream=base64.b64decode(pdf_base64), filetype="pdf"),
+                    start_page, start_y,
+                    end_page, end_y,
+                    dpi=150
+                )
+            except Exception as e:
+                log.error(f"Failed to extract image for problem {row['id']}: {e}")
+                problem_image_base64 = ""
+
+            problems.append(ProblemResponse(
+                id=row["id"],
+                problem_number=row["problem_number"],
+                submission_id=row["submission_id"],
+                image_data=problem_image_base64,
+                score=row["score"],
+                feedback=row["feedback"],
+                graded=bool(row["graded"]),
+                is_blank=bool(row["is_blank"]),
+                blank_confidence=row["blank_confidence"] or 0.0,
+                blank_method=row["blank_method"],
+                blank_reasoning=row["blank_reasoning"],
+                current_index=0,  # Not applicable for this endpoint
+                total_count=0,    # Not applicable for this endpoint
+                ungraded_blank=0, # Not applicable for this endpoint
+                ungraded_nonblank=0, # Not applicable for this endpoint
+                has_qr_data=False # Not needed for debug view
+            ))
+
+        return problems
+
+
 @router.get("/{session_id}/canvas-info")
 async def get_canvas_info(session_id: int):
     """Get Canvas course and assignment information for verification before finalization"""

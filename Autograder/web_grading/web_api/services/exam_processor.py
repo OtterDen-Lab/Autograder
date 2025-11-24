@@ -914,10 +914,16 @@ class ExamProcessor:
                 if img.mode != 'L':
                     img = img.convert('L')
 
-                # Convert to pure black/white and apply median filter to remove dithering
-                img_bw = img.convert("1").filter(ImageFilter.MedianFilter(3))
+                # Normalize histogram to handle varying scan brightness
+                # This stretches the grayscale values to use the full 0-255 range
+                from PIL import ImageOps
+                img_normalized = ImageOps.autocontrast(img, cutoff=2)
 
-                # Convert to numpy array (1-bit image: 0 = black, 255 = white)
+                # Now convert to B/W with fixed threshold
+                # Since histogram is normalized, threshold of 128 is consistent
+                img_bw = img_normalized.convert("1").filter(ImageFilter.MedianFilter(3))
+
+                # Convert to numpy array
                 img_array = np.array(img_bw)
 
                 # Count black pixels (value = 0 in binary image)
@@ -1011,7 +1017,8 @@ class ExamProcessor:
         image_base64: str,
         num_bands: int = 20,
         blank_threshold: float = 0.8,
-        clustering_method: str = "auto"
+        clustering_method: str = "auto",
+        **kwargs
     ) -> Dict:
         """
         Use band-based heuristics to determine if a problem image appears blank/unanswered.
