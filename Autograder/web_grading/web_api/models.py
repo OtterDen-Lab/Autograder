@@ -142,6 +142,8 @@ class ProblemStatsResponse(BaseModel):
     mean_normalized: Optional[float]  # Mean normalized to max_points (0-1 scale)
     stddev_normalized: Optional[float]  # Stddev normalized to max_points (0-1 scale)
     pct_blank: Optional[float]  # Percentage of submissions marked as blank
+    num_blank: int = 0  # Number of graded submissions marked as blank
+    num_blank_ungraded: int = 0  # Number of ungraded submissions marked as blank
     num_graded: int
     num_total: int
     max_points: Optional[float]

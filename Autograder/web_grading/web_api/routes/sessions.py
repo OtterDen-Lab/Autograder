@@ -215,16 +215,25 @@ async def get_session_stats(session_id: int):
             max_points_row = cursor.fetchone()
             max_points = max_points_row["max_points"] if max_points_row else 8.0
 
-            # Get total count (including ungraded)
+            # Get total count (including ungraded) and count of ungraded blanks
             cursor.execute("""
                 SELECT COUNT(*) as num_total,
-                       SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as num_graded
+                       SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as num_graded,
+                       SUM(CASE WHEN graded = 0 AND is_blank = 1 THEN 1 ELSE 0 END) as num_blank_ungraded,
+                       SUM(CASE WHEN is_blank = 1 THEN 1 ELSE 0 END) as num_blank_total
                 FROM problems
                 WHERE session_id = ? AND problem_number = ?
             """, (session_id, problem_num))
             count_row = cursor.fetchone()
             num_total = count_row["num_total"]
             num_graded = count_row["num_graded"]
+            num_blank_ungraded = count_row["num_blank_ungraded"] or 0
+            num_blank_total = count_row["num_blank_total"] or 0
+
+            # Debug log to see what we're getting
+            import logging
+            log = logging.getLogger(__name__)
+            log.info(f"[STATS] Problem {problem_num}: total={num_total}, graded={num_graded}, blank_ungraded={num_blank_ungraded}, blank_total={num_blank_total}")
 
             # Calculate statistics
             import statistics
@@ -255,6 +264,8 @@ async def get_session_stats(session_id: int):
                 mean_normalized=mean_normalized,
                 stddev_normalized=stddev_normalized,
                 pct_blank=pct_blank,
+                num_blank=num_blank,
+                num_blank_ungraded=num_blank_ungraded,
                 num_graded=num_graded,
                 num_total=num_total,
                 max_points=max_points,
@@ -322,6 +333,81 @@ async def get_student_scores(session_id: int):
             })
 
         return {"students": students}
+
+
+@router.get("/{session_id}/submissions/{submission_id}/problems")
+async def get_submission_problems(session_id: int, submission_id: int):
+    """Get all problems for a specific submission"""
+    from ..models import ProblemResponse
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Verify submission belongs to this session and get PDF data
+        cursor.execute("""
+            SELECT id, exam_pdf_data FROM submissions
+            WHERE id = ? AND session_id = ?
+        """, (submission_id, session_id))
+
+        submission_row = cursor.fetchone()
+        if not submission_row:
+            raise HTTPException(status_code=404, detail="Submission not found in this session")
+
+        pdf_base64 = submission_row["exam_pdf_data"]
+
+        # Get all problems for this submission
+        cursor.execute("""
+            SELECT
+                id, problem_number, submission_id, region_coords,
+                score, feedback, graded, is_blank,
+                blank_confidence, blank_method, blank_reasoning
+            FROM problems
+            WHERE submission_id = ?
+            ORDER BY problem_number
+        """, (submission_id,))
+
+        problems = []
+        exam_processor = ExamProcessor()
+
+        for row in cursor.fetchall():
+            # Extract image from PDF using region coords
+            region_coords = json.loads(row["region_coords"])
+            start_page = region_coords["page_number"]
+            start_y = region_coords["region_y_start"]
+            end_page = region_coords.get("end_page_number", start_page)
+            end_y = region_coords["region_y_end"]
+
+            try:
+                problem_image_base64, _ = exam_processor._extract_cross_page_region(
+                    fitz.open(stream=base64.b64decode(pdf_base64), filetype="pdf"),
+                    start_page, start_y,
+                    end_page, end_y,
+                    dpi=150
+                )
+            except Exception as e:
+                log.error(f"Failed to extract image for problem {row['id']}: {e}")
+                problem_image_base64 = ""
+
+            problems.append(ProblemResponse(
+                id=row["id"],
+                problem_number=row["problem_number"],
+                submission_id=row["submission_id"],
+                image_data=problem_image_base64,
+                score=row["score"],
+                feedback=row["feedback"],
+                graded=bool(row["graded"]),
+                is_blank=bool(row["is_blank"]),
+                blank_confidence=row["blank_confidence"] or 0.0,
+                blank_method=row["blank_method"],
+                blank_reasoning=row["blank_reasoning"],
+                current_index=0,  # Not applicable for this endpoint
+                total_count=0,    # Not applicable for this endpoint
+                ungraded_blank=0, # Not applicable for this endpoint
+                ungraded_nonblank=0, # Not applicable for this endpoint
+                has_qr_data=False # Not needed for debug view
+            ))
+
+        return problems
 
 
 @router.get("/{session_id}/canvas-info")
@@ -598,6 +684,10 @@ async def export_session(session_id: int):
         cursor.execute("SELECT * FROM problem_metadata WHERE session_id = ?", (session_id,))
         problem_metadata = [dict(row) for row in cursor.fetchall()]
 
+        # Get feedback tags
+        cursor.execute("SELECT * FROM feedback_tags WHERE session_id = ?", (session_id,))
+        feedback_tags = [dict(row) for row in cursor.fetchall()]
+
         # Build export structure
         export_data = {
             "export_version": 1,
@@ -605,7 +695,8 @@ async def export_session(session_id: int):
             "session": session_data,
             "submissions": submissions,
             "problem_stats": problem_stats,
-            "problem_metadata": problem_metadata
+            "problem_metadata": problem_metadata,
+            "feedback_tags": feedback_tags
         }
 
         # Create JSON response
@@ -644,6 +735,7 @@ async def import_session(file: UploadFile = File(...)):
         submissions = import_data["submissions"]
         problem_stats = import_data.get("problem_stats", [])
         problem_metadata = import_data.get("problem_metadata", [])
+        feedback_tags = import_data.get("feedback_tags", [])
 
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -761,7 +853,22 @@ async def import_session(file: UploadFile = File(...)):
                     metadata.get("default_feedback_threshold", 100.0)
                 ))
 
-            log.info(f"Imported {len(submissions)} submissions, {sum(len(s.get('problems', [])) for s in submissions)} problems, and {len(problem_metadata)} metadata entries")
+            # Import feedback tags
+            for tag in feedback_tags:
+                cursor.execute("""
+                    INSERT INTO feedback_tags
+                    (session_id, problem_number, short_name, comment_text, use_count, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    new_session_id,
+                    tag["problem_number"],
+                    tag["short_name"],
+                    tag["comment_text"],
+                    tag.get("use_count", 0),
+                    tag.get("created_at", datetime.now())
+                ))
+
+            log.info(f"Imported {len(submissions)} submissions, {sum(len(s.get('problems', [])) for s in submissions)} problems, {len(problem_metadata)} metadata entries, and {len(feedback_tags)} feedback tags")
 
         return {
             "status": "imported",
@@ -955,3 +1062,202 @@ async def rescan_qr_codes(session_id: int, dpi: int = 600):
             "dpi_used": dpi,
             "message": f"Re-scanned {total_problems_scanned} problems at {dpi} DPI. Found {total_qr_codes_found} QR codes and updated {problems_updated} problems."
         }
+
+
+@router.post("/{session_id}/fix-blank-counts")
+async def fix_blank_counts(session_id: int):
+    """
+    Fix is_blank flags for graded problems to match actual grades.
+    Sets is_blank=1 only for graded problems where score=0.
+    This repairs any corruption from rerun-blank-detection on already-graded problems.
+    """
+    log = logging.getLogger(__name__)
+    log.info(f"Fixing blank counts for session {session_id}")
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Reset is_blank to match actual grades for ALL graded problems
+        # If graded and score=0: is_blank=1
+        # If graded and score>0: is_blank=0
+        # If ungraded: leave is_blank unchanged (from auto-detection)
+        cursor.execute("""
+            UPDATE problems
+            SET is_blank = CASE
+                WHEN graded = 1 AND score = 0 THEN 1
+                WHEN graded = 1 AND score > 0 THEN 0
+                ELSE is_blank
+            END
+            WHERE session_id = (SELECT id FROM grading_sessions WHERE id = ?)
+        """, (session_id,))
+
+        rows_updated = cursor.rowcount
+        conn.commit()
+
+        log.info(f"Fixed blank flags for {rows_updated} problems in session {session_id}")
+
+        return {"status": "success", "rows_updated": rows_updated}
+
+
+@router.get("/{session_id}/rerun-blank-detection")
+async def rerun_blank_detection(session_id: int):
+    """
+    Re-run blank detection for all problems in a session using the current algorithm.
+    This is useful for testing improvements to blank detection on existing sessions.
+
+    Uses Server-Sent Events to stream progress updates to the client.
+
+    Args:
+        session_id: The session ID to re-analyze
+
+    Returns:
+        SSE stream with progress updates and final results
+    """
+    log = logging.getLogger(__name__)
+    log.info(f"Re-running blank detection for session {session_id}")
+
+    from ..services.exam_processor import ExamProcessor
+    from fastapi.responses import StreamingResponse
+    import asyncio
+
+    async def event_generator():
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Verify session exists
+            cursor.execute("SELECT id FROM grading_sessions WHERE id = ?", (session_id,))
+            if not cursor.fetchone():
+                yield f"data: {json.dumps({'error': 'Session not found'})}\n\n"
+                return
+
+            # Get distinct problem numbers
+            cursor.execute("""
+                SELECT DISTINCT p.problem_number
+                FROM problems p
+                JOIN submissions s ON p.submission_id = s.id
+                WHERE s.session_id = ? AND s.exam_pdf_data IS NOT NULL AND p.region_coords IS NOT NULL
+                ORDER BY p.problem_number
+            """, (session_id,))
+
+            problem_numbers = [row["problem_number"] for row in cursor.fetchall()]
+
+            if not problem_numbers:
+                yield f"data: {json.dumps({'error': 'No problems with PDF data found in this session'})}\n\n"
+                return
+
+            # Count total problems for progress tracking
+            cursor.execute("""
+                SELECT COUNT(*) as total
+                FROM problems p
+                JOIN submissions s ON p.submission_id = s.id
+                WHERE s.session_id = ? AND s.exam_pdf_data IS NOT NULL AND p.region_coords IS NOT NULL
+            """, (session_id,))
+            total_problems = cursor.fetchone()["total"]
+
+            blank_detected = 0
+            not_blank = 0
+            errors = 0
+            processed_count = 0
+
+            yield f"data: {json.dumps({'type': 'start', 'total': total_problems, 'problem_count': len(problem_numbers)})}\n\n"
+            await asyncio.sleep(0)
+
+            exam_processor = ExamProcessor()
+
+            # Process each problem number as a population
+            for problem_num in problem_numbers:
+                try:
+                    # Get all UNGRADED submissions for this problem number
+                    # Don't overwrite blank detection on already-graded problems
+                    cursor.execute("""
+                        SELECT
+                            p.id as problem_id,
+                            p.region_coords,
+                            s.exam_pdf_data,
+                            p.graded
+                        FROM problems p
+                        JOIN submissions s ON p.submission_id = s.id
+                        WHERE s.session_id = ? AND p.problem_number = ?
+                          AND s.exam_pdf_data IS NOT NULL AND p.region_coords IS NOT NULL
+                          AND p.graded = 0
+                        ORDER BY s.id
+                    """, (session_id, problem_num))
+
+                    problem_submissions = cursor.fetchall()
+
+                    if not problem_submissions:
+                        continue
+
+                    # Extract all images for this problem number
+                    images_base64 = []
+                    problem_ids = []
+                    for submission in problem_submissions:
+                        problem_ids.append(submission["problem_id"])
+                        region_coords = json.loads(submission["region_coords"])
+                        pdf_base64 = submission["exam_pdf_data"]
+
+                        start_page = region_coords["page_number"]
+                        start_y = region_coords["region_y_start"]
+                        end_page = region_coords.get("end_page_number", start_page)
+                        end_y = region_coords["region_y_end"]
+
+                        # Extract problem image at standard DPI (150)
+                        problem_image_base64, _ = exam_processor._extract_cross_page_region(
+                            fitz.open(stream=base64.b64decode(pdf_base64), filetype="pdf"),
+                            start_page, start_y,
+                            end_page, end_y,
+                            dpi=150
+                        )
+                        images_base64.append(problem_image_base64)
+
+                    # Run population-based blank detection
+                    blank_results = exam_processor.is_blank_heuristic_population(
+                        images_base64,
+                        percentile_threshold=5.0
+                    )
+
+                    # Update all problems with their results
+                    for problem_id, blank_result in zip(problem_ids, blank_results):
+                        if blank_result["is_blank"]:
+                            blank_detected += 1
+                        else:
+                            not_blank += 1
+
+                        cursor.execute("""
+                            UPDATE problems
+                            SET is_blank = ?,
+                                blank_confidence = ?,
+                                blank_method = ?,
+                                blank_reasoning = ?
+                            WHERE id = ?
+                        """, (
+                            1 if blank_result["is_blank"] else 0,
+                            blank_result["confidence"],
+                            blank_result["method"],
+                            blank_result["reasoning"],
+                            problem_id
+                        ))
+
+                        processed_count += 1
+                        # Send progress update per submission
+                        is_blank_val = int(blank_result['is_blank']) == 1  # Convert to Python bool
+                        yield f"data: {json.dumps({'type': 'progress', 'current': processed_count, 'total': total_problems, 'is_blank': is_blank_val, 'problem_number': problem_num})}\n\n"
+                        await asyncio.sleep(0)
+
+                    log.info(f"Problem {problem_num}: processed {len(problem_submissions)} submissions, "
+                            f"threshold={blank_results[0].get('threshold', 'N/A') if blank_results else 'N/A'}")
+
+                except Exception as e:
+                    log.error(f"Error processing problem number {problem_num}: {e}")
+                    errors += 1
+                    yield f"data: {json.dumps({'type': 'error', 'problem_number': problem_num, 'message': str(e)})}\n\n"
+                    await asyncio.sleep(0)
+
+            conn.commit()
+
+            log.info(f"Population-based blank detection complete: {blank_detected} blank, {not_blank} not blank, {errors} errors out of {total_problems} problems")
+
+            # Send completion event
+            yield f"data: {json.dumps({'type': 'complete', 'total_problems': total_problems, 'blank_detected': blank_detected, 'not_blank': not_blank, 'errors': errors})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

@@ -185,12 +185,52 @@ header h1 {
     border-radius: 6px;
     overflow: hidden;
     margin-bottom: 10px;
+    position: relative;
+}
+
+.blank-problems-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    background: linear-gradient(90deg, #fbbf24, #f59e0b);
+    opacity: 0.8;
+    transition: width 0.5s ease, left 0.5s ease;
+    z-index: 1;
+}
+
+.current-problem-progress-bg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    background: linear-gradient(90deg, #ef4444, #dc2626);
+    opacity: 0.7;
+    transition: width 0.5s ease, left 0.5s ease;
+    z-index: 0;
+}
+
+.current-problem-graded-outline {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    background: transparent;
+    border: 3px solid rgba(0, 0, 0, 0.85);
+    box-sizing: border-box;
+    transition: width 0.5s ease, left 0.5s ease;
+    z-index: 4;
+    pointer-events: none;
 }
 
 .overall-progress-fill {
+    position: absolute;
+    top: 0;
+    left: 0;
     height: 100%;
     background: linear-gradient(90deg, var(--primary-color), #3b82f6);
     transition: width 0.5s ease;
+    z-index: 2;
 }
 
 .overall-progress-text {

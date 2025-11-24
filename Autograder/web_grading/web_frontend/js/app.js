@@ -426,6 +426,90 @@ function setupEventListeners() {
 
         navigateToSection('upload-section');
     };
+
+    // Re-run blank detection button
+    document.getElementById('rerun-blank-detection-btn').onclick = async () => {
+        if (!currentSession) return;
+
+        if (!confirm('Re-run blank detection on all problems in this session? This will update the blank detection results for all problems.')) {
+            return;
+        }
+
+        const btn = document.getElementById('rerun-blank-detection-btn');
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '⏳ Starting...';
+
+        try {
+            const eventSource = new EventSource(`${API_BASE}/sessions/${currentSession.id}/rerun-blank-detection`);
+
+            let totalProblems = 0;
+            let currentProblem = 0;
+            let blankCount = 0;
+            let notBlankCount = 0;
+            let errorCount = 0;
+
+            eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.error) {
+                    alert(`Error: ${data.error}`);
+                    eventSource.close();
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                    return;
+                }
+
+                switch (data.type) {
+                    case 'start':
+                        totalProblems = data.total;
+                        btn.textContent = `⏳ Processing 0/${totalProblems}...`;
+                        break;
+
+                    case 'progress':
+                        currentProblem = data.current;
+                        if (data.is_blank) blankCount++;
+                        else notBlankCount++;
+                        btn.textContent = `⏳ Processing ${currentProblem}/${totalProblems} (${blankCount} blank, ${notBlankCount} not blank)`;
+                        break;
+
+                    case 'error':
+                        errorCount++;
+                        console.error(`Error on problem ${data.problem_number}: ${data.message}`);
+                        break;
+
+                    case 'complete':
+                        eventSource.close();
+                        btn.disabled = false;
+                        btn.textContent = originalText;
+
+                        alert(`Blank detection re-run complete!\n\n` +
+                              `Total problems: ${data.total_problems}\n` +
+                              `Blank detected: ${data.blank_detected}\n` +
+                              `Not blank: ${data.not_blank}\n` +
+                              `Errors: ${data.errors}`);
+
+                        // Refresh stats display
+                        showStatistics();
+                        break;
+                }
+            };
+
+            eventSource.onerror = (error) => {
+                console.error('EventSource error:', error);
+                eventSource.close();
+                btn.disabled = false;
+                btn.textContent = originalText;
+                alert('Connection error during blank detection. Check console for details.');
+            };
+
+        } catch (error) {
+            console.error('Error re-running blank detection:', error);
+            alert('Failed to re-run blank detection. Check console for details.');
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    };
 }
 
 // Load courses from Canvas

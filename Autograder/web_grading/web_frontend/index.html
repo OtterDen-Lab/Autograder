@@ -265,7 +265,14 @@
 
                 <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
                     <div style="flex: 1;">
-                        <div class="overall-progress-bar" style="margin-bottom: 5px;">
+                        <div class="overall-progress-bar" style="margin-bottom: 5px; position: relative;">
+                            <!-- Yellow background layer: shows detected blank problems -->
+                            <div id="blank-problems-bar" class="blank-problems-bar" style="width: 0%"></div>
+                            <!-- Red background layer: shows remaining work in current problem -->
+                            <div id="current-problem-progress-bg" class="current-problem-progress-bg" style="width: 0%"></div>
+                            <!-- Green outline layer: shows already-graded portions of current problem -->
+                            <div id="current-problem-graded-outline" class="current-problem-graded-outline" style="width: 0%"></div>
+                            <!-- Blue foreground layer: shows overall progress -->
                             <div id="overall-progress-fill" class="overall-progress-fill" style="width: 0%"></div>
                         </div>
                         <span id="overall-progress-label" style="font-size: 13px; color: var(--gray-700);">Overall: 0 / 0 (0%)</span>
@@ -369,6 +376,7 @@
                     <button id="export-session-btn" class="btn btn-secondary">Export Session (Checkpoint)</button>
                     <button id="change-canvas-target-btn" class="btn btn-secondary">Change Canvas Target</button>
                     <button id="rescan-qr-btn" class="btn btn-secondary" title="Re-scan QR codes at higher DPI">🔄 Re-scan QR Codes</button>
+                    <button id="rerun-blank-detection-btn" class="btn btn-secondary" title="Re-run blank detection on all problems">🔍 Re-run Blank Detection</button>
                 </div>
             </section>
         </main>

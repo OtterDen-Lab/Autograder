@@ -107,6 +107,7 @@ async function loadProblemNumbers() {
         select.onchange = async () => {
             currentProblemNumber = parseInt(select.value);
             updateMaxPointsDropdown();
+            await updateOverallProgress(); // Update progress bar when changing problems
             await loadProblemOrMostRecent();
         };
 
@@ -126,6 +127,60 @@ async function updateOverallProgress() {
         document.getElementById('overall-progress-fill').style.width = `${percentage}%`;
         document.getElementById('overall-progress-label').textContent =
             `Overall: ${stats.problems_graded} / ${stats.total_problems} (${percentage.toFixed(1)}%)`;
+
+        // Update current problem progress background (red bar showing remaining work)
+        const currentProblemStats = stats.problem_stats.find(p => p.problem_number === currentProblemNumber);
+        if (currentProblemStats && stats.total_problems > 0) {
+            // Calculate how much of this problem's work is graded and remaining
+            const problemGraded = currentProblemStats.num_graded / stats.total_problems * 100;
+            const problemRemaining = (currentProblemStats.num_total - currentProblemStats.num_graded) / stats.total_problems * 100;
+
+            // Calculate where the current problem starts in the overall progress
+            // This is the sum of all completed work before the current problem
+            let workBeforeCurrent = 0;
+            for (const ps of stats.problem_stats) {
+                if (ps.problem_number < currentProblemNumber) {
+                    workBeforeCurrent += ps.num_graded;
+                } else if (ps.problem_number === currentProblemNumber) {
+                    break;
+                }
+            }
+            const currentProblemStartPercent = workBeforeCurrent / stats.total_problems * 100;
+
+            // Dark gray outline: shows the entire current problem (both graded and remaining)
+            const grayOutline = document.getElementById('current-problem-graded-outline');
+            grayOutline.style.left = `${currentProblemStartPercent}%`;
+            grayOutline.style.width = `${problemGraded + problemRemaining}%`;
+
+            // Red bar: shows remaining work in current problem
+            const redBarStart = currentProblemStartPercent + problemGraded;
+            const redBar = document.getElementById('current-problem-progress-bg');
+            redBar.style.left = `${redBarStart}%`;
+            redBar.style.width = `${problemRemaining}%`;
+
+            // Yellow bar: shows blank-detected problems in UNGRADED portion of current problem
+            // Sized and positioned relative to the current problem's total count
+            const numBlankUngraded = currentProblemStats.num_blank_ungraded || 0;
+            const numTotalInProblem = currentProblemStats.num_total;
+
+            // Calculate width as proportion of total problems (to match gray box scale)
+            const blankWidth = (numBlankUngraded / stats.total_problems) * 100;
+
+            // Position at right end of the gray box (gray box ends at currentProblemStartPercent + problemGraded + problemRemaining)
+            const grayBoxEnd = currentProblemStartPercent + problemGraded + problemRemaining;
+            const yellowBarStart = grayBoxEnd - blankWidth;
+
+            const yellowBar = document.getElementById('blank-problems-bar');
+            yellowBar.style.left = `${yellowBarStart}%`;
+            yellowBar.style.width = `${blankWidth}%`;
+
+            console.log(`[DEBUG] Blank bar in current problem ${currentProblemNumber}: ${numBlankUngraded} blank (ungraded) out of ${numTotalInProblem} total, width=${blankWidth.toFixed(1)}%, left=${yellowBarStart.toFixed(1)}%`);
+        } else {
+            // No current problem or no data - hide all bars
+            document.getElementById('current-problem-progress-bg').style.width = '0%';
+            document.getElementById('current-problem-graded-outline').style.width = '0%';
+            document.getElementById('blank-problems-bar').style.width = '0%';
+        }
     } catch (error) {
         console.error('Failed to update overall progress:', error);
     }

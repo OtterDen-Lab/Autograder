@@ -881,20 +881,167 @@ class ExamProcessor:
 
         return pdf_base64, problems
 
-    def is_blank_heuristic(self, image_base64: str, threshold: float = 0.02, crop_to_answer_area: bool = True) -> Dict:
+    def is_blank_heuristic_population(
+        self,
+        images_base64: list,
+        percentile_threshold: float = 5.0
+    ) -> list:
         """
-        Use heuristics to determine if a problem image appears blank/unanswered.
+        Population-based blank detection using black pixel ratio clustering.
+
+        Analyzes all submissions for a problem together to find the natural blank baseline.
+
+        Args:
+            images_base64: List of base64 encoded images for all submissions of a problem
+            percentile_threshold: Percentile cutoff for blank detection (default: 5.0 = bottom 5%)
+
+        Returns:
+            List of dicts with {is_blank: bool, confidence: float, black_pixel_ratio: float}
+        """
+        import io
+        from PIL import Image, ImageFilter
+
+        # Step 1: Calculate black pixel ratio for each submission
+        black_pixel_ratios = []
+
+        for img_b64 in images_base64:
+            try:
+                # Decode image
+                img_bytes = base64.b64decode(img_b64)
+                img = Image.open(io.BytesIO(img_bytes))
+
+                # Convert to grayscale first
+                if img.mode != 'L':
+                    img = img.convert('L')
+
+                # Normalize histogram to handle varying scan brightness
+                # This stretches the grayscale values to use the full 0-255 range
+                from PIL import ImageOps
+                img_normalized = ImageOps.autocontrast(img, cutoff=2)
+
+                # Now convert to B/W with fixed threshold
+                # Since histogram is normalized, threshold of 128 is consistent
+                img_bw = img_normalized.convert("1").filter(ImageFilter.MedianFilter(3))
+
+                # Convert to numpy array
+                img_array = np.array(img_bw)
+
+                # Count black pixels (value = 0 in binary image)
+                black_pixels = np.sum(img_array == 0)
+                total_pixels = img_array.size
+                black_ratio = black_pixels / total_pixels if total_pixels > 0 else 0
+
+                black_pixel_ratios.append(black_ratio)
+
+            except Exception as e:
+                log.warning(f"Error processing image for blank detection: {e}")
+                black_pixel_ratios.append(0.0)  # Default to 0 on error
+
+        # Step 2: Find threshold by identifying the left-edge cluster
+        # Create histogram to find where the blank cluster ends
+        num_bins = 20
+        hist_counts, bin_edges = np.histogram(black_pixel_ratios, bins=num_bins)
+
+        log.info(f"black_pixel_ratios histogram: counts={hist_counts}, edges={bin_edges}")
+
+        # Find the first significant drop after we've seen at least 3% of submissions
+        # Strategy: Look for first drop of 2+ bins or hit 0 after minimum threshold
+        threshold_found = False
+        threshold = None
+
+        min_submissions_pct = 0.03  # At least 3% of submissions
+        min_submissions = max(1, int(len(black_pixel_ratios) * min_submissions_pct))
+        cumulative_count = 0
+        seen_minimum = False
+
+        for i in range(len(hist_counts) - 1):  # -1 because we check i+1
+            cumulative_count += hist_counts[i]
+
+            # Check if we've seen at least the minimum number of submissions
+            if cumulative_count >= min_submissions:
+                seen_minimum = True
+
+            # After seeing minimum, look for first significant drop or zero
+            if seen_minimum:
+                current_count = hist_counts[i]
+                next_count = hist_counts[i + 1]
+
+                # Significant drop: decrease of 2+ or hitting zero
+                if next_count == 0 or (current_count - next_count >= 2):
+                    # Threshold is the edge after this bin
+                    threshold = bin_edges[i + 1]
+                    threshold_found = True
+                    log.info(f"Found cluster boundary at bin {i+1}: "
+                            f"drop from {current_count} to {next_count}, "
+                            f"cumulative={cumulative_count}, threshold={threshold:.4f}")
+                    break
+
+        # Fallback to percentile if no clear drop-off found
+        if not threshold_found:
+            threshold = np.percentile(black_pixel_ratios, percentile_threshold)
+            log.info(f"No clear cluster boundary found, using {percentile_threshold}th percentile: "
+                    f"threshold={threshold:.4f}")
+
+        # Step 3: Classify each submission
+        results = []
+        num_blank = 0
+        for i, ratio in enumerate(black_pixel_ratios):
+            is_blank = ratio <= threshold
+            if is_blank:
+                num_blank += 1
+
+            # Confidence based on distance from threshold
+            # Further from threshold = higher confidence
+            distance_from_threshold = abs(ratio - threshold)
+            max_distance = max(abs(max(black_pixel_ratios) - threshold), abs(min(black_pixel_ratios) - threshold))
+            confidence = min(1.0, distance_from_threshold / max_distance) if max_distance > 0 else 0.5
+
+            results.append({
+                "is_blank": is_blank,
+                "confidence": confidence,
+                "black_pixel_ratio": ratio,
+                "threshold": threshold,
+                "method": "population-gap",
+                "reasoning": f"Black ratio: {ratio:.4f}, Threshold (gap): {threshold:.4f}"
+            })
+
+            log.debug(f"Submission {i}: black_ratio={ratio:.4f}, threshold={threshold:.4f}, is_blank={is_blank}, confidence={confidence:.2f}")
+
+        pct_blank = (num_blank / len(black_pixel_ratios) * 100) if len(black_pixel_ratios) > 0 else 0
+        log.info(f"Detected {num_blank}/{len(black_pixel_ratios)} ({pct_blank:.1f}%) as blank")
+
+        return results
+
+    def is_blank_heuristic(
+        self,
+        image_base64: str,
+        num_bands: int = 20,
+        blank_threshold: float = 0.8,
+        clustering_method: str = "auto",
+        **kwargs
+    ) -> Dict:
+        """
+        Use band-based heuristics to determine if a problem image appears blank/unanswered.
+
+        This method divides the image into horizontal bands and analyzes the darkness
+        of each band to distinguish between:
+        - Printed question text (consistently dark bands at top)
+        - Handwritten answers (medium darkness in middle/bottom)
+        - Blank answer areas (light bands in middle/bottom)
 
         Args:
             image_base64: Base64 encoded image
-            threshold: Ink density threshold (default 2% = mostly blank)
-            crop_to_answer_area: If True, only analyze middle/bottom area (skip printed question text)
+            num_bands: Number of horizontal bands to divide image into (default: 20)
+            blank_threshold: Fraction of answer bands that must be blank (default: 0.8 = 80%)
+            clustering_method: "2-group", "3-group", or "auto" (default: auto tries both)
 
         Returns:
-            Dict with {is_blank: bool, confidence: float, ink_density: float, edge_density: float}
+            Dict with {is_blank: bool, confidence: float, band_count: int, ...}
         """
         import io
         from PIL import Image
+        from sklearn.cluster import KMeans
+        from sklearn.metrics import silhouette_score, davies_bouldin_score
 
         # Decode image
         img_bytes = base64.b64decode(image_base64)
@@ -904,67 +1051,221 @@ class ExamProcessor:
         if img.mode != 'L':
             img = img.convert('L')
 
-        # Crop to answer area if requested (skip top 30% where question text usually is)
-        if crop_to_answer_area:
-            width, height = img.size
-            # Crop to middle 60% vertically (skip top 20% and bottom 20%)
-            # This avoids printed question text at top and page numbers at bottom
-            crop_top = int(height * 0.2)
-            crop_bottom = int(height * 0.8)
-            img = img.crop((0, crop_top, width, crop_bottom))
-            log.debug(f"Cropped to answer area: {crop_top} to {crop_bottom} (middle 60%)")
-        else:
-            # For full page checks, still apply small margins to avoid edge artifacts
-            width, height = img.size
-            margin = 30  # 30 pixels on each side
-            img = img.crop((margin, margin, width - margin, height - margin))
-            log.debug(f"Using full page with {margin}px margins for blank detection")
+        # Apply minimal margins to avoid edge artifacts only
+        width, height = img.size
+        margin = 10  # Minimal margin
+        img = img.crop((margin, margin, width - margin, height - margin))
 
         # Convert to numpy array
         img_array = np.array(img)
+        height, width = img_array.shape
 
-        # Calculate ink density (ratio of dark pixels that are likely real handwriting)
-        # Use threshold at 200 to ignore light gray bleed-through from opposite page
-        # (handwritten ink is typically much darker than bleed-through)
-        ink_pixels = np.sum(img_array < 200)
-        total_pixels = img_array.size
-        ink_density = ink_pixels / total_pixels
+        # Step 1: Divide into horizontal bands and analyze each
+        band_height = height // num_bands
+        band_stats = []
 
-        # Calculate edge density (how much writing/structure is present)
-        # Use higher thresholds to ignore faint bleed-through edges
-        edges = cv2.Canny(img_array, 100, 200)
-        edge_pixels = np.sum(edges > 0)
-        edge_density = edge_pixels / total_pixels
+        for i in range(num_bands):
+            start_y = i * band_height
+            end_y = start_y + band_height if i < num_bands - 1 else height
+            band = img_array[start_y:end_y, :]
 
-        # Calculate pixel variance (blank pages have low variance)
-        pixel_variance = np.var(img_array)
+            # Calculate statistics for this band
+            median_darkness = np.median(band)
+            max_darkness = 255 - np.max(band)  # Invert: higher = darker
+            min_darkness = 255 - np.min(band)
+            darkness_range = max_darkness - (255 - median_darkness)
 
-        # Determine if blank based on heuristics
-        # More lenient thresholds since we're now only counting darker pixels
-        is_blank = (
-            ink_density < 0.03 and  # Less than 3% dark ink
-            edge_density < 0.015 and  # Less than 1.5% strong edges
-            pixel_variance < 150  # Low variance (but allow for some bleed-through noise)
-        )
+            band_stats.append({
+                'index': i,
+                'median': median_darkness,
+                'max_darkness': max_darkness,
+                'darkness_range': darkness_range
+            })
 
-        # Confidence score (higher = more confident in the assessment)
-        if is_blank:
-            # If clearly blank (very low ink), high confidence
-            confidence = 1.0 - (ink_density / threshold)
+        # Step 2: Cluster bands by maximum darkness
+        max_darkness_values = np.array([b['max_darkness'] for b in band_stats]).reshape(-1, 1)
+
+        best_clustering = None
+        best_score = -np.inf
+        best_n_clusters = 2
+
+        # Try both 2 and 3 group clustering if auto mode
+        n_clusters_to_try = [2, 3] if clustering_method == "auto" else [int(clustering_method.split('-')[0])]
+
+        for n_clusters in n_clusters_to_try:
+            if len(max_darkness_values) < n_clusters:
+                continue
+
+            try:
+                kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                labels = kmeans.fit_predict(max_darkness_values)
+
+                # Evaluate clustering quality using silhouette score (higher is better)
+                # Need at least 2 distinct clusters for silhouette score
+                num_distinct_clusters = len(set(labels))
+                if num_distinct_clusters > 1:
+                    score = silhouette_score(max_darkness_values, labels)
+                    log.debug(f"{n_clusters}-group clustering: silhouette score = {score:.3f}, distinct clusters = {num_distinct_clusters}")
+
+                    if score > best_score:
+                        best_score = score
+                        best_clustering = labels
+                        best_n_clusters = n_clusters
+                elif best_clustering is None:
+                    # If we haven't found any valid clustering yet, use this one even with only 1 cluster
+                    log.debug(f"{n_clusters}-group clustering: only {num_distinct_clusters} distinct cluster(s) found, using as fallback")
+                    best_clustering = labels
+                    best_n_clusters = num_distinct_clusters
+            except Exception as e:
+                log.warning(f"Clustering with {n_clusters} groups failed: {e}")
+                continue
+
+        # Handle case where clustering completely failed
+        if best_clustering is None:
+            log.warning("All clustering attempts failed, treating all bands as single group (assuming blank)")
+            best_clustering = np.zeros(len(band_stats), dtype=int)
+            best_n_clusters = 1
+
+        # Assign cluster labels to bands
+        for i, label in enumerate(best_clustering):
+            band_stats[i]['cluster'] = label
+
+        # Log band clustering for debugging
+        log.debug(f"Band clustering results ({best_n_clusters} clusters):")
+        for i, band in enumerate(band_stats):
+            log.debug(f"  Band {i}: max_darkness={band['max_darkness']:.1f}, cluster={band['cluster']}")
+
+        # Step 3: Identify question vs answer bands
+        # Question bands are in the darkest cluster and typically at the top
+        cluster_darkness = {}
+        for cluster_id in range(best_n_clusters):
+            cluster_bands = [b for b in band_stats if b['cluster'] == cluster_id]
+            if cluster_bands:
+                avg_darkness = np.mean([b['max_darkness'] for b in cluster_bands])
+                cluster_darkness[cluster_id] = avg_darkness
+
+        # Darkest cluster = question text
+        question_cluster = max(cluster_darkness.keys(), key=lambda k: cluster_darkness[k])
+
+        # Find where question area ends (last band in question cluster)
+        question_bands_indices = [b['index'] for b in band_stats if b['cluster'] == question_cluster]
+        if question_bands_indices:
+            question_end = max(question_bands_indices)
         else:
-            # If has content, confidence based on how much content
-            confidence = min(1.0, ink_density / threshold)
+            question_end = 0
 
-        log.debug(f"Blank detection: is_blank={is_blank}, ink_density={ink_density:.4f}, "
-                  f"edge_density={edge_density:.4f}, variance={pixel_variance:.2f}, confidence={confidence:.2f}")
+        # Answer bands are everything after the question area
+        answer_bands = [b for b in band_stats if b['index'] > question_end]
+
+        # Step 4: Classify answer bands as handwritten or blank
+        if not answer_bands:
+            # No answer area detected - consider blank
+            log.debug("No answer bands detected - marking as blank")
+            return {
+                "is_blank": True,
+                "confidence": 0.5,
+                "band_count": num_bands,
+                "question_bands": len(question_bands_indices),
+                "answer_bands": 0,
+                "blank_bands": 0,
+                "handwritten_bands": 0,
+                "cluster_method": f"{best_n_clusters}-group"
+            }
+
+        # Determine blank vs handwritten in answer area
+        if best_n_clusters == 3:
+            # With 3 clusters, we can potentially identify: dark (question), medium (handwriting), light (blank)
+            sorted_clusters = sorted(cluster_darkness.keys(), key=lambda k: cluster_darkness[k], reverse=True)
+            medium_cluster = sorted_clusters[1] if len(sorted_clusters) > 1 else None
+            light_cluster = sorted_clusters[2] if len(sorted_clusters) > 2 else sorted_clusters[-1]
+
+            blank_bands = [b for b in answer_bands if b['cluster'] == light_cluster]
+            handwritten_bands = [b for b in answer_bands if b['cluster'] == medium_cluster] if medium_cluster else []
+        else:
+            # With 2 clusters, non-question bands need further analysis
+            # Use intra-band analysis for borderline cases
+            blank_bands = []
+            handwritten_bands = []
+
+            for band in answer_bands:
+                # Apply intra-band analysis
+                is_blank_band = self._analyze_band_for_handwriting(
+                    img_array,
+                    band['index'],
+                    band_height,
+                    height
+                )
+                if is_blank_band:
+                    blank_bands.append(band)
+                else:
+                    handwritten_bands.append(band)
+
+        # Step 5: Final decision
+        blank_ratio = len(blank_bands) / len(answer_bands) if answer_bands else 1.0
+        is_blank = blank_ratio >= blank_threshold
+
+        # Confidence based on how clear the distinction is
+        confidence = abs(blank_ratio - 0.5) * 2  # 0.5 = uncertain, 0 or 1 = certain
+        confidence = max(0.0, min(1.0, confidence))
+
+        log.info(f"Band-based blank detection: is_blank={is_blank}, "
+                  f"blank_ratio={blank_ratio:.2f}, confidence={confidence:.2f}, "
+                  f"question_bands={len(question_bands_indices)}, answer_bands={len(answer_bands)}, "
+                  f"blank_bands={len(blank_bands)}, handwritten_bands={len(handwritten_bands)}, "
+                  f"cluster_method={best_n_clusters}-group, question_end={question_end}")
 
         return {
             "is_blank": is_blank,
             "confidence": confidence,
-            "ink_density": ink_density,
-            "edge_density": edge_density,
-            "pixel_variance": pixel_variance
+            "band_count": num_bands,
+            "question_bands": len(question_bands_indices),
+            "answer_bands": len(answer_bands),
+            "blank_bands": len(blank_bands),
+            "handwritten_bands": len(handwritten_bands),
+            "cluster_method": f"{best_n_clusters}-group"
         }
+
+    def _analyze_band_for_handwriting(self, img_array: np.ndarray, band_index: int, band_height: int, total_height: int) -> bool:
+        """
+        Analyze a single band for handwriting by looking at spatial variation.
+
+        Args:
+            img_array: Full image as numpy array
+            band_index: Index of the band to analyze
+            band_height: Height of each band in pixels
+            total_height: Total image height
+
+        Returns:
+            True if band appears blank, False if it has handwriting
+        """
+        start_y = band_index * band_height
+        end_y = min(start_y + band_height, total_height)
+        band = img_array[start_y:end_y, :]
+
+        # Divide band into horizontal sub-regions
+        num_segments = 10
+        band_width = band.shape[1]
+        segment_width = band_width // num_segments
+
+        segment_max_darkness = []
+        for i in range(num_segments):
+            start_x = i * segment_width
+            end_x = start_x + segment_width if i < num_segments - 1 else band_width
+            segment = band[:, start_x:end_x]
+
+            # Maximum darkness in this segment
+            max_dark = 255 - np.min(segment)  # Invert: higher = darker
+            segment_max_darkness.append(max_dark)
+
+        # If segments show high variation in darkness, it's likely handwriting
+        # Blank areas have uniform (low) darkness across segments
+        darkness_variance = np.var(segment_max_darkness)
+        mean_darkness = np.mean(segment_max_darkness)
+
+        # Thresholds: low variance + low mean = blank
+        is_blank = (darkness_variance < 100 and mean_darkness < 50)
+
+        return is_blank
 
     def is_blank_with_fallback(self, image_base64: str) -> Dict:
         """
