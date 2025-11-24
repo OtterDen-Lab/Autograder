@@ -531,7 +531,7 @@ class Grader__template_grader(Grader__docker):
 
             # We need to provide a target file path, not just directory
             # The Docker copy will handle creating directories
-            target_file_path = os.path.join(target_directory, target_name)
+            target_file_path = target_directory #os.path.join(target_directory, target_name)
 
             files_to_copy.append((file_obj, target_file_path))
             matched_this_file = True
@@ -630,7 +630,7 @@ class Grader__template_grader(Grader__docker):
           comments=f"File naming error: {error_msg}"
         )
 
-      log.debug(f"Matched files: {[(f.name if hasattr(f[0], 'name') else 'unknown', f[1]) for f in submission_files]}")
+      log.debug(f"Matched files: {[(f[0].name if hasattr(f[0], 'name') else 'unknown', f[1]) for f in submission_files]}")
     else:
       # Use legacy student_code_path behavior (backward compatibility)
       log.info("Using legacy student_code_path for file organization")

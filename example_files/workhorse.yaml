@@ -1,5 +1,5 @@
 prod: True
-push: False
+push: True
 
 # Define assignment types with default graders and settings
 assignment_types:
@@ -34,6 +34,13 @@ courses:
             - "tests/unittests_reserved.c"
           student_code_path: "src"
           num_repeats: 10
+        file_paths:
+          '.*student_code.*\.c':
+            path: "src" # subdir within assignment folder
+            name: "student_code.c" # target filename, will force to change into this
+          '.*student_code.*\.h':
+            path: "include" # subdir within assignment folder
+            name: "student_code.h" # target filename, will force to change into this
         assignments:
           - {id: 506889, repo_path: PA1}
           - {id: 506890, repo_path: PA2}
@@ -69,34 +76,38 @@ courses:
         type: programming
         settings:
           base_image_name: "samogden/cst334"
-          extra_install_lines:
-            - "RUN apt install clang"
           source_repo: "https://github.com/CSUMB-SCD-instructors/CST334-online"
           golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
           files_from_golden:
             - "tests/unittests_reserved.c"
-          student_code_path: "src"
           num_repeats: 10
+        file_paths:
+          '.*student_code.*\.c':
+            path: "src" # subdir within assignment folder
+            name: "student_code.c" # target filename, will force to change into this
+          '.*student_code.*\.h':
+            path: "include" # subdir within assignment folder
+            name: "student_code.h" # target filename, will force to change into this
         assignments:
-          - {id: 534546, repo_path: PA1}
-          - {id: 534547, repo_path: PA2}
-          - {id: 534548, repo_path: PA3}
-          - {id: 534549, repo_path: PA4}
-          - {id: 534550, repo_path: PA5}
+          - { id: 534546, repo_path: PA1 }
+          - { id: 534547, repo_path: PA2 }
+          - { id: 534548, repo_path: PA3 }
+          - { id: 534549, repo_path: PA4 }
+          - { id: 534550, repo_path: PA5 }
 
       - name: Learning Logs
         type: text
         settings:
-          prefer_anthropic: false  # Override type default
+          prefer_anthropic: false # Override type default
         assignments:
-          - 534506  # week 1
-          - 534507  # week 2
-          - 534508  # week 3
-          - 534509  # week 4
-          - 534510  # week 5
-          - 534511  # week 6
-          - 534512  # week 7
-          - 534513  # week 8
+          - 534506 # week 1
+          - 534507 # week 2
+          - 534508 # week 3
+          - 534509 # week 4
+          - 534510 # week 5
+          - 534511 # week 6
+          - 534512 # week 7
+          - 534513 # week 8
 
   - name: CST463
     id: 29740
@@ -109,11 +120,16 @@ courses:
           source_repo: "https://github.com/CSUMB-SCD-instructors/CST463"
           golden_repo: "https://github.com/CSUMB-SCD-instructors/CST463-golden"
           record_retention: false  # Default to false for this group
+        file_paths:
+          '.*student_code.*\.py':
+            path: "" # subdir within assignment folder
+            name: "student_code.py" # target filename, will force to change into this
         assignments:
-          - {id: 527876, repo_path: PA1, record_retention: true}  # Override for this assignment
-          - {id: 529948, repo_path: PA2, record_retention: true}  # Override for this assignment
-          - {id: 532473, repo_path: PA3, record_retention: true}  # Override for this assignment
-          - {id: 534155, repo_path: PA4, record_retention: true}  # Override for this assignment
+          - {id: 527876, repo_path: PA1}
+          - {id: 529948, repo_path: PA2}
+          - {id: 532473, repo_path: PA3}
+          - {id: 534155, repo_path: PA4}
+          - {id: 538477, repo_path: PA5}
 
       - name: Learning Logs
         type: text
@@ -134,4 +150,3 @@ courses:
           - 520126  # LL12
           - 520127  # LL13
           - 520128  # LL14
-
