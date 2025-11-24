@@ -23,8 +23,9 @@ log = logging.getLogger(__name__)
 
 
 # AI Prompts for Text Submission Grading
-def get_aggregate_analysis_prompt(submission_texts: List[str], assignment_name: str) -> str:
-    """
+def get_aggregate_analysis_prompt(submission_texts: List[str],
+                                  assignment_name: str) -> str:
+  """
     Get prompt for aggregate analysis of all submissions.
 
     Args:
@@ -34,9 +35,9 @@ def get_aggregate_analysis_prompt(submission_texts: List[str], assignment_name: 
     Returns:
         Formatted prompt string for aggregate analysis
     """
-    num_submissions = len(submission_texts)
+  num_submissions = len(submission_texts)
 
-    return f"""
+  return f"""
 You are analyzing student learning log submissions for an assignment called "{assignment_name}".
 
 Please analyze these {num_submissions} student submissions and return a JSON response with:
@@ -63,8 +64,9 @@ Return only valid JSON.
 """
 
 
-def get_individual_grading_prompt(submission_text: str, core_topics: List[str]) -> str:
-    """
+def get_individual_grading_prompt(submission_text: str,
+                                  core_topics: List[str]) -> str:
+  """
     Get prompt for individual submission grading.
 
     Args:
@@ -74,9 +76,9 @@ def get_individual_grading_prompt(submission_text: str, core_topics: List[str]) 
     Returns:
         Formatted prompt string for individual grading
     """
-    topics_str = ", ".join(core_topics)
+  topics_str = ", ".join(core_topics)
 
-    return f"""
+  return f"""
 You are analyzing a student's learning log submission for grading and support identification. Learning logs are study tools where students explain topics to their future selves. The instructor emphasizes: "the best way to make a study guide and are for you, because I know this material already -- write it for your future self."
 
 These GENERAL topics were covered in class: {topics_str}
@@ -132,7 +134,7 @@ Return only valid JSON.
 
 
 def get_question_consolidation_prompt(questions_list: List[str]) -> str:
-    """
+  """
     Get prompt for consolidating similar questions into canonical versions.
 
     Args:
@@ -141,9 +143,10 @@ def get_question_consolidation_prompt(questions_list: List[str]) -> str:
     Returns:
         Formatted prompt string for question consolidation
     """
-    questions_str = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions_list)])
+  questions_str = "\n".join(
+    [f"{i+1}. {q}" for i, q in enumerate(questions_list)])
 
-    return f"""
+  return f"""
 You are analyzing questions from student learning logs. Students have asked various questions, many of which are similar but phrased differently. Your task is to consolidate similar questions into clearly phrased canonical versions.
 
 Here are the questions students asked:
@@ -219,8 +222,11 @@ class TextSubmissionGrader(Grader):
     """
     return isinstance(submission, TextSubmission)
 
-  def _truncate_submission_text(self, text: str, max_words: int = DEFAULT_MAX_WORDS,
-                                max_chars: int = DEFAULT_MAX_CHARACTERS) -> tuple[str, bool]:
+  def _truncate_submission_text(
+      self,
+      text: str,
+      max_words: int = DEFAULT_MAX_WORDS,
+      max_chars: int = DEFAULT_MAX_CHARACTERS) -> tuple[str, bool]:
     """
     Truncate submission text to max words or max characters, whichever is shorter.
 
@@ -261,7 +267,9 @@ class TextSubmissionGrader(Grader):
     from Autograder.assignment import Assignment_TextAssignment
 
     if not isinstance(assignment, Assignment_TextAssignment):
-      log.error(f"TextSubmissionGrader requires Assignment_TextAssignment, got {type(assignment)}")
+      log.error(
+        f"TextSubmissionGrader requires Assignment_TextAssignment, got {type(assignment)}"
+      )
       return
 
     # Store assignment and course info for Slack reporting
@@ -283,7 +291,9 @@ class TextSubmissionGrader(Grader):
 
     # Check if assignment was skipped due to lock date
     if not submission_data:
-      log.info(f"No submissions to grade for '{assignment_name}' - assignment may be unlocked")
+      log.info(
+        f"No submissions to grade for '{assignment_name}' - assignment may be unlocked"
+      )
       return
 
     # Truncate all submission texts before processing
@@ -296,7 +306,9 @@ class TextSubmissionGrader(Grader):
         truncation_count += 1
 
     if truncation_count > 0:
-      log.info(f"Truncated {truncation_count} submission(s) exceeding {DEFAULT_MAX_WORDS} words or {DEFAULT_MAX_CHARACTERS} characters")
+      log.info(
+        f"Truncated {truncation_count} submission(s) exceeding {DEFAULT_MAX_WORDS} words or {DEFAULT_MAX_CHARACTERS} characters"
+      )
 
     # Also truncate in submission_data for phase 2
     for submission_info in submission_data:
@@ -306,30 +318,37 @@ class TextSubmissionGrader(Grader):
         submission_info['text'] = truncated
         submission_info['was_truncated'] = True
 
-    log.info(f"Starting 3-phase grading for '{assignment_name}' with {len(submission_data)} submissions")
+    log.info(
+      f"Starting 3-phase grading for '{assignment_name}' with {len(submission_data)} submissions"
+    )
 
     # Phase 1: Aggregate Analysis
-    log.info("="*60)
+    log.info("=" * 60)
     log.info("PHASE 1: AGGREGATE ANALYSIS")
-    log.info("="*60)
-    self.aggregate_results = self.phase_1_aggregate_analysis(truncated_texts, assignment_name)
+    log.info("=" * 60)
+    self.aggregate_results = self.phase_1_aggregate_analysis(
+      truncated_texts, assignment_name)
 
     # Phase 2: Individual Grading
-    log.info("="*60)
+    log.info("=" * 60)
     log.info("PHASE 2: INDIVIDUAL GRADING")
-    log.info("="*60)
-    self.individual_results = self.phase_2_individual_grading(submission_data, self.core_topics)
+    log.info("=" * 60)
+    self.individual_results = self.phase_2_individual_grading(
+      submission_data, self.core_topics)
 
     # Apply grades to submissions
-    self._apply_grades_to_submissions(assignment.submissions, self.individual_results)
+    self._apply_grades_to_submissions(assignment.submissions,
+                                      self.individual_results)
 
     # Phase 3: Report Generation
-    log.info("="*60)
+    log.info("=" * 60)
     log.info("PHASE 3: REPORT GENERATION")
-    log.info("="*60)
-    self.phase_3_generate_report(self.aggregate_results, self.individual_results)
+    log.info("=" * 60)
+    self.phase_3_generate_report(self.aggregate_results,
+                                 self.individual_results)
 
-  def phase_1_aggregate_analysis(self, submission_texts: List[str], assignment_name: str) -> Dict:
+  def phase_1_aggregate_analysis(self, submission_texts: List[str],
+                                 assignment_name: str) -> Dict:
     """
     Phase 1: Analyze all submissions to identify core topics and patterns.
 
@@ -344,11 +363,19 @@ class TextSubmissionGrader(Grader):
     import json
     import re
 
-    log.info(f"Analyzing {len(submission_texts)} submissions for aggregate insights...")
+    log.info(
+      f"Analyzing {len(submission_texts)} submissions for aggregate insights..."
+    )
 
     if not submission_texts:
       log.warning("No submissions to analyze")
-      return {"core_topics": [], "common_themes": "", "key_insights": "", "learning_patterns": "", "teaching_feedback": ""}
+      return {
+        "core_topics": [],
+        "common_themes": "",
+        "key_insights": "",
+        "learning_patterns": "",
+        "teaching_feedback": ""
+      }
 
     # Get the prompt
     prompt = get_aggregate_analysis_prompt(submission_texts, assignment_name)
@@ -356,12 +383,15 @@ class TextSubmissionGrader(Grader):
     if self.prefer_anthropic:
       # Try Anthropic first if preferred
       try:
-        log.debug("Attempting aggregate analysis with Anthropic (preferred)...")
+        log.debug(
+          "Attempting aggregate analysis with Anthropic (preferred)...")
         ai_helper = AI_Helper__Anthropic()
-        analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+        analysis_text, usage = ai_helper.query_ai(prompt, [],
+                                                  max_response_tokens=2000)
 
         # Track token usage
-        self._track_token_usage(usage, "Phase 1 - Aggregate Analysis (Anthropic)")
+        self._track_token_usage(usage,
+                                "Phase 1 - Aggregate Analysis (Anthropic)")
 
         # Try to parse JSON from Anthropic response
         json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
@@ -383,7 +413,9 @@ class TextSubmissionGrader(Grader):
         # Apply topic addition hook
         self.core_topics = self.add_manual_topics_hook(self.core_topics)
 
-        log.info(f"✅ Aggregate analysis completed (Anthropic). Identified {len(self.core_topics)} core topics:")
+        log.info(
+          f"✅ Aggregate analysis completed (Anthropic). Identified {len(self.core_topics)} core topics:"
+        )
         for i, topic in enumerate(self.core_topics, 1):
           log.info(f"   {i}. {topic}")
 
@@ -408,7 +440,9 @@ class TextSubmissionGrader(Grader):
       # Apply topic addition hook
       self.core_topics = self.add_manual_topics_hook(self.core_topics)
 
-      log.info(f"✅ Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics:")
+      log.info(
+        f"✅ Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics:"
+      )
       for i, topic in enumerate(self.core_topics, 1):
         log.info(f"   {i}. {topic}")
 
@@ -422,10 +456,12 @@ class TextSubmissionGrader(Grader):
         try:
           # Fallback to Anthropic when OpenAI was first choice
           ai_helper = AI_Helper__Anthropic()
-          analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+          analysis_text, usage = ai_helper.query_ai(prompt, [],
+                                                    max_response_tokens=2000)
 
           # Track token usage
-          self._track_token_usage(usage, "Phase 1 - Aggregate Analysis (Anthropic fallback)")
+          self._track_token_usage(
+            usage, "Phase 1 - Aggregate Analysis (Anthropic fallback)")
 
           # Try to parse JSON from Anthropic response
           json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
@@ -447,7 +483,9 @@ class TextSubmissionGrader(Grader):
           # Apply topic addition hook
           self.core_topics = self.add_manual_topics_hook(self.core_topics)
 
-          log.info(f"✅ Aggregate analysis completed (Anthropic fallback). Identified {len(self.core_topics)} core topics:")
+          log.info(
+            f"✅ Aggregate analysis completed (Anthropic fallback). Identified {len(self.core_topics)} core topics:"
+          )
           for i, topic in enumerate(self.core_topics, 1):
             log.info(f"   {i}. {topic}")
 
@@ -463,7 +501,8 @@ class TextSubmissionGrader(Grader):
             "core_topics": []
           }
 
-  def phase_2_individual_grading(self, submission_data: List[Dict], core_topics: List[str]) -> List[Dict]:
+  def phase_2_individual_grading(self, submission_data: List[Dict],
+                                 core_topics: List[str]) -> List[Dict]:
     """
     Phase 2: Grade each submission individually using core topics.
 
@@ -493,7 +532,9 @@ class TextSubmissionGrader(Grader):
       submission_text = submission_info.get('text', '')
       word_count = submission_info.get('word_count', 0)
 
-      log.info(f"   Grading {i}/{len(submission_data)}: {student_name} ({word_count} words)")
+      log.info(
+        f"   Grading {i}/{len(submission_data)}: {student_name} ({word_count} words)"
+      )
 
       if not submission_text.strip():
         # Handle empty submissions
@@ -511,7 +552,8 @@ class TextSubmissionGrader(Grader):
         }
       else:
         # Grade the submission using AI
-        result = self._grade_individual_submission(submission_text, core_topics, student_id)
+        result = self._grade_individual_submission(submission_text,
+                                                   core_topics, student_id)
 
       # Calculate length score (separate from AI analysis) and store accurate word count
       result["length_score"] = 2 if word_count >= 250 else 0
@@ -519,12 +561,10 @@ class TextSubmissionGrader(Grader):
       result["student_name"] = student_name  # Store student name for reporting
 
       # Calculate total grade (ensure all scores are integers)
-      total_grade = (
-        int(result.get("completion_score", 0)) +
-        int(result.get("length_score", 0)) +
-        int(result.get("relevance_score", 0)) +
-        int(result.get("explanation_effort_score", 0))
-      )
+      total_grade = (int(result.get("completion_score", 0)) +
+                     int(result.get("length_score", 0)) +
+                     int(result.get("relevance_score", 0)) +
+                     int(result.get("explanation_effort_score", 0)))
       result["total_grade"] = total_grade
 
       # Track students needing support (handle string boolean from AI)
@@ -534,24 +574,31 @@ class TextSubmissionGrader(Grader):
 
       if needs_support:
         self.support_needed_students.append({
-          "student_id": student_id,
-          "student_name": student_name,
-          "reason": result.get("support_reason", "Unknown reason")
+          "student_id":
+          student_id,
+          "student_name":
+          student_name,
+          "reason":
+          result.get("support_reason", "Unknown reason")
         })
 
       individual_results.append(result)
 
-    log.info(f"✅ Individual grading completed. {len(self.support_needed_students)} students may need support.")
+    log.info(
+      f"✅ Individual grading completed. {len(self.support_needed_students)} students may need support."
+    )
 
     # Phase 2.5: Consolidate questions
-    log.info("="*60)
+    log.info("=" * 60)
     log.info("PHASE 2.5: QUESTION CONSOLIDATION")
-    log.info("="*60)
-    self.consolidated_questions = self._consolidate_questions(individual_results)
+    log.info("=" * 60)
+    self.consolidated_questions = self._consolidate_questions(
+      individual_results)
 
     return individual_results
 
-  def _consolidate_questions(self, individual_results: List[Dict]) -> List[Dict]:
+  def _consolidate_questions(self,
+                             individual_results: List[Dict]) -> List[Dict]:
     """
     Consolidate similar questions from all submissions into canonical versions.
 
@@ -584,24 +631,29 @@ class TextSubmissionGrader(Grader):
       # Try Anthropic first if preferred
       try:
         ai_helper = AI_Helper__Anthropic()
-        analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+        analysis_text, usage = ai_helper.query_ai(prompt, [],
+                                                  max_response_tokens=2000)
 
         # Track token usage
-        self._track_token_usage(usage, "Phase 2.5 - Question Consolidation (Anthropic)")
+        self._track_token_usage(
+          usage, "Phase 2.5 - Question Consolidation (Anthropic)")
 
         # Try to parse JSON from response
         json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
         if json_match:
           result = json.loads(json_match.group())
           consolidated = result.get("consolidated_questions", [])
-          log.info(f"✅ Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions")
+          log.info(
+            f"✅ Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+          )
           return consolidated
         else:
           log.warning("Could not parse JSON from Anthropic response")
           return []
 
       except Exception as e:
-        log.debug(f"Anthropic question consolidation failed: {e}. Trying OpenAI...")
+        log.debug(
+          f"Anthropic question consolidation failed: {e}. Trying OpenAI...")
 
     try:
       # Try OpenAI (either first choice or fallback)
@@ -609,10 +661,13 @@ class TextSubmissionGrader(Grader):
       result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
 
       # Track token usage
-      self._track_token_usage(usage, "Phase 2.5 - Question Consolidation (OpenAI)")
+      self._track_token_usage(usage,
+                              "Phase 2.5 - Question Consolidation (OpenAI)")
 
       consolidated = result.get("consolidated_questions", [])
-      log.info(f"✅ Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions")
+      log.info(
+        f"✅ Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+      )
       return consolidated
 
     except Exception as e:
@@ -623,27 +678,36 @@ class TextSubmissionGrader(Grader):
         try:
           # Fallback to Anthropic when OpenAI was first choice
           ai_helper = AI_Helper__Anthropic()
-          analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+          analysis_text, usage = ai_helper.query_ai(prompt, [],
+                                                    max_response_tokens=2000)
 
           # Track token usage
-          self._track_token_usage(usage, "Phase 2.5 - Question Consolidation (Anthropic fallback)")
+          self._track_token_usage(
+            usage, "Phase 2.5 - Question Consolidation (Anthropic fallback)")
 
           # Try to parse JSON from response
           json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
           if json_match:
             result = json.loads(json_match.group())
             consolidated = result.get("consolidated_questions", [])
-            log.info(f"✅ Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions")
+            log.info(
+              f"✅ Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+            )
             return consolidated
           else:
-            log.warning("Could not parse JSON from Anthropic fallback response")
+            log.warning(
+              "Could not parse JSON from Anthropic fallback response")
             return []
 
         except Exception as fallback_error:
-          log.error(f"Both AI providers failed for question consolidation: {fallback_error}")
+          log.error(
+            f"Both AI providers failed for question consolidation: {fallback_error}"
+          )
           return []
 
-  def _grade_individual_submission(self, submission_text: str, core_topics: List[str], student_id: str) -> Dict:
+  def _grade_individual_submission(self, submission_text: str,
+                                   core_topics: List[str],
+                                   student_id: str) -> Dict:
     """
     Grade a single submission using AI analysis.
 
@@ -665,10 +729,12 @@ class TextSubmissionGrader(Grader):
       # Try Anthropic first if preferred
       try:
         ai_helper = AI_Helper__Anthropic()
-        analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
+        analysis_text, usage = ai_helper.query_ai(prompt, [],
+                                                  max_response_tokens=1000)
 
         # Track token usage
-        self._track_token_usage(usage, f"Phase 2 - Individual Grading ({student_id}) - Anthropic")
+        self._track_token_usage(
+          usage, f"Phase 2 - Individual Grading ({student_id}) - Anthropic")
 
         # Try to parse JSON from response
         json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
@@ -679,15 +745,24 @@ class TextSubmissionGrader(Grader):
         else:
           # If no JSON, create structured response from text
           return {
-            "student_id": student_id,
-            "completion_score": 3,  # Default to moderate score
-            "relevance_score": 1,
-            "explanation_effort_score": 1,
+            "student_id":
+            student_id,
+            "completion_score":
+            3,  # Default to moderate score
+            "relevance_score":
+            1,
+            "explanation_effort_score":
+            1,
             "topics_covered": [],
-            "topics_missing": core_topics,
-            "needs_support": False,
-            "support_reason": "",
-            "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
+            "topics_missing":
+            core_topics,
+            "needs_support":
+            False,
+            "support_reason":
+            "",
+            "feedback":
+            analysis_text[:300] +
+            "..." if len(analysis_text) > 300 else analysis_text
           }
 
       except Exception as e:
@@ -699,7 +774,8 @@ class TextSubmissionGrader(Grader):
       result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
 
       # Track token usage
-      self._track_token_usage(usage, f"Phase 2 - Individual Grading ({student_id}) - OpenAI")
+      self._track_token_usage(
+        usage, f"Phase 2 - Individual Grading ({student_id}) - OpenAI")
 
       result["student_id"] = student_id
       return result
@@ -712,10 +788,14 @@ class TextSubmissionGrader(Grader):
         try:
           # Fallback to Anthropic when OpenAI was first choice
           ai_helper = AI_Helper__Anthropic()
-          analysis_text, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
+          analysis_text, usage = ai_helper.query_ai(prompt, [],
+                                                    max_response_tokens=1000)
 
           # Track token usage
-          self._track_token_usage(usage, f"Phase 2 - Individual Grading ({student_id}) - Anthropic fallback")
+          self._track_token_usage(
+            usage,
+            f"Phase 2 - Individual Grading ({student_id}) - Anthropic fallback"
+          )
 
           # Try to parse JSON from response
           json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
@@ -726,19 +806,29 @@ class TextSubmissionGrader(Grader):
           else:
             # If no JSON, create structured response from text
             return {
-              "student_id": student_id,
-              "completion_score": 3,  # Default to moderate score
-              "relevance_score": 1,
-              "explanation_effort_score": 1,
+              "student_id":
+              student_id,
+              "completion_score":
+              3,  # Default to moderate score
+              "relevance_score":
+              1,
+              "explanation_effort_score":
+              1,
               "topics_covered": [],
-              "topics_missing": core_topics,
-              "needs_support": False,
-              "support_reason": "",
-              "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
+              "topics_missing":
+              core_topics,
+              "needs_support":
+              False,
+              "support_reason":
+              "",
+              "feedback":
+              analysis_text[:300] +
+              "..." if len(analysis_text) > 300 else analysis_text
             }
 
         except Exception as fallback_error:
-          log.error(f"Both AI providers failed for {student_id}: {fallback_error}")
+          log.error(
+            f"Both AI providers failed for {student_id}: {fallback_error}")
           return {
             "student_id": student_id,
             "completion_score": 0,
@@ -751,7 +841,8 @@ class TextSubmissionGrader(Grader):
             "feedback": f"Error analyzing submission: {e}"
           }
 
-  def phase_3_generate_report(self, aggregate_results: Dict, individual_results: List[Dict]) -> None:
+  def phase_3_generate_report(self, aggregate_results: Dict,
+                              individual_results: List[Dict]) -> None:
     """
     Phase 3: Generate comprehensive report with insights and recommendations.
 
@@ -762,7 +853,8 @@ class TextSubmissionGrader(Grader):
     log.info("Generating comprehensive class insights report...")
 
     # Compile report data
-    report_data = self._compile_report_data(aggregate_results, individual_results)
+    report_data = self._compile_report_data(aggregate_results,
+                                            individual_results)
 
     # Display the report
     self._display_aggregate_insights(report_data)
@@ -774,7 +866,8 @@ class TextSubmissionGrader(Grader):
 
     log.info("✅ Report generation completed!")
 
-  def _compile_report_data(self, aggregate_results: Dict, individual_results: List[Dict]) -> Dict:
+  def _compile_report_data(self, aggregate_results: Dict,
+                           individual_results: List[Dict]) -> Dict:
     """
     Compile all data needed for the report.
 
@@ -786,12 +879,18 @@ class TextSubmissionGrader(Grader):
         Dictionary containing all compiled report data
     """
     # Calculate grade statistics
-    total_grades = [result.get("total_grade", 0) for result in individual_results]
+    total_grades = [
+      result.get("total_grade", 0) for result in individual_results
+    ]
     grade_stats = {
-      "total_students": len(individual_results),
-      "average_grade": sum(total_grades) / len(total_grades) if total_grades else 0,
-      "grade_distribution": self._calculate_grade_distribution(total_grades),
-      "students_below_70": sum(1 for grade in total_grades if grade < 7),  # Below 70%
+      "total_students":
+      len(individual_results),
+      "average_grade":
+      sum(total_grades) / len(total_grades) if total_grades else 0,
+      "grade_distribution":
+      self._calculate_grade_distribution(total_grades),
+      "students_below_70":
+      sum(1 for grade in total_grades if grade < 7),  # Below 70%
     }
 
     # Topic coverage analysis
@@ -841,10 +940,12 @@ class TextSubmissionGrader(Grader):
     topic_stats = {}
     for topic in self.core_topics:
       covered_count = sum(1 for result in individual_results
-                         if topic in result.get("topics_covered", []))
+                          if topic in result.get("topics_covered", []))
       topic_stats[topic] = {
-        "students_covered": covered_count,
-        "coverage_percentage": (covered_count / len(individual_results)) * 100 if individual_results else 0
+        "students_covered":
+        covered_count,
+        "coverage_percentage": (covered_count / len(individual_results)) *
+        100 if individual_results else 0
       }
 
     return topic_stats
@@ -854,7 +955,7 @@ class TextSubmissionGrader(Grader):
     insights = report_data.get("aggregate_insights", {})
 
     log.info("\n" + "📊 CLASS-WIDE INSIGHTS")
-    log.info("="*60)
+    log.info("=" * 60)
 
     if insights.get("common_themes"):
       log.info(f"🎯 Common Themes:\n{insights['common_themes']}")
@@ -866,7 +967,8 @@ class TextSubmissionGrader(Grader):
       log.info(f"\n🔄 Learning Patterns:\n{insights['learning_patterns']}")
 
     if insights.get("teaching_feedback"):
-      log.info(f"\n🎓 Teaching Recommendations:\n{insights['teaching_feedback']}")
+      log.info(
+        f"\n🎓 Teaching Recommendations:\n{insights['teaching_feedback']}")
 
     # Display core topics
     core_topics = report_data.get("core_topics", [])
@@ -882,10 +984,12 @@ class TextSubmissionGrader(Grader):
     stats = report_data.get("grade_statistics", {})
 
     log.info("\n" + "📈 GRADE SUMMARY")
-    log.info("="*60)
+    log.info("=" * 60)
 
     log.info(f"Total Students: {stats.get('total_students', 0)}")
-    log.info(f"Average Grade: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)")
+    log.info(
+      f"Average Grade: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)"
+    )
 
     distribution = stats.get("grade_distribution", {})
     if distribution:
@@ -905,16 +1009,18 @@ class TextSubmissionGrader(Grader):
 
     if students_needing_support > 0:
       log.info("\n" + "🆘 STUDENTS WHO MAY BENEFIT FROM OFFICE HOURS")
-      log.info("="*60)
+      log.info("=" * 60)
 
       for student_info in support.get("support_details", []):
         student_id = student_info.get("student_id", "Unknown")
         reason = student_info.get("reason", "No reason provided")
         log.info(f"• {student_id}: {reason}")
     else:
-      log.info("\n📈 All students appear to be engaging well with the material!")
+      log.info(
+        "\n📈 All students appear to be engaging well with the material!")
 
-  def _apply_grades_to_submissions(self, submissions: List[Submission], individual_results: List[Dict]) -> None:
+  def _apply_grades_to_submissions(self, submissions: List[Submission],
+                                   individual_results: List[Dict]) -> None:
     """
     Apply calculated grades and feedback to Canvas submission objects.
 
@@ -923,7 +1029,10 @@ class TextSubmissionGrader(Grader):
         individual_results: Grading results with scores and feedback
     """
     # Create a mapping from student_id to results for efficient lookup
-    results_by_student = {result.get('student_id'): result for result in individual_results}
+    results_by_student = {
+      result.get('student_id'): result
+      for result in individual_results
+    }
 
     for submission in submissions:
       result = results_by_student.get(submission.student.user_id)
@@ -937,7 +1046,8 @@ class TextSubmissionGrader(Grader):
         submission.feedback = Feedback(percentage_score, feedback_text)
       else:
         # Fallback for missing results
-        submission.feedback = Feedback(0.0, "Error: Could not analyze submission")
+        submission.feedback = Feedback(0.0,
+                                       "Error: Could not analyze submission")
 
   def _generate_rubric_feedback(self, result: Dict) -> str:
     """
@@ -959,20 +1069,13 @@ class TextSubmissionGrader(Grader):
     ai_feedback = result.get('feedback', '')
 
     feedback_lines = [
-      "Learning Log Feedback",
-      "=" * 50,
-      "",
-      "GRADE BREAKDOWN:",
+      "Learning Log Feedback", "=" * 50, "", "GRADE BREAKDOWN:",
       f"• Completion (4 pts): {completion_score}/4 - Depth of reflection and genuine effort",
       f"• Length (2 pts): {length_score}/2 - {'✓ Met 250+ word requirement' if length_score == 2 else '✗ Under 250 words required'}",
       f"• Relevance (2 pts): {relevance_score}/2 - Connection to class material",
       f"• Explanation Effort (2 pts): {effort_score}/2 - Attempt to explain concepts clearly",
-      "",
-      f"TOTAL SCORE: {total_score}/10 ({(total_score/10)*100:.0f}%)",
-      f"Word Count: {word_count} words",
-      "",
-      "FEEDBACK:",
-      ai_feedback
+      "", f"TOTAL SCORE: {total_score}/10 ({(total_score/10)*100:.0f}%)",
+      f"Word Count: {word_count} words", "", "FEEDBACK:", ai_feedback
     ]
 
     return "\n".join(feedback_lines)
@@ -1025,7 +1128,8 @@ class TextSubmissionGrader(Grader):
 
       # Sanitize course and assignment names for filename
       course_safe = self.course_name.replace(' ', '_').replace('/', '-')
-      assignment_safe = self.assignment_name.replace(' ', '_').replace('/', '-')
+      assignment_safe = self.assignment_name.replace(' ',
+                                                     '_').replace('/', '-')
       filename = f"{course_safe}.{assignment_safe}.learning-log.md"
       filepath = os.path.join(self.records_dir, filename)
 
@@ -1053,7 +1157,9 @@ class TextSubmissionGrader(Grader):
     slack_channel = self.slack_channel
 
     if not slack_token or not slack_channel:
-      log.debug("Slack not configured (missing SLACK_BOT_TOKEN or course slack_channel)")
+      log.debug(
+        "Slack not configured (missing SLACK_BOT_TOKEN or course slack_channel)"
+      )
       return
 
     try:
@@ -1071,11 +1177,11 @@ class TextSubmissionGrader(Grader):
           "unfurl_links": False,
           "unfurl_media": False
         },
-        timeout=10
-      )
+        timeout=10)
 
       if not response.json().get('ok'):
-        log.warning(f"Slack notification failed: {response.json().get('error')}")
+        log.warning(
+          f"Slack notification failed: {response.json().get('error')}")
         return
 
       log.info("Slack notification sent successfully")
@@ -1087,7 +1193,8 @@ class TextSubmissionGrader(Grader):
     except Exception as e:
       log.warning(f"Failed to send Slack notification: {e}")
 
-  def _upload_questions_to_slack(self, slack_token: str, slack_channel: str) -> None:
+  def _upload_questions_to_slack(self, slack_token: str,
+                                 slack_channel: str) -> None:
     """
     Upload student questions markdown file to Slack.
 
@@ -1102,7 +1209,8 @@ class TextSubmissionGrader(Grader):
       # Generate filename
       timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
       course_safe = self.course_name.replace(' ', '_').replace('/', '-')
-      assignment_safe = self.assignment_name.replace(' ', '_').replace('/', '-')
+      assignment_safe = self.assignment_name.replace(' ',
+                                                     '_').replace('/', '-')
       filename = f"questions_{course_safe}_{assignment_safe}_{timestamp}.md"
 
       # Upload file to Slack
@@ -1110,19 +1218,23 @@ class TextSubmissionGrader(Grader):
         "https://slack.com/api/files.upload",
         headers={"Authorization": f"Bearer {slack_token}"},
         data={
-          "channels": slack_channel,
-          "filename": filename,
-          "filetype": "markdown",
-          "initial_comment": f"Student questions from {self.assignment_name} ({len(self.consolidated_questions)} topics)"
+          "channels":
+          slack_channel,
+          "filename":
+          filename,
+          "filetype":
+          "markdown",
+          "initial_comment":
+          f"Student questions from {self.assignment_name} ({len(self.consolidated_questions)} topics)"
         },
         files={"file": (filename, markdown_content, "text/markdown")},
-        timeout=30
-      )
+        timeout=30)
 
       if response.json().get('ok'):
         log.info(f"Questions file uploaded to Slack: {filename}")
       else:
-        log.warning(f"Failed to upload questions file: {response.json().get('error')}")
+        log.warning(
+          f"Failed to upload questions file: {response.json().get('error')}")
 
     except Exception as e:
       log.warning(f"Failed to upload questions to Slack: {e}")
@@ -1139,12 +1251,9 @@ class TextSubmissionGrader(Grader):
 
     lines = [
       f"# Student Questions: {self.course_name} - {self.assignment_name}",
-      f"*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
-      "",
-      f"Total unique question topics: {len(self.consolidated_questions)}",
-      "",
-      "---",
-      ""
+      f"*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*", "",
+      f"Total unique question topics: {len(self.consolidated_questions)}", "",
+      "---", ""
     ]
 
     # Add each consolidated question group
@@ -1158,7 +1267,9 @@ class TextSubmissionGrader(Grader):
       lines.append("")
       lines.append(f"**Question:** {canonical}")
       lines.append("")
-      lines.append(f"*Asked by {student_count} student{'s' if student_count > 1 else ''}*")
+      lines.append(
+        f"*Asked by {student_count} student{'s' if student_count > 1 else ''}*"
+      )
       lines.append("")
 
       # Add space for instructor's answer
@@ -1170,7 +1281,8 @@ class TextSubmissionGrader(Grader):
       # Show original questions in a collapsible section if there are multiple
       if len(original_questions) > 1:
         lines.append("<details>")
-        lines.append("<summary>Show original questions from students</summary>")
+        lines.append(
+          "<summary>Show original questions from students</summary>")
         lines.append("")
         for orig_q in original_questions:
           lines.append(f"- {orig_q}")
@@ -1221,20 +1333,23 @@ class TextSubmissionGrader(Grader):
     distribution = stats.get("grade_distribution", {})
     if distribution:
       a_b_count = distribution.get("A", 0) + distribution.get("B", 0)
-      c_d_f_count = distribution.get("C", 0) + distribution.get("D", 0) + distribution.get("F", 0)
+      c_d_f_count = distribution.get("C", 0) + distribution.get(
+        "D", 0) + distribution.get("F", 0)
       lines.append(f"• Grades: {a_b_count} A/B, {c_d_f_count} C/D/F")
 
     # Add support needs - show ALL students with better formatting
     support_count = support.get("students_needing_support", 0)
     if support_count > 0:
       lines.append(f"\n*Office Hours Recommended ({support_count} students):*")
-      for i, student_info in enumerate(support.get("support_details", []), 1):  # No limit - show all
+      for i, student_info in enumerate(support.get("support_details", []),
+                                       1):  # No limit - show all
         student_name = student_info.get("student_name", "Unknown Student")
         reason = student_info.get("reason", "")  # No truncation
         if reason.strip():
           lines.append(f"{i}. `{student_name}` - {reason}")
         else:
-          lines.append(f"{i}. `{student_name}` - *(No specific reason provided)*")
+          lines.append(
+            f"{i}. `{student_name}` - *(No specific reason provided)*")
     else:
       lines.append("\n*Status:* All students engaging well")
 
@@ -1249,22 +1364,31 @@ class TextSubmissionGrader(Grader):
     if teaching_feedback:
       lines.append(f"\n*Teaching Suggestions:*")
       # Split into sentences and make each a bullet point
-      sentences = [s.strip() for s in teaching_feedback.split('.') if s.strip()]
+      sentences = [
+        s.strip() for s in teaching_feedback.split('.') if s.strip()
+      ]
       for sentence in sentences:
-        lines.append(f"• {sentence}")  # Don't add period since we split on periods
+        lines.append(
+          f"• {sentence}")  # Don't add period since we split on periods
 
     # Add consolidated questions section
     if self.consolidated_questions:
-      lines.append(f"\n*Key Questions from Students ({len(self.consolidated_questions)} topics):*")
+      lines.append(
+        f"\n*Key Questions from Students ({len(self.consolidated_questions)} topics):*"
+      )
       for q_group in self.consolidated_questions:
         canonical = q_group.get("canonical_question", "")
         topic = q_group.get("topic", "")
         original_count = len(q_group.get("original_questions", []))
 
         if topic:
-          lines.append(f"• *{topic}*: {canonical} ({original_count} student{'s' if original_count > 1 else ''})")
+          lines.append(
+            f"• *{topic}*: {canonical} ({original_count} student{'s' if original_count > 1 else ''})"
+          )
         else:
-          lines.append(f"• {canonical} ({original_count} student{'s' if original_count > 1 else ''})")
+          lines.append(
+            f"• {canonical} ({original_count} student{'s' if original_count > 1 else ''})"
+          )
 
     return "\n".join(lines)
 
@@ -1298,7 +1422,8 @@ class TextSubmissionGrader(Grader):
       "cost": cost
     })
 
-    log.debug(f"{operation}: {total_tokens} tokens (${cost:.4f}) via {provider}")
+    log.debug(
+      f"{operation}: {total_tokens} tokens (${cost:.4f}) via {provider}")
 
   def _calculate_cost(self, usage_info: Dict) -> float:
     """
@@ -1317,12 +1442,14 @@ class TextSubmissionGrader(Grader):
     if provider == "openai":
       # GPT-4o pricing (approximate)
       prompt_cost = (prompt_tokens / 1000) * 0.03  # $0.03 per 1K input tokens
-      completion_cost = (completion_tokens / 1000) * 0.06  # $0.06 per 1K output tokens
+      completion_cost = (completion_tokens /
+                         1000) * 0.06  # $0.06 per 1K output tokens
       return prompt_cost + completion_cost
     elif provider == "anthropic":
       # Claude pricing (approximate)
       prompt_cost = (prompt_tokens / 1000) * 0.03  # $0.03 per 1K input tokens
-      completion_cost = (completion_tokens / 1000) * 0.015  # $0.015 per 1K output tokens
+      completion_cost = (completion_tokens /
+                         1000) * 0.015  # $0.015 per 1K output tokens
       return prompt_cost + completion_cost
     else:
       return 0.0

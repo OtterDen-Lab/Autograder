@@ -17,8 +17,8 @@ except ImportError:
   pass
 
 import logging
-log = logging.getLogger(__name__)
 
+log = logging.getLogger(__name__)
 
 
 class Grader(abc.ABC):
@@ -28,14 +28,15 @@ class Grader(abc.ABC):
   Provides the framework for grading assignments by processing submissions
   and generating feedback.
   """
+
   def __init__(self, *args, **kwargs):
     super().__init__()
     self.ready_to_finalize = True
     # Store assignment identifier for logging (prefer repo_path, then assignment_name, then assignment_path)
-    self.assignment_identifier = (kwargs.get('assignment_path') or
-                                 kwargs.get('repo_path') or
-                                 kwargs.get('assignment_name') or
-                                 'unknown')
+    self.assignment_identifier = (kwargs.get('assignment_path')
+                                  or kwargs.get('repo_path')
+                                  or kwargs.get('assignment_name')
+                                  or 'unknown')
 
     # Store Slack configuration from kwargs (for error reporting)
     self.slack_channel = kwargs.get('slack_channel')
@@ -55,24 +56,34 @@ class Grader(abc.ABC):
     total_submissions = len(assignment.submissions)
     assignment_id = self.assignment_identifier
 
-    log.info(f"[{assignment_id}] Starting to grade {total_submissions} submissions")
+    log.info(
+      f"[{assignment_id}] Starting to grade {total_submissions} submissions")
 
     for i, submission in enumerate(assignment.submissions, 1):
-      log.info(f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {submission.student.name})")
+      log.info(
+        f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {submission.student.name})"
+      )
 
       # Check if this grader can handle this submission type
       if not self.can_grade_submission(submission):
-        submission.feedback = Feedback(0.0, f"Cannot grade {type(submission).__name__} with {type(self).__name__}")
+        submission.feedback = Feedback(
+          0.0,
+          f"Cannot grade {type(submission).__name__} with {type(self).__name__}"
+        )
         continue
 
-      if submission.status == Submission.Status.GRADED and not kwargs.get('do_regrade', False):
+      if submission.status == Submission.Status.GRADED and not kwargs.get(
+          'do_regrade', False):
         continue
 
       submission.feedback = self.grade_submission(submission, **kwargs)
 
-    log.info(f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions")
+    log.info(
+      f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions"
+    )
 
-  def grade_submission(self, submission: Submission, *args, **kwargs) -> Feedback:
+  def grade_submission(self, submission: Submission, *args,
+                       **kwargs) -> Feedback:
     """
     Takes in a submission, grades it, and returns back a Feedback
     :param submission: A Submission object that may have files associated with it
@@ -81,7 +92,7 @@ class Grader(abc.ABC):
     """
     execution_results = self.execute_grading(*args, **kwargs)
     return self.score_grading(execution_results, *args, **kwargs)
-  
+
   @abc.abstractmethod
   def execute_grading(self, *args, **kwargs) -> any:
     """
@@ -91,7 +102,7 @@ class Grader(abc.ABC):
     :return:
     """
     pass
-  
+
   @abc.abstractmethod
   def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
     """
@@ -113,7 +124,7 @@ class Grader(abc.ABC):
     :return: True if this grader can grade the submission, False otherwise
     """
     pass
-  
+
   def assignment_needs_preparation(self) -> bool:
     return True
 
@@ -125,7 +136,7 @@ class Grader(abc.ABC):
     :param kwargs:
     :return:
     """
-  
+
   def finalize(self, *args, **kwargs) -> None:
     """
     anything that is needed to connect the grades/feedback to the submissions after grading.
@@ -134,7 +145,7 @@ class Grader(abc.ABC):
     :param kwargs:
     :return:
     """
-  
+
   def cleanup(self) -> None:
     pass
 
@@ -159,23 +170,32 @@ class FileBasedGrader(Grader):
     total_submissions = len(assignment.submissions)
     assignment_id = self.assignment_identifier
 
-    log.info(f"[{assignment_id}] Starting to grade {total_submissions} submissions")
+    log.info(
+      f"[{assignment_id}] Starting to grade {total_submissions} submissions")
 
     for i, submission in enumerate(assignment.submissions, 1):
-      log.info(f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {submission.student.name})")
+      log.info(
+        f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {submission.student.name})"
+      )
 
       # Check if this grader can handle this submission type
       if not self.can_grade_submission(submission):
         if isinstance(submission, FileSubmission) and not submission.files:
-          submission.feedback = Feedback(0.0, "Assignment submission files missing")
+          submission.feedback = Feedback(
+            0.0, "Assignment submission files missing")
         else:
-          submission.feedback = Feedback(0.0, f"Cannot grade {type(submission).__name__} with {type(self).__name__}")
+          submission.feedback = Feedback(
+            0.0,
+            f"Cannot grade {type(submission).__name__} with {type(self).__name__}"
+          )
         continue
 
-      if submission.status == Submission.Status.GRADED and not kwargs.get('do_regrade', False):
+      if submission.status == Submission.Status.GRADED and not kwargs.get(
+          'do_regrade', False):
         continue
 
       submission.feedback = self.grade_submission(submission, **kwargs)
 
-    log.info(f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions")
-
+    log.info(
+      f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions"
+    )

@@ -16,13 +16,13 @@ alignment_service = ManualAlignmentService()
 
 
 class SplitPointsUpdate(BaseModel):
-    """Model for updating split points"""
-    split_points: Dict[int, List[int]]
+  """Model for updating split points"""
+  split_points: Dict[int, List[int]]
 
 
 @router.post("/create-composites")
 async def create_composite_images(files: List[UploadFile] = File(...)):
-    """
+  """
     Create composite overlay images from uploaded exam PDFs.
 
     Args:
@@ -31,55 +31,55 @@ async def create_composite_images(files: List[UploadFile] = File(...)):
     Returns:
         Dict with page_number -> base64 image for each page
     """
-    if not files:
-        raise HTTPException(status_code=400, detail="No files provided")
+  if not files:
+    raise HTTPException(status_code=400, detail="No files provided")
 
-    # Create temp directory for uploaded files
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        pdf_paths = []
+  # Create temp directory for uploaded files
+  with tempfile.TemporaryDirectory() as temp_dir:
+    temp_path = Path(temp_dir)
+    pdf_paths = []
 
-        # Save uploaded files
-        for file in files:
-            if not file.filename.endswith('.pdf'):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid file type: {file.filename}. Only PDF files are accepted."
-                )
+    # Save uploaded files
+    for file in files:
+      if not file.filename.endswith('.pdf'):
+        raise HTTPException(
+          status_code=400,
+          detail=
+          f"Invalid file type: {file.filename}. Only PDF files are accepted.")
 
-            file_path = temp_path / file.filename
-            with open(file_path, 'wb') as f:
-                shutil.copyfileobj(file.file, f)
-            pdf_paths.append(file_path)
+      file_path = temp_path / file.filename
+      with open(file_path, 'wb') as f:
+        shutil.copyfileobj(file.file, f)
+      pdf_paths.append(file_path)
 
-        # Generate composite images
-        composites = alignment_service.create_composite_images(pdf_paths)
+    # Generate composite images
+    composites = alignment_service.create_composite_images(pdf_paths)
 
-        # Get page dimensions from first PDF
-        import fitz
-        first_pdf = fitz.open(str(pdf_paths[0]))
-        page_dimensions = {}
-        for page_num in range(first_pdf.page_count):
-            page = first_pdf[page_num]
-            page_dimensions[page_num] = {
-                "width": page.rect.width,
-                "height": page.rect.height
-            }
-        first_pdf.close()
+    # Get page dimensions from first PDF
+    import fitz
+    first_pdf = fitz.open(str(pdf_paths[0]))
+    page_dimensions = {}
+    for page_num in range(first_pdf.page_count):
+      page = first_pdf[page_num]
+      page_dimensions[page_num] = {
+        "width": page.rect.width,
+        "height": page.rect.height
+      }
+    first_pdf.close()
 
-        return {
-            "composites": composites,
-            "page_dimensions": page_dimensions,
-            "num_exams": len(pdf_paths)
-        }
+    return {
+      "composites": composites,
+      "page_dimensions": page_dimensions,
+      "num_exams": len(pdf_paths)
+    }
 
 
 @router.get("/interface", response_class=HTMLResponse)
 async def get_alignment_interface():
-    """
+  """
     Serve the interactive alignment interface HTML page.
     """
-    html_content = """
+  html_content = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -486,4 +486,4 @@ async def get_alignment_interface():
 </body>
 </html>
     """
-    return HTMLResponse(content=html_content)
+  return HTMLResponse(content=html_content)

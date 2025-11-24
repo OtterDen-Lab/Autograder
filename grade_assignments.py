@@ -32,22 +32,38 @@ def parse_args() -> argparse.Namespace:
   subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
   # TEST command - for testing text submission flow
-  test_parser = subparsers.add_parser("TEST", help="Test text submission flow with learning-logs.yaml")
+  test_parser = subparsers.add_parser(
+    "TEST", help="Test text submission flow with learning-logs.yaml")
   test_parser.add_argument("--limit", default=None, type=int)
 
   # Keep existing arguments for backward compatibility when no subcommand is used
-  parser.add_argument("--yaml", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "example_files/programming_assignments.yaml"))
+  parser.add_argument("--yaml",
+                      default=os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)),
+                        "example_files/programming_assignments.yaml"))
   parser.add_argument("--limit", default=None, type=int)
-  parser.add_argument("--regrade", "--do_regrade", dest="do_regrade", action="store_true")
+  parser.add_argument("--regrade",
+                      "--do_regrade",
+                      dest="do_regrade",
+                      action="store_true")
   parser.add_argument("--merge_only", dest="merge_only", action="store_true")
-  parser.add_argument("--max_workers", default=None, type=int, help="Maximum number of parallel grading threads (default: number of assignments)")
-  parser.add_argument("--test", action="store_true", help="Only downloads for test student")
+  parser.add_argument(
+    "--max_workers",
+    default=None,
+    type=int,
+    help=
+    "Maximum number of parallel grading threads (default: number of assignments)"
+  )
+  parser.add_argument("--test",
+                      action="store_true",
+                      help="Only downloads for test student")
 
   args = parser.parse_args()
 
   # Handle TEST command
   if args.command == "TEST":
-    args.yaml = os.path.join(os.path.dirname(os.path.abspath(__file__)), "example_files/learning-logs.yaml")
+    args.yaml = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "example_files/learning-logs.yaml")
     args.do_regrade = True
     args.test = True
     args.max_workers = 1
@@ -99,7 +115,8 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     push_grades = assignment_data['push_grades']
 
     assignment_id = yaml_assignment['id']
-    assignment_type = merged_assignment.get('type', 'assignment')  # Default to assignment
+    assignment_type = merged_assignment.get(
+      'type', 'assignment')  # Default to assignment
 
     # Create assignment or quiz object based on type
     if assignment_type.lower() == 'quiz':
@@ -107,10 +124,12 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
       log.info(f"[Thread {thread_id}] Grading quiz \"{lms_assignment.name}\"")
     else:
       lms_assignment = course.get_assignment(assignment_id)
-      log.info(f"[Thread {thread_id}] Grading assignment \"{lms_assignment.name}\"")
+      log.info(
+        f"[Thread {thread_id}] Grading assignment \"{lms_assignment.name}\"")
 
     # Get unified settings (new format uses 'settings', legacy uses 'kwargs')
-    settings = merged_assignment.get('settings') or merged_assignment.get('kwargs', {})
+    settings = merged_assignment.get('settings') or merged_assignment.get(
+      'kwargs', {})
 
     # Add runtime context to settings
     settings = settings.copy()  # Don't modify the original
@@ -129,67 +148,73 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
 
     # Create grader with assignment identifier for better logging
     assignment_name = lms_assignment.name.split()[0]
-    grader = GraderRegistry.create(
-      grader_name,
-      assignment_path=repo_path,
-      assignment_name=assignment_name,
-      **settings
-    )
+    grader = GraderRegistry.create(grader_name,
+                                   assignment_path=repo_path,
+                                   assignment_name=assignment_name,
+                                   **settings)
 
     with tempfile.TemporaryDirectory() as working_dir:
       # Focus on the given assignment
       # For new format, settings are already complete; for legacy, use assignment_kwargs
-      assignment_creation_kwargs = merged_assignment.get('assignment_kwargs', {})
+      assignment_creation_kwargs = merged_assignment.get(
+        'assignment_kwargs', {})
 
       with AssignmentRegistry.create(
           merged_assignment['kind'],
           lms_assignment=lms_assignment,
           grading_root_dir=working_dir,
-          **assignment_creation_kwargs
-      ) as grading_assignment:
+          **assignment_creation_kwargs) as grading_assignment:
 
         # If the grader doesn't need preparation, skip the prep step
         if grader.assignment_needs_preparation():
           # For manual grading, we'll skip the interactive prompt in multi-threaded mode
           if grader_name.lower() in ["manual"]:
-            log.warning(f"[Thread {thread_id}] Manual grading detected for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode")
+            log.warning(
+              f"[Thread {thread_id}] Manual grading detected for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode"
+            )
 
-          grading_assignment.prepare(
-            limit=args.limit,
-            do_regrade=do_regrade,
-            merge_only=args.merge_only,
-            test=args.test,
-            **settings
-          )
+          grading_assignment.prepare(limit=args.limit,
+                                     do_regrade=do_regrade,
+                                     merge_only=args.merge_only,
+                                     test=args.test,
+                                     **settings)
 
-        grader.grade_assignment(grading_assignment, **settings, merge_only=args.merge_only, do_regrade=do_regrade)
+        grader.grade_assignment(grading_assignment,
+                                **settings,
+                                merge_only=args.merge_only,
+                                do_regrade=do_regrade)
 
         for submission in grading_assignment.submissions:
           log.info(f"{submission}")
 
         if grader.ready_to_finalize:
           if grader_name.lower() in ["manual"]:
-            log.warning(f"[Thread {thread_id}] Manual grading finalization for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode")
+            log.warning(
+              f"[Thread {thread_id}] Manual grading finalization for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode"
+            )
           # Check for record retention setting (check both settings and top-level)
-          record_retention = settings.get('record_retention') or merged_assignment.get('record_retention', False)
+          record_retention = settings.get(
+            'record_retention') or merged_assignment.get(
+              'record_retention', False)
           if record_retention:
             # Determine where to save records
-            records_dir = settings.get('records_dir') or merged_assignment.get('records_dir')
+            records_dir = settings.get('records_dir') or merged_assignment.get(
+              'records_dir')
             if records_dir is None:
               # Default to 'records' directory in the main project directory
-              records_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "records")
+              records_dir = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "records")
             else:
               # Expand user paths (like ~/records)
               records_dir = os.path.expanduser(records_dir)
 
-            grading_assignment.finalize(
-              push=push_grades,
-              merge_only=args.merge_only,
-              record_retention=record_retention,
-              records_dir=records_dir
-            )
+            grading_assignment.finalize(push=push_grades,
+                                        merge_only=args.merge_only,
+                                        record_retention=record_retention,
+                                        records_dir=records_dir)
           else:
-            grading_assignment.finalize(push=push_grades, merge_only=args.merge_only)
+            grading_assignment.finalize(push=push_grades,
+                                        merge_only=args.merge_only)
 
     return {
       'success': True,
@@ -199,7 +224,9 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     }
 
   except Exception as e:
-    log.error(f"[Thread {thread_id}] Error grading assignment {assignment_id or 'unknown'}: {e}")
+    log.error(
+      f"[Thread {thread_id}] Error grading assignment {assignment_id or 'unknown'}: {e}"
+    )
     log.error(f"[Thread {thread_id}] Traceback: {traceback.format_exc()}")
     return {
       'success': False,
@@ -212,9 +239,12 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     try:
       if 'grader' in locals():
         grader.cleanup()
-        log.debug(f"[Thread {thread_id}] Cleanup completed for assignment {assignment_id or 'unknown'}")
+        log.debug(
+          f"[Thread {thread_id}] Cleanup completed for assignment {assignment_id or 'unknown'}"
+        )
     except Exception as cleanup_error:
-      log.warning(f"[Thread {thread_id}] Error during cleanup: {cleanup_error}")
+      log.warning(
+        f"[Thread {thread_id}] Error during cleanup: {cleanup_error}")
 
 
 def load_and_validate_config(yaml_path: str) -> Dict:
@@ -258,15 +288,13 @@ def normalize_assignment(assignment) -> Dict:
     raise ValueError(f"Invalid assignment format: {assignment}")
 
 
-def create_assignment_data(
-    course,
-    course_name,
-    yaml_assignment: Dict,
-    merged_assignment: Dict,
-    args: argparse.Namespace,
-    push_grades: bool,
-    slack_channel: Optional[str] = None
-) -> Dict:
+def create_assignment_data(course,
+                           course_name,
+                           yaml_assignment: Dict,
+                           merged_assignment: Dict,
+                           args: argparse.Namespace,
+                           push_grades: bool,
+                           slack_channel: Optional[str] = None) -> Dict:
   """
   Create assignment data structure for grading.
 
@@ -293,7 +321,8 @@ def create_assignment_data(
   }
 
 
-def collect_assignments_to_grade(config: Dict, args: argparse.Namespace) -> List[Dict]:
+def collect_assignments_to_grade(config: Dict,
+                                 args: argparse.Namespace) -> List[Dict]:
   """
   Process courses and collect all assignments that need grading.
 
@@ -339,24 +368,18 @@ def collect_assignments_to_grade(config: Dict, args: argparse.Namespace) -> List
     if 'assignment_groups' in yaml_course:
       # NEW FORMAT: Process assignment groups
       assignments_to_grade.extend(
-        _process_assignment_groups(
-          course, yaml_course, args, push_grades
-        )
-      )
+        _process_assignment_groups(course, yaml_course, args, push_grades))
     else:
       # LEGACY FORMAT: Process assignments directly
       assignments_to_grade.extend(
-        _process_legacy_assignments(
-          course, yaml_course, args, push_grades
-        )
-      )
+        _process_legacy_assignments(course, yaml_course, args, push_grades))
 
   return assignments_to_grade
 
 
-def _process_assignment_groups(
-    course, yaml_course: Dict, args: argparse.Namespace, push_grades: bool
-) -> List[Dict]:
+def _process_assignment_groups(course, yaml_course: Dict,
+                               args: argparse.Namespace,
+                               push_grades: bool) -> List[Dict]:
   """
   Process assignment_groups from new config format.
 
@@ -374,8 +397,14 @@ def _process_assignment_groups(
   course_slack_channel = yaml_course.get('slack_channel')
 
   # Extract course-level settings (anything that's not a reserved key)
-  reserved_keys = {'name', 'id', 'assignment_groups', 'assignment_defaults', 'assignments', 'grader'}
-  course_settings = {k: v for k, v in yaml_course.items() if k not in reserved_keys}
+  reserved_keys = {
+    'name', 'id', 'assignment_groups', 'assignment_defaults', 'assignments',
+    'grader'
+  }
+  course_settings = {
+    k: v
+    for k, v in yaml_course.items() if k not in reserved_keys
+  }
 
   for group in yaml_course.get('assignment_groups', []):
     group_type = group.get('type')
@@ -392,7 +421,10 @@ def _process_assignment_groups(
 
     # Extract group-level settings (anything that's not a reserved key)
     group_reserved_keys = {'name', 'type', 'assignments', 'settings'}
-    group_settings = {k: v for k, v in group.items() if k not in group_reserved_keys}
+    group_settings = {
+      k: v
+      for k, v in group.items() if k not in group_reserved_keys
+    }
 
     # Also merge in explicit 'settings' dict if present
     if 'settings' in group:
@@ -404,15 +436,16 @@ def _process_assignment_groups(
       normalized_assignment = normalize_assignment(assignment)
 
       # Extract assignment-level settings (anything except 'id')
-      assignment_settings = {k: v for k, v in normalized_assignment.items() if k != 'id'}
+      assignment_settings = {
+        k: v
+        for k, v in normalized_assignment.items() if k != 'id'
+      }
 
       # Merge settings: type defaults -> course -> group -> assignment
-      merged_settings = TypeRegistry.merge_settings(
-        group_type,
-        course_settings,
-        group_settings,
-        assignment_settings
-      )
+      merged_settings = TypeRegistry.merge_settings(group_type,
+                                                    course_settings,
+                                                    group_settings,
+                                                    assignment_settings)
 
       # Build merged_assignment dict with all info needed for grading
       merged_assignment = {
@@ -428,23 +461,19 @@ def _process_assignment_groups(
         if key != 'id':
           merged_assignment[key] = normalized_assignment[key]
 
-      assignment_data = create_assignment_data(
-        course,
-        course_name,
-        normalized_assignment,
-        merged_assignment,
-        args,
-        push_grades,
-        course_slack_channel
-      )
+      assignment_data = create_assignment_data(course, course_name,
+                                               normalized_assignment,
+                                               merged_assignment, args,
+                                               push_grades,
+                                               course_slack_channel)
       assignments.append(assignment_data)
 
   return assignments
 
 
-def _process_legacy_assignments(
-    course, yaml_course: Dict, args: argparse.Namespace, push_grades: bool
-) -> List[Dict]:
+def _process_legacy_assignments(course, yaml_course: Dict,
+                                args: argparse.Namespace,
+                                push_grades: bool) -> List[Dict]:
   """
   Process assignments from legacy config format.
 
@@ -491,21 +520,18 @@ def _process_legacy_assignments(
       merged_assignment['grader'] = course_grader or "Dummy"
 
     # Add this assignment to our list to be graded
-    assignment_data = create_assignment_data(
-      course,
-      yaml_course.get("name"),
-      yaml_assignment,
-      merged_assignment,
-      args,
-      push_grades,
-      yaml_course.get("slack_channel")
-    )
+    assignment_data = create_assignment_data(course, yaml_course.get("name"),
+                                             yaml_assignment,
+                                             merged_assignment, args,
+                                             push_grades,
+                                             yaml_course.get("slack_channel"))
     assignments.append(assignment_data)
 
   return assignments
 
 
-def execute_grading(assignments_to_grade: List[Dict], args: argparse.Namespace) -> List[Dict]:
+def execute_grading(assignments_to_grade: List[Dict],
+                    args: argparse.Namespace) -> List[Dict]:
   """
   Execute grading either single-threaded or multi-threaded.
 
@@ -521,7 +547,9 @@ def execute_grading(assignments_to_grade: List[Dict], args: argparse.Namespace) 
   # Determine number of worker threads
   max_workers = args.max_workers
   if max_workers is None:
-    max_workers = min(len(assignments_to_grade), 4)  # Default to 4 or number of assignments, whichever is smaller
+    max_workers = min(
+      len(assignments_to_grade),
+      4)  # Default to 4 or number of assignments, whichever is smaller
 
   log.info(f"Using {max_workers} worker threads for grading")
 
@@ -532,7 +560,8 @@ def execute_grading(assignments_to_grade: List[Dict], args: argparse.Namespace) 
   with ThreadPoolExecutor(max_workers=max_workers) as executor:
     # Submit all assignments for grading
     future_to_assignment = {
-      executor.submit(grade_single_assignment, assignment_data): assignment_data
+      executor.submit(grade_single_assignment, assignment_data):
+      assignment_data
       for assignment_data in assignments_to_grade
     }
 
@@ -544,16 +573,25 @@ def execute_grading(assignments_to_grade: List[Dict], args: argparse.Namespace) 
         results.append(result)
 
         if result['success']:
-          log.info(f"Successfully graded assignment {result['assignment_name']} (ID: {result['assignment_id']})")
+          log.info(
+            f"Successfully graded assignment {result['assignment_name']} (ID: {result['assignment_id']})"
+          )
         else:
-          log.error(f"Failed to grade assignment {result['assignment_id']}: {result['error']}")
+          log.error(
+            f"Failed to grade assignment {result['assignment_id']}: {result['error']}"
+          )
 
       except Exception as exc:
-        log.error(f"Assignment {assignment_data['yaml_assignment']['id']} generated an exception: {exc}")
+        log.error(
+          f"Assignment {assignment_data['yaml_assignment']['id']} generated an exception: {exc}"
+        )
         results.append({
-          'success': False,
-          'assignment_id': assignment_data['yaml_assignment']['id'],
-          'error': str(exc)
+          'success':
+          False,
+          'assignment_id':
+          assignment_data['yaml_assignment']['id'],
+          'error':
+          str(exc)
         })
 
   return results
