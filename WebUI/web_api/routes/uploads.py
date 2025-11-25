@@ -16,6 +16,11 @@ from ..repositories import SessionRepository
 from ..domain.common import SessionStatus
 from .. import sse
 
+# Store in database using repositories
+from ..repositories import with_transaction
+from ..domain.submission import Submission
+from ..domain.problem import Problem
+
 router = APIRouter()
 log = logging.getLogger(__name__)
 
@@ -566,11 +571,6 @@ async def process_exam_files(
         skip_first_region=skip_first_region,  # Skip first region (header/title)
         last_page_blank=last_page_blank  # Skip last page if blank
       ))
-
-    # Store in database using repositories
-    from ..repositories import with_transaction
-    from ..domain.submission import Submission
-    from ..domain.problem import Problem
 
     with with_transaction() as repos:
       all_submissions_data = matched + unmatched
