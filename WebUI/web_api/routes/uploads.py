@@ -21,6 +21,13 @@ from ..repositories import with_transaction
 from ..domain.submission import Submission
 from ..domain.problem import Problem
 
+import logging
+import asyncio
+from ..services.exam_processor import ExamProcessor
+from lms_interface.canvas_interface import CanvasInterface
+from ..repositories import SessionRepository, SubmissionRepository, ProblemMetadataRepository
+from ..domain.common import SessionStatus
+
 router = APIRouter()
 log = logging.getLogger(__name__)
 
@@ -412,18 +419,12 @@ async def process_exam_files(
         last_page_blank: Skip last page when splitting (default False)
         ai_provider: AI provider to use for name extraction (anthropic, openai, ollama)
     """
-  import logging
-  import asyncio
-  from ..services.exam_processor import ExamProcessor
-  from lms_interface.canvas_interface import CanvasInterface
 
   log = logging.getLogger(__name__)
   log.info(f"Processing {len(file_paths)} files for session {session_id}")
 
   try:
     # Get session info
-    from ..repositories import SessionRepository, SubmissionRepository, ProblemMetadataRepository
-    from ..domain.common import SessionStatus
     session_repo = SessionRepository()
 
     session = session_repo.get_by_id(session_id)
@@ -641,9 +642,6 @@ async def process_exam_files(
             problem_number=problem_number,
             graded=False,
             is_blank=prob_data.get("is_blank", False),
-            blank_confidence=prob_data.get("blank_confidence", 0.0),
-            blank_method=prob_data.get("blank_method"),
-            blank_reasoning=prob_data.get("blank_reasoning"),
             max_points=max_points,
             region_coords=region_coords,
             qr_encrypted_data=prob_data.get("qr_encrypted_data")

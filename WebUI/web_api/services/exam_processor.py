@@ -174,8 +174,6 @@ class ExamProcessor:
       else:
         unmatched_submissions.append(submission)
     
-    for submission in matched_submissions + unmatched_submissions:
-      log.info(f"There are {pprint.pformat(submission)}")
     
     log.info(
       f"Matched: {len(matched_submissions)}, Unmatched: {len(unmatched_submissions)}"
