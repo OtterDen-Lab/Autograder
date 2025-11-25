@@ -75,6 +75,227 @@ class ExamProcessor:
         f"Unknown AI provider '{ai_provider}', defaulting to Anthropic")
       self.ai_helper_class = ai_helper.AI_Helper__Anthropic
 
+  def _report_progress(self, progress_callback: Optional[callable],
+                       processed: int, matched: int, message: str):
+    """
+    Report progress via callback if provided.
+
+    Args:
+        progress_callback: Optional callback function
+        processed: Number of submissions processed
+        matched: Number of submissions matched
+        message: Progress message to display
+    """
+    if progress_callback:
+      progress_callback(processed=processed, matched=matched, message=message)
+
+  def _find_suggested_match(
+      self, approximate_name: str,
+      unmatched_students: List[dict]) -> Tuple[Optional[dict], int]:
+    """
+    Find best fuzzy match for a name among unmatched students.
+
+    Args:
+        approximate_name: The extracted student name
+        unmatched_students: List of student dicts with name and user_id
+
+    Returns:
+        Tuple of (suggested_match, match_confidence)
+        suggested_match is None if no good match found
+    """
+    if not approximate_name or not unmatched_students:
+      return None, 0
+
+    best_score = 0
+    best_match = None
+
+    for student in unmatched_students:
+      score = fuzzywuzzy.fuzz.ratio(student["name"], approximate_name)
+      if score > best_score:
+        best_score = score
+        best_match = student
+
+    # Return suggestion only if meets threshold
+    if best_match and best_score >= NAME_SIMILARITY_THRESHOLD:
+      log.info(
+        f"  Suggested match: {best_match['name']} ({best_score}%) - requires confirmation"
+      )
+      return best_match, best_score
+    elif best_match:
+      log.warning(f"  Weak match suggestion: {best_match['name']} at {best_score}%")
+    else:
+      log.warning(f"  No match found for: {approximate_name}")
+
+    return None, 0
+
+  def _setup_page_mappings(
+      self, input_files: List[Path], page_ranges: Optional[List[Tuple[int,
+                                                                       int]]],
+      manual_split_points: Optional[Dict[int, List[int]]]
+  ) -> Tuple[bool, Optional[dict], Optional[dict]]:
+    """
+    Set up page mappings and split points based on configuration.
+
+    Args:
+        input_files: List of PDF file paths
+        page_ranges: Optional list of (start, end) page ranges to merge
+        manual_split_points: Optional dict mapping page_number -> list of y-positions
+
+    Returns:
+        Tuple of (use_auto_detection, page_mappings_by_submission, consensus_break_points)
+    """
+    use_auto_detection = (page_ranges is None)
+
+    if not use_auto_detection:
+      log.info(f"Using manual page ranges: {page_ranges}")
+
+      # Create shuffled page mappings
+      num_submissions = len(input_files)
+      num_problems = len(page_ranges)
+      page_mappings_by_submission = collections.defaultdict(list)
+
+      for problem_num in range(num_problems):
+        shuffled_order = random.sample(range(num_submissions),
+                                       k=num_submissions)
+        for submission_id, random_id in enumerate(shuffled_order):
+          page_mappings_by_submission[submission_id].append(random_id)
+
+      return use_auto_detection, page_mappings_by_submission, None
+    else:
+      log.info("Using manual split points for problem detection")
+
+      # Manual split points are now required
+      if manual_split_points is None:
+        raise ValueError(
+          "Manual split points are required. Please use the alignment interface to specify split points."
+        )
+
+      log.info(
+        f"Using manual split points for {len(manual_split_points)} pages")
+      consensus_break_points = manual_split_points
+
+      total_consensus_breaks = sum(
+        len(breaks) for breaks in consensus_break_points.values())
+      log.info(
+        f"Using {total_consensus_breaks} manual split points across {len(consensus_break_points)} pages"
+      )
+
+      return use_auto_detection, None, consensus_break_points
+
+  def _extract_problems(
+      self, pdf_path: Path, page_ranges: Optional[List[Tuple[int, int]]],
+      consensus_break_points: Optional[dict],
+      problem_max_points: Optional[Dict[int, float]], detect_blank: bool,
+      blank_confidence_threshold: float, use_ai_for_borderline: bool,
+      extract_max_points_enabled: bool, skip_first_region: bool,
+      last_page_blank: bool) -> Tuple[Optional[str], List[Dict]]:
+    """
+    Extract problems from PDF using either manual split points or page ranges.
+
+    Args:
+        pdf_path: Path to PDF file
+        page_ranges: Optional list of (start, end) page ranges
+        consensus_break_points: Optional dict of manual split points
+        problem_max_points: Dict mapping problem_number -> max_points
+        detect_blank: Whether to detect blank problems
+        blank_confidence_threshold: Threshold for blank detection
+        use_ai_for_borderline: Use AI for borderline cases
+        extract_max_points_enabled: Extract max points from images
+        skip_first_region: Skip first region (header)
+        last_page_blank: Skip last page
+
+    Returns:
+        Tuple of (pdf_data, problems)
+        pdf_data is base64 PDF (None for manual page ranges)
+        problems is list of problem dicts
+    """
+    if page_ranges is None:
+      # Use manual split points to extract problem regions
+      pdf_data, problems = self.redact_and_extract_regions(
+        pdf_path,
+        split_points=consensus_break_points,
+        detect_blank=detect_blank,
+        blank_confidence_threshold=blank_confidence_threshold,
+        use_ai_for_borderline=use_ai_for_borderline,
+        problem_max_points=problem_max_points,
+        extract_max_points_enabled=extract_max_points_enabled,
+        skip_first_region=skip_first_region,
+        last_page_blank=last_page_blank)
+      return pdf_data, problems
+    else:
+      # Use manual page ranges (old path - stores individual PNGs)
+      pdf_data = None
+      problem_images = self.redact_and_split(pdf_path, page_ranges)
+
+      # Convert problem images to base64
+      problems = []
+      for problem_num, problem_doc in enumerate(problem_images):
+        # Convert PDF page to PNG
+        page = problem_doc[0]  # First (and only) page
+        pix = page.get_pixmap(dpi=150)
+        img_bytes = pix.tobytes("png")
+        img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+
+        problems.append({
+          "problem_number": problem_num + 1,
+          "image_base64": img_base64
+        })
+
+        problem_doc.close()
+
+      return pdf_data, problems
+
+  def _build_submission_dict(
+      self, document_id: int, approximate_name: str, name_image: str,
+      suggested_match: Optional[dict],
+      page_mappings_by_submission: Optional[dict], problems: List[Dict],
+      pdf_data: Optional[str], pdf_path: Path,
+      file_metadata: Optional[Dict[Path, Dict]]) -> dict:
+    """
+    Build submission dictionary from extracted data.
+
+    Args:
+        document_id: Unique document ID
+        approximate_name: Extracted student name
+        name_image: Base64 image of name region
+        suggested_match: Suggested student match (if any)
+        page_mappings_by_submission: Page mappings for shuffled problems
+        problems: List of problem dicts
+        pdf_data: Base64 encoded PDF (None for manual page ranges)
+        pdf_path: Path to original PDF
+        file_metadata: Optional metadata about uploaded files
+
+    Returns:
+        Submission dictionary
+    """
+    return {
+      "document_id":
+      document_id,
+      "approximate_name":
+      approximate_name,
+      "name_image_data":
+      name_image,
+      "student_name":
+      None,  # No auto-matching - requires manual confirmation
+      "canvas_user_id":
+      None,  # No auto-matching - requires manual confirmation
+      "suggested_canvas_user_id":
+      suggested_match["user_id"] if suggested_match else None,
+      "page_mappings":
+      page_mappings_by_submission[document_id]
+      if page_mappings_by_submission else [],
+      "problems":
+      problems,
+      "pdf_data":
+      pdf_data,  # Base64 PDF (None for manual page ranges)
+      "file_hash":
+      file_metadata[pdf_path]["hash"]
+      if file_metadata and pdf_path in file_metadata else None,
+      "original_filename":
+      file_metadata[pdf_path]["original_filename"]
+      if file_metadata and pdf_path in file_metadata else pdf_path.name
+    }
+
   def process_exams(
       self,
       input_files: List[Path],
@@ -120,53 +341,17 @@ class ExamProcessor:
         """
     log.info(f"Processing {len(input_files)} exams")
 
-    # Shuffle PDFs
-    random.shuffle(input_files)
-
-    # Determine page ranges from first PDF
+    # Early return if no files
     if not input_files:
       return [], []
 
-    first_pdf = fitz.open(str(input_files[0]))
-    num_pages = first_pdf.page_count
-    first_pdf.close()
+    # Set up page mappings and split points
+    use_auto_detection, page_mappings_by_submission, consensus_break_points = self._setup_page_mappings(
+      input_files, page_ranges, manual_split_points)
 
-    # Handle page ranges and shuffling
-    use_auto_detection = (page_ranges is None)
-
-    if not use_auto_detection:
-      log.info(f"Using manual page ranges: {page_ranges}")
-
-      # Create shuffled page mappings
-      num_submissions = len(input_files)
-      num_problems = len(page_ranges)
-      page_mappings_by_submission = collections.defaultdict(list)
-
-      for problem_num in range(num_problems):
-        shuffled_order = random.sample(range(num_submissions),
-                                       k=num_submissions)
-        for submission_id, random_id in enumerate(shuffled_order):
-          page_mappings_by_submission[submission_id].append(random_id)
-    else:
-      log.info("Using manual split points for problem detection")
-      # No shuffling for manual split detection (all students get same order)
-      page_mappings_by_submission = None
-
-      # Manual split points are now required
-      if manual_split_points is None:
-        raise ValueError(
-          "Manual split points are required. Please use the alignment interface to specify split points."
-        )
-
-      log.info(
-        f"Using manual split points for {len(manual_split_points)} pages")
-      consensus_break_points = manual_split_points
-
-      total_consensus_breaks = sum(
-        len(breaks) for breaks in consensus_break_points.values())
-      log.info(
-        f"Using {total_consensus_breaks} manual split points across {len(consensus_break_points)} pages"
-      )
+    # Initialize problem_max_points if needed (shared across all exams)
+    if problem_max_points is None:
+      problem_max_points = {}
 
     # Process each PDF
     matched_submissions = []
@@ -180,12 +365,12 @@ class ExamProcessor:
       )
 
       # Report progress: starting exam
-      if progress_callback:
-        progress_callback(
-          processed=index,
-          matched=len(matched_submissions),
-          message=
-          f"Processing exam {index + 1}/{len(input_files)}: {pdf_path.name}")
+      self._report_progress(
+        progress_callback,
+        index,
+        len(matched_submissions),
+        f"Processing exam {index + 1}/{len(input_files)}: {pdf_path.name}"
+      )
 
       # Extract name
       approximate_name, name_image = self.extract_name(
@@ -194,142 +379,41 @@ class ExamProcessor:
         student_names=[s["name"] for s in unmatched_students])
       log.info(f"  Extracted name: {approximate_name}")
 
-      # Report progress: extracted name
-      if progress_callback:
-        progress_callback(
-          processed=index,
-          matched=len(matched_submissions),
-          message=
-          f"Processing exam {index + 1}/{len(input_files)}: Extracted name: {approximate_name}"
-        )
+      # Find suggested match
+      suggested_match, match_confidence = self._find_suggested_match(approximate_name, unmatched_students)
 
-      # Find best match to Canvas student (but always require manual confirmation)
-      suggested_match = None
-      match_confidence = 0
-      if approximate_name and unmatched_students:
-        best_score = 0
-        best_match = None
+      # Extract problems from PDF
+      pdf_data, problems = self._extract_problems(
+        pdf_path,
+        page_ranges,
+        consensus_break_points,
+        problem_max_points,
+        detect_blank,
+        blank_confidence_threshold,
+        use_ai_for_borderline,
+        extract_max_points_enabled,
+        skip_first_region,
+        last_page_blank
+      )
 
-        for student in unmatched_students:
-          score = fuzzywuzzy.fuzz.ratio(student["name"], approximate_name)
-          if score > best_score:
-            best_score = score
-            best_match = student
-
-        # Store suggestion for user confirmation (never auto-match)
-        if best_match and best_score >= NAME_SIMILARITY_THRESHOLD:
-          suggested_match = best_match
-          match_confidence = best_score
-          log.info(
-            f"  Suggested match: {suggested_match['name']} ({match_confidence}%) - requires confirmation"
-          )
-        elif best_match:
-          log.warning(
-            f"  Weak match suggestion: {best_match['name']} at {best_score}%")
-        else:
-          log.warning(f"  No match found for: {approximate_name}")
-
-      # Report progress: suggested match
-      if progress_callback:
-        match_msg = f"Suggested: {suggested_match['name']} ({match_confidence}%)" if suggested_match else "No match found"
-        progress_callback(
-          processed=index,
-          matched=len(
-            matched_submissions),  # No auto-matching, so this stays same
-          message=f"Processing exam {index + 1}/{len(input_files)}: {match_msg}"
-        )
-
-      # Report progress: splitting into problems
-      if progress_callback:
-        progress_callback(
-          processed=index,
-          matched=len(
-            matched_submissions),  # No auto-matching, so this stays same
-          message=
-          f"Processing exam {index + 1}/{len(input_files)}: Splitting into problems..."
-        )
-
-      # Redact and split into problems (use auto-detection if no page_ranges specified)
-      if page_ranges is None:
-        # Initialize problem_max_points dict if not provided (shared across all exams)
-        if problem_max_points is None:
-          problem_max_points = {}
-
-        # Use manual split points to extract problem regions
-        # Returns (pdf_base64, problems_list) where problems contain region metadata
-        pdf_data, problems = self.redact_and_extract_regions(
-          pdf_path,
-          split_points=consensus_break_points,
-          detect_blank=detect_blank,
-          blank_confidence_threshold=blank_confidence_threshold,
-          use_ai_for_borderline=use_ai_for_borderline,
-          problem_max_points=problem_max_points,
-          extract_max_points_enabled=extract_max_points_enabled,
-          skip_first_region=skip_first_region,
-          last_page_blank=last_page_blank)
-      else:
-        # Use manual page ranges (old path - still stores individual PNGs for backwards compatibility)
-        pdf_data = None  # For backwards compatibility with manual page ranges
-        problem_images = self.redact_and_split(pdf_path, page_ranges)
-
-        # Convert problem images to base64
-        problems = []
-        for problem_num, problem_doc in enumerate(problem_images):
-          # Convert PDF page to PNG
-          page = problem_doc[0]  # First (and only) page
-          pix = page.get_pixmap(dpi=150)
-          img_bytes = pix.tobytes("png")
-          img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-          problems.append({
-            "problem_number": problem_num + 1,
-            "image_base64": img_base64
-          })
-
-          problem_doc.close()
-
-      # Create submission dict (no auto-matching - always goes to unmatched for manual confirmation)
-      # But store the suggested match for pre-filling the dropdown
-      submission = {
-        "document_id":
+      # Build submission dict
+      submission = self._build_submission_dict(
         document_id,
-        "approximate_name":
         approximate_name,
-        "name_image_data":
         name_image,
-        "student_name":
-        None,  # No auto-matching - requires manual confirmation
-        "canvas_user_id":
-        None,  # No auto-matching - requires manual confirmation
-        "suggested_canvas_user_id":
-        suggested_match["user_id"]
-        if suggested_match else None,  # Pre-fill suggestion
-        "page_mappings":
-        page_mappings_by_submission[document_id]
-        if page_mappings_by_submission else [],
-        "problems":
+        suggested_match,
+        page_mappings_by_submission,
         problems,
-        "pdf_data":
-        pdf_data,  # Base64 PDF (None for manual page ranges)
-        "file_hash":
-        file_metadata[pdf_path]["hash"]
-        if file_metadata and pdf_path in file_metadata else None,
-        "original_filename":
-        file_metadata[pdf_path]["original_filename"]
-        if file_metadata and pdf_path in file_metadata else pdf_path.name
-      }
-
-      # Always add to unmatched (no auto-matching, requires manual confirmation)
-      unmatched_submissions.append(submission)
-
-      # Report progress: completed exam
-      if progress_callback:
-        progress_callback(
-          processed=index + 1,
-          matched=len(matched_submissions),
-          message=
-          f"Completed exam {index + 1}/{len(input_files)} ({len(matched_submissions)} matched, {len(unmatched_submissions)} need matching)"
-        )
+        pdf_data,
+        pdf_path,
+        file_metadata
+      )
+      
+      # If above threshold, add to matched list
+      if match_confidence > NAME_SIMILARITY_THRESHOLD:
+        matched_submissions.append(submission)
+      else:
+        unmatched_submissions.append(submission)
 
     log.info(
       f"Matched: {len(matched_submissions)}, Unmatched: {len(unmatched_submissions)}"
