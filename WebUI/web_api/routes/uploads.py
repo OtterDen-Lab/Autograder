@@ -483,8 +483,7 @@ async def process_exam_files(
       return
 
     file_paths = new_file_paths
-    log.info(
-      f"Processing {len(file_paths)} new file(s) after duplicate detection")
+    log.info(f"Processing {len(file_paths)} new file(s) after duplicate detection")
 
     # Get the highest existing document_id to avoid conflicts
     start_document_id = submission_repo.get_max_document_id(session_id) + 1
