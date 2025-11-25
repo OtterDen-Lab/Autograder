@@ -247,7 +247,7 @@ class ExamProcessor:
       file_metadata[pdf_path]["original_filename"]
       if file_metadata and pdf_path in file_metadata else pdf_path.name
     }
-
+  
   def process_exams(
       self,
       input_files: List[Path],
@@ -265,16 +265,9 @@ class ExamProcessor:
         Args:
             input_files: List of PDF file paths
             canvas_students: List of student dicts with name and user_id
-            page_ranges: Optional list of (start, end) page ranges to merge
-            use_ai: bool Whether to use AI for name extraction
-            detect_blank: Whether to detect blank/unanswered problems
-            blank_confidence_threshold: Confidence threshold for using AI verification on blanks
-            use_ai_for_borderline: Whether to use AI for low-confidence blank detections
             progress_callback: Optional callback function(processed, matched, message) for progress updates
             document_id_offset: Starting document_id (useful when adding more exams to existing session)
             file_metadata: Optional dict mapping file_path -> {hash, original_filename}
-            problem_max_points: Optional dict mapping problem_number -> max_points
-            extract_max_points_enabled: Whether to extract max points from images
             manual_split_points: Optional dict mapping page_number -> list of y-positions for manual splits
             skip_first_region: Whether to skip the first region (header/title area) when splitting (default True)
             last_page_blank: Whether to skip the last page (common with odd-numbered page counts, default False)
@@ -286,29 +279,29 @@ class ExamProcessor:
             file_hash, original_filename
         """
     log.info(f"Processing {len(input_files)} exams")
-
+    
     # Early return if no files
     if not input_files:
       return [], []
-
+    
     # Set up page mappings and split points
     page_mappings_by_submission = None
     consensus_break_points = self._setup_page_mappings(
       input_files,
       manual_split_points
     )
-
+    
     # Process each PDF
     matched_submissions = []
     unmatched_submissions = []
     unmatched_students = canvas_students.copy()
-
+    
     for index, pdf_path in enumerate(input_files):
       document_id = index + document_id_offset
       log.info(
         f"Processing exam {index + 1}/{len(input_files)} (document_id={document_id}): {pdf_path.name}"
       )
-
+      
       # Report progress: starting exam
       self._report_progress(
         progress_callback,
@@ -316,16 +309,17 @@ class ExamProcessor:
         len(matched_submissions),
         f"Processing exam {index + 1}/{len(input_files)}: {pdf_path.name}"
       )
-
+      
       # Extract name
       approximate_name, name_image = self.extract_name(
         pdf_path,
-        student_names=[s["name"] for s in unmatched_students])
+        student_names=[s["name"] for s in unmatched_students]
+      )
       log.info(f"  Extracted name: {approximate_name}")
-
+      
       # Find suggested match
       suggested_match, match_confidence = self._find_suggested_match(approximate_name, unmatched_students)
-
+      
       # Extract problems from PDF
       pdf_data, problems = self._extract_problems(
         pdf_path,
@@ -333,7 +327,7 @@ class ExamProcessor:
         skip_first_region,
         last_page_blank
       )
-
+      
       # Build submission dict
       submission = self._build_submission_dict(
         document_id,
@@ -352,12 +346,12 @@ class ExamProcessor:
         matched_submissions.append(submission)
       else:
         unmatched_submissions.append(submission)
-
+    
     log.info(
       f"Matched: {len(matched_submissions)}, Unmatched: {len(unmatched_submissions)}"
     )
     return matched_submissions, unmatched_submissions
-
+  
   def extract_name(
       self,
       pdf_path: Path,
