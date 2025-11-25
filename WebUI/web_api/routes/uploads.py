@@ -12,11 +12,9 @@ import logging
 from pathlib import Path
 
 from ..models import UploadResponse
-from ..database import get_db_connection
-from ..repositories import SessionRepository, SubmissionRepository
+from ..repositories import SessionRepository
 from ..domain.common import SessionStatus
 from .. import sse
-import json
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -281,14 +279,7 @@ async def upload_exams(session_id: int, files: List[UploadFile] = File(...)):
     for k, v in composite_dimensions.items()
   }
 
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
-    cursor.execute(
-      """
-            UPDATE grading_sessions
-            SET metadata = ?
-            WHERE id = ?
-        """, (json.dumps(session_data), session_id))
+  session_repo.update_metadata(session_id, session_data)
 
   return {
     "session_id": session_id,
@@ -313,20 +304,13 @@ async def submit_alignment(session_id: int, background_tasks: BackgroundTasks,
         session_id: Session ID
         submission: Model containing split_points dict mapping page_number (as string) -> list of y-positions
     """
-  import json
-
   # Retrieve stored file paths from session metadata
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
-    cursor.execute("SELECT metadata FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    row = cursor.fetchone()
+  session_repo = SessionRepository()
+  session_data = session_repo.get_metadata(session_id)
 
-    if not row or not row["metadata"]:
-      raise HTTPException(status_code=404,
-                          detail="Session not found or no files uploaded")
-
-    session_data = json.loads(row["metadata"])
+  if not session_data:
+    raise HTTPException(status_code=404,
+                        detail="Session not found or no files uploaded")
 
   # Reconstruct file paths and metadata
   file_paths = [Path(p) for p in session_data["file_paths"]]
@@ -363,14 +347,7 @@ async def submit_alignment(session_id: int, background_tasks: BackgroundTasks,
   session_data["last_page_blank"] = submission.last_page_blank
   session_data["ai_provider"] = submission.ai_provider
 
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
-    cursor.execute(
-      """
-            UPDATE grading_sessions
-            SET metadata = ?
-            WHERE id = ?
-        """, (json.dumps(session_data), session_id))
+  session_repo.update_metadata(session_id, session_data)
 
   log.info(
     f"Saved split points and settings to session metadata for future uploads")
@@ -393,18 +370,12 @@ async def submit_alignment(session_id: int, background_tasks: BackgroundTasks,
   )
 
   # Update session status
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
-    cursor.execute(
-      """
-            UPDATE grading_sessions
-            SET status = 'preprocessing',
-                processed_exams = 0,
-                matched_exams = 0,
-                processing_message = 'Processing with manual split points...',
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (session_id, ))
+  session = session_repo.get_by_id(session_id)
+  session.status = SessionStatus.PREPROCESSING
+  session.processed_exams = 0
+  session.matched_exams = 0
+  session.processing_message = 'Processing with manual split points...'
+  session_repo.update(session)
 
   return {
     "session_id": session_id,
@@ -437,7 +408,6 @@ async def process_exam_files(
         ai_provider: AI provider to use for name extraction (anthropic, openai, ollama)
     """
   import logging
-  import json
   import asyncio
   from ..services.exam_processor import ExamProcessor
   from lms_interface.canvas_interface import CanvasInterface
@@ -447,26 +417,18 @@ async def process_exam_files(
 
   try:
     # Get session info
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
-      cursor.execute("SELECT * FROM grading_sessions WHERE id = ?",
-                     (session_id, ))
-      session = cursor.fetchone()
+    from ..repositories import SessionRepository, SubmissionRepository, ProblemMetadataRepository
+    from ..domain.common import SessionStatus
+    session_repo = SessionRepository()
 
-      if not session:
-        log.error(f"Session {session_id} not found")
-        return
+    session = session_repo.get_by_id(session_id)
+    if not session:
+      log.error(f"Session {session_id} not found")
+      return
 
-      course_id = session["course_id"]
-      assignment_id = session["assignment_id"]
-
-    # Get Canvas environment from session (default to False for older sessions)
-    # Note: SQLite stores booleans as INTEGER (0 or 1)
-    try:
-      use_prod = bool(session["use_prod_canvas"]
-                      ) if "use_prod_canvas" in session.keys() else False
-    except (KeyError, IndexError):
-      use_prod = False
+    course_id = session.course_id
+    assignment_id = session.assignment_id
+    use_prod = session.use_prod_canvas
 
     # Get Canvas students
     canvas_interface = CanvasInterface(prod=use_prod)
@@ -475,15 +437,8 @@ async def process_exam_files(
     students = assignment.get_students()
 
     # Get students who already have submissions in this session
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
-      cursor.execute(
-        """
-                SELECT DISTINCT canvas_user_id
-                FROM submissions
-                WHERE session_id = ? AND canvas_user_id IS NOT NULL
-            """, (session_id, ))
-      existing_user_ids = set(row[0] for row in cursor.fetchall())
+    submission_repo = SubmissionRepository()
+    existing_user_ids = submission_repo.get_existing_canvas_users(session_id)
 
     # Convert to simple dicts for processor, excluding students who already have submissions
     canvas_students = [{
@@ -496,8 +451,6 @@ async def process_exam_files(
     )
 
     # Check for duplicate files (same hash already processed)
-    from ..repositories import SubmissionRepository, SessionRepository
-    from ..domain.common import SessionStatus
     submission_repo = SubmissionRepository()
     existing_hashes = submission_repo.get_existing_hashes(session_id)
 
@@ -562,20 +515,14 @@ async def process_exam_files(
       # Increment step counter
       current_step['count'] += 1
 
-      # Update database
-      with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-          """
-                    UPDATE grading_sessions
-                    SET total_exams = ?,
-                        processed_exams = ?,
-                        matched_exams = ?,
-                        processing_message = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                """,
-          (total, processed_count, matched_count, message, session_id))
+      # Update database using repository
+      progress_repo = SessionRepository()
+      progress_session = progress_repo.get_by_id(session_id)
+      progress_session.total_exams = total
+      progress_session.processed_exams = processed_count
+      progress_session.matched_exams = matched_count
+      progress_session.processing_message = message
+      progress_repo.update(progress_session)
 
       # Calculate progress based on steps completed
       progress_percent = min(100,
@@ -598,15 +545,8 @@ async def process_exam_files(
         log.error(f"Failed to send SSE event: {e}")
 
     # Load existing max_points metadata to avoid re-extracting
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
-      cursor.execute(
-        """
-                SELECT problem_number, max_points
-                FROM problem_metadata
-                WHERE session_id = ?
-            """, (session_id, ))
-      problem_max_points = {row[0]: row[1] for row in cursor.fetchall()}
+    metadata_repo = ProblemMetadataRepository()
+    problem_max_points = metadata_repo.get_all_max_points(session_id)
 
     log.info(
       f"Loaded {len(problem_max_points)} existing max_points values from metadata"
@@ -760,11 +700,5 @@ async def process_exam_files(
     })
 
     # Update session to error state
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
-      cursor.execute(
-        """
-                UPDATE grading_sessions
-                SET status = 'preprocessing', updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (session_id, ))
+    error_repo = SessionRepository()
+    error_repo.update_status(session_id, SessionStatus.ERROR, f"Processing failed: {str(e)}")
