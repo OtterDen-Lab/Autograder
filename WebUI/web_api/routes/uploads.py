@@ -14,6 +14,7 @@ from pathlib import Path
 from ..models import UploadResponse
 from ..database import get_db_connection
 from .. import sse
+import json
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -125,7 +126,6 @@ async def upload_exams(session_id: int, files: List[UploadFile] = File(...)):
 
   # Store file paths and metadata in session for later processing
   # Append to existing uploads if any (support multiple upload batches)
-  import json
 
   with get_db_connection() as conn:
     cursor = conn.cursor()
