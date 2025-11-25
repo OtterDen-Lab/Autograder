@@ -74,7 +74,7 @@ services:
       # Override database path to use Docker volume
       - GRADING_DB_PATH=/data/grading.db
       - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/app/Autograder/web_grading:/app/QuizGeneration
+      - PYTHONPATH=/app/web_grading:/app/QuizGeneration
       # Ollama configuration
       # Use host.docker.internal:11434 to connect to Ollama on host machine
       # Or ollama:11434 to use the containerized Ollama service

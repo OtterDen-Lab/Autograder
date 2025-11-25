@@ -10,6 +10,8 @@ import logging
 import asyncio
 
 from ..database import get_db_connection
+from ..repositories import SessionRepository, ProblemRepository
+from ..domain.common import SessionStatus
 from ..services.finalizer import FinalizationService
 from .. import sse
 
@@ -37,44 +39,23 @@ async def finalize_progress_stream(session_id: int):
 @router.post("/{session_id}/finalize")
 async def finalize_session(session_id: int, background_tasks: BackgroundTasks):
   """Start finalization process for a session"""
+  session_repo = SessionRepository()
+  problem_repo = ProblemRepository()
 
-  # Verify session exists and get info
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
-    cursor.execute(
-      """
-            SELECT id, course_id, assignment_id, status, use_prod_canvas
-            FROM grading_sessions
-            WHERE id = ?
-        """, (session_id, ))
+  # Verify session exists
+  session = session_repo.get_by_id(session_id)
+  if not session:
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    session = cursor.fetchone()
-    if not session:
-      raise HTTPException(status_code=404, detail="Session not found")
+  # Check if all problems are graded
+  ungraded_count = problem_repo.count_ungraded(session_id)
+  if ungraded_count > 0:
+    raise HTTPException(
+      status_code=400,
+      detail=f"Cannot finalize: {ungraded_count} problems still ungraded")
 
-    # Check if all problems are graded
-    cursor.execute(
-      """
-            SELECT COUNT(*) as ungraded
-            FROM problems
-            WHERE session_id = ? AND graded = 0
-        """, (session_id, ))
-
-    ungraded_count = cursor.fetchone()["ungraded"]
-    if ungraded_count > 0:
-      raise HTTPException(
-        status_code=400,
-        detail=f"Cannot finalize: {ungraded_count} problems still ungraded")
-
-    # Update session status with initial progress message
-    cursor.execute(
-      """
-            UPDATE grading_sessions
-            SET status = 'finalizing',
-                processing_message = 'Starting finalization...',
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (session_id, ))
+  # Update session status with initial progress message
+  session_repo.update_status(session_id, SessionStatus.FINALIZING, "Starting finalization...")
 
   # Create SSE stream for progress updates
   stream_id = sse.make_stream_id("finalize", session_id)
@@ -93,23 +74,16 @@ async def finalize_session(session_id: int, background_tasks: BackgroundTasks):
 @router.get("/{session_id}/finalization-status")
 async def get_finalization_status(session_id: int):
   """Get status of finalization process"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
-    cursor.execute(
-      """
-            SELECT status, processing_message
-            FROM grading_sessions
-            WHERE id = ?
-        """, (session_id, ))
+  session_repo = SessionRepository()
 
-    session = cursor.fetchone()
-    if not session:
-      raise HTTPException(status_code=404, detail="Session not found")
+  session = session_repo.get_by_id(session_id)
+  if not session:
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    return {
-      "status": session["status"],
-      "message": session["processing_message"]
-    }
+  return {
+    "status": session.status.value,
+    "message": session.processing_message
+  }
 
 
 async def run_finalization(session_id: int, stream_id: str):
@@ -135,16 +109,8 @@ async def run_finalization(session_id: int, stream_id: str):
       await loop.run_in_executor(None, finalizer.finalize)
 
     # Update session to finalized
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
-      cursor.execute(
-        """
-                UPDATE grading_sessions
-                SET status = 'finalized',
-                    processing_message = 'Finalized and uploaded to Canvas',
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (session_id, ))
+    session_repo = SessionRepository()
+    session_repo.update_status(session_id, SessionStatus.FINALIZED, "Finalized and uploaded to Canvas")
 
     log.info(f"Finalization complete for session {session_id}")
 
@@ -164,13 +130,5 @@ async def run_finalization(session_id: int, stream_id: str):
     })
 
     # Update session to error state
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
-      cursor.execute(
-        """
-                UPDATE grading_sessions
-                SET status = 'error',
-                    processing_message = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (f"Finalization failed: {str(e)}", session_id))
+    session_repo = SessionRepository()
+    session_repo.update_status(session_id, SessionStatus.ERROR, f"Finalization failed: {str(e)}")

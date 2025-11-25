@@ -25,7 +25,7 @@ COPY LMSInterface /app/LMSInterface
 COPY QuizGeneration /app/QuizGeneration
 
 # Copy Autograder source
-COPY Autograder /app
+COPY Autograder/WebUI /app/web_grading
 COPY Autograder/pyproject.toml /app/
 
 # Update pyproject.toml to use local LMSInterface path
@@ -44,7 +44,7 @@ RUN uv pip install --system -e /app/QuizGeneration
 RUN mkdir -p /data
 
 # Set working directory to web_grading
-WORKDIR /app/Autograder/web_grading
+WORKDIR /app/web_grading
 
 # Expose port 8000
 EXPOSE 8000
@@ -56,7 +56,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV GRADING_DB_PATH=/data/grading.db
-ENV PYTHONPATH=/app/Autograder/web_grading
+ENV PYTHONPATH=/app/web_grading
 
 # Run the application
 CMD ["uvicorn", "web_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -924,16 +924,6 @@ class ExamProcessor:
         if problem_max_points is not None:
           problem_max_points[problem_number] = qr_data["max_points"]
 
-      # Detect blank if requested
-      if detect_blank:
-        # Priority order: Ollama -> Heuristic -> Paid AI
-        blank_result = self.is_blank_with_fallback(problem_image_base64)
-        problem_dict["is_blank"] = blank_result["is_blank"]
-        problem_dict["blank_confidence"] = blank_result["confidence"]
-        problem_dict["blank_method"] = blank_result["method"]
-        if "reasoning" in blank_result:
-          problem_dict["blank_reasoning"] = blank_result["reasoning"]
-
       # Extract max points from score box
       if problem_max_points and problem_number in problem_max_points:
         problem_dict["max_points"] = problem_max_points[problem_number]
@@ -976,7 +966,9 @@ class ExamProcessor:
 
       if full_page_check["is_blank"] and full_page_check["confidence"] > 0.85:
         log.info(
-          f"Removing blank trailing page (problem {last_problem['problem_number']}) - ink_density={full_page_check['ink_density']:.4f}"
+          f"Removing blank trailing page (problem {last_problem['problem_number']}) - "
+          f"confidence={full_page_check['confidence']:.2f}, "
+          f"blank_ratio={full_page_check.get('blank_bands', 0)}/{full_page_check.get('answer_bands', 0)} bands"
         )
         problems.pop()
 
@@ -1424,26 +1416,7 @@ class ExamProcessor:
         Returns:
             Dict with {is_blank: bool, confidence: float, method: str, reasoning: str (optional)}
         """
-    # First, try Ollama if available
-    if self.ai_provider == "ollama":
-      try:
-        log.info("Attempting blank detection with Ollama...")
-
-        # Downscale image for Ollama (50 DPI is plenty for blank detection)
-        downscaled_image = self._downscale_image(image_base64,
-                                                 target_dpi=50,
-                                                 original_dpi=150)
-
-        result = self.is_blank_ai(downscaled_image)
-        result["method"] = "ollama"
-        log.info(f"Ollama blank detection succeeded: {result}")
-        return result
-      except Exception as e:
-        # Ollama client timeout or other errors will be caught here
-        log.warning(
-          f"Ollama blank detection failed: {e}, falling back to heuristic")
-
-    # Second, try heuristic method
+    # First, try heuristic method
     try:
       log.info("Using heuristic blank detection...")
       result = self.is_blank_heuristic(image_base64)
@@ -1452,35 +1425,6 @@ class ExamProcessor:
       return result
     except Exception as e:
       log.error(f"Heuristic blank detection failed: {e}")
-
-    # Third, fall back to paid AI (Anthropic/OpenAI)
-    try:
-      log.warning("Falling back to paid AI for blank detection...")
-      # Temporarily switch to Anthropic
-      original_provider = self.ai_provider
-      original_helper = self.ai_helper_class
-
-      self.ai_provider = "anthropic"
-      self.ai_helper_class = ai_helper.AI_Helper__Anthropic
-
-      result = self.is_blank_ai(image_base64)
-      result["method"] = "anthropic_fallback"
-
-      # Restore original provider
-      self.ai_provider = original_provider
-      self.ai_helper_class = original_helper
-
-      log.info(f"Paid AI blank detection: {result}")
-      return result
-    except Exception as e:
-      log.error(f"All blank detection methods failed: {e}")
-      # Return safe default (not blank to avoid skipping real content)
-      return {
-        "is_blank": False,
-        "confidence": 0.0,
-        "method": "failed",
-        "reasoning": f"All detection methods failed: {str(e)}"
-      }
 
   def _downscale_image(self,
                        image_base64: str,
@@ -1521,104 +1465,3 @@ class ExamProcessor:
     )
 
     return downscaled_b64
-
-  def is_blank_ai(self, image_base64: str) -> Dict:
-    """
-        Use AI to determine if a problem image is blank/unanswered.
-        Only call this for borderline cases where heuristic is uncertain.
-
-        Args:
-            image_base64: Base64 encoded image (full problem image)
-
-        Returns:
-            Dict with {is_blank: bool, confidence: float, reasoning: str}
-        """
-    try:
-      query = """Is this exam question unanswered (no handwritten work)?
-
-This is an exam question that may have printed text (the question) and blank space for the answer.
-Look for ANY handwritten work, calculations, or answers. Even partial attempts count as answered.
-Ignore printed text, lines, and page numbers - only look for handwriting/student work.
-
-Respond with ONLY a JSON object in this format:
-{"is_blank": true/false, "confidence": 0.0-1.0, "reasoning": "brief explanation"}"""
-
-      response, _ = self.ai_helper_class().query_ai(query,
-                                                    attachments=[
-                                                      ("png", image_base64)
-                                                    ])
-
-      # Parse JSON response
-      import json
-      result = json.loads(response.strip())
-
-      log.info(
-        f"AI blank detection: is_blank={result['is_blank']}, "
-        f"confidence={result['confidence']}, reasoning={result['reasoning']}")
-
-      return result
-
-    except Exception as e:
-      log.error(f"AI blank detection failed: {e}")
-      return {
-        "is_blank": False,  # Default to not blank if AI fails
-        "confidence": 0.0,
-        "reasoning": f"AI detection failed: {str(e)}"
-      }
-
-  def extract_max_points(self, image_base64: str) -> Optional[float]:
-    """
-        Extract max points from score box in upper right corner.
-        Looks for patterns like "___/8" or "____ / 10"
-        """
-    try:
-      from PIL import Image
-      import io
-      import re
-
-      # Decode image
-      image_data = base64.b64decode(image_base64)
-      img = Image.open(io.BytesIO(image_data))
-
-      # Crop to upper right corner, avoiding name redaction area
-      # Name box is typically left-center (350-600px from left)
-      # Score box is in upper right corner
-      width, height = img.size
-      crop_height = int(height * 0.15)
-
-      # Use rightmost 15% of width to avoid name box
-      crop_width = int(width * 0.15)
-      crop_box = (width - crop_width, 0, width, crop_height)
-      cropped = img.crop(crop_box)
-
-      # Convert to base64
-      buffer = io.BytesIO()
-      cropped.save(buffer, format='PNG')
-      cropped_b64 = base64.b64encode(buffer.getvalue()).decode()
-
-      # Use AI to extract the number
-      query = """Look at this image of a score box from the upper right corner of an exam problem.
-It should contain text like "___/8" or "____ / 10" where the number after the slash is the maximum points for this problem.
-
-Extract ONLY the number after the slash. If you cannot find a clear score box pattern, respond with "NOT_FOUND".
-Your response should be either a single number (e.g., "8" or "10") or "NOT_FOUND"."""
-
-      response, _ = self.ai_helper_class().query_ai(query,
-                                                    attachments=[
-                                                      ("png", cropped_b64)
-                                                    ])
-      text = response.strip()
-
-      # Try to extract a number
-      match = re.search(r'\d+\.?\d*', text)
-      if match:
-        max_points = float(match.group())
-        log.info(f"Extracted max points: {max_points} from score box")
-        return max_points
-      else:
-        log.warning(f"Could not extract max points from AI response: {text}")
-        return None
-
-    except Exception as e:
-      log.error(f"Max points extraction failed: {e}")
-      return None
