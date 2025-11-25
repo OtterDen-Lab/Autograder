@@ -113,135 +113,95 @@ async def list_sessions():
 @router.get("/{session_id}/stats", response_model=SessionStatsResponse)
 async def get_session_stats(session_id: int):
   """Get grading statistics for a session"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  import statistics
+  import logging
 
-    # Get overall stats
-    cursor.execute(
-      """
-            SELECT
-                COUNT(DISTINCT submission_id) as total_submissions,
-                COUNT(*) as total_problems,
-                SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as problems_graded
-            FROM problems
-            WHERE session_id = ?
-        """, (session_id, ))
+  problem_repo = ProblemRepository()
+  metadata_repo = ProblemMetadataRepository()
+  log = logging.getLogger(__name__)
 
-    row = cursor.fetchone()
-    if not row:
-      raise HTTPException(status_code=404, detail="Session not found")
+  # Get overall stats
+  overall_stats = problem_repo.get_session_overall_stats(session_id)
+  if overall_stats["total_problems"] == 0:
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    total_submissions = row["total_submissions"] or 0
-    total_problems = row["total_problems"] or 0
-    problems_graded = row["problems_graded"] or 0
-    problems_remaining = total_problems - problems_graded
-    progress = (problems_graded / total_problems *
-                100) if total_problems > 0 else 0
+  total_submissions = overall_stats["total_submissions"]
+  total_problems = overall_stats["total_problems"]
+  problems_graded = overall_stats["problems_graded"]
+  problems_remaining = total_problems - problems_graded
+  progress = (problems_graded / total_problems * 100) if total_problems > 0 else 0
 
-    # Get per-problem stats (calculate comprehensive statistics)
-    cursor.execute(
-      """
-            SELECT DISTINCT problem_number
-            FROM problems
-            WHERE session_id = ?
-            ORDER BY problem_number
-        """, (session_id, ))
+  # Get per-problem stats
+  problem_numbers = problem_repo.get_distinct_problem_numbers(session_id)
+  problem_stats = []
 
-    problem_numbers = [row["problem_number"] for row in cursor.fetchall()]
-    problem_stats = []
+  for problem_num in problem_numbers:
+    # Get scores and blank count
+    scores, num_blank = problem_repo.get_problem_scores_and_blanks(
+      session_id, problem_num)
 
-    for problem_num in problem_numbers:
-      # Get all scores for this problem (for median and stddev)
-      cursor.execute(
-        """
-                SELECT score, is_blank
-                FROM problems
-                WHERE session_id = ? AND problem_number = ? AND graded = 1
-            """, (session_id, problem_num))
+    # Get max_points for this problem (default to 8 if not set)
+    max_points = metadata_repo.get_max_points(session_id, problem_num)
+    if max_points is None:
+      max_points = 8.0
 
-      results = cursor.fetchall()
-      scores = [row["score"] for row in results if row["score"] is not None]
-      num_blank = sum(1 for row in results if row["is_blank"])
+    # Get counts
+    counts = problem_repo.get_counts_for_problem_number(session_id, problem_num)
+    num_total = counts["total"]
+    num_graded = counts["graded"]
+    num_blank_ungraded = counts["ungraded_blank"]
+    num_blank_total = num_blank + num_blank_ungraded
 
-      # Get max_points for this problem (default to 8 if not set)
-      cursor.execute(
-        """
-                SELECT max_points
-                FROM problem_metadata
-                WHERE session_id = ? AND problem_number = ?
-            """, (session_id, problem_num))
-      max_points_row = cursor.fetchone()
-      max_points = max_points_row["max_points"] if max_points_row else 8.0
-
-      # Get total count (including ungraded) and count of ungraded blanks
-      cursor.execute(
-        """
-                SELECT COUNT(*) as num_total,
-                       SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as num_graded,
-                       SUM(CASE WHEN graded = 0 AND is_blank = 1 THEN 1 ELSE 0 END) as num_blank_ungraded,
-                       SUM(CASE WHEN is_blank = 1 THEN 1 ELSE 0 END) as num_blank_total
-                FROM problems
-                WHERE session_id = ? AND problem_number = ?
-            """, (session_id, problem_num))
-      count_row = cursor.fetchone()
-      num_total = count_row["num_total"]
-      num_graded = count_row["num_graded"]
-      num_blank_ungraded = count_row["num_blank_ungraded"] or 0
-      num_blank_total = count_row["num_blank_total"] or 0
-
-      # Debug log to see what we're getting
-      import logging
-      log = logging.getLogger(__name__)
-      log.info(
-        f"[STATS] Problem {problem_num}: total={num_total}, graded={num_graded}, blank_ungraded={num_blank_ungraded}, blank_total={num_blank_total}"
-      )
-
-      # Calculate statistics
-      import statistics
-      avg_score = statistics.mean(scores) if scores else None
-      min_score = min(scores) if scores else None
-      max_score = max(scores) if scores else None
-      median_score = statistics.median(scores) if scores else None
-      stddev_score = statistics.stdev(scores) if len(scores) > 1 else None
-
-      # Calculate normalized mean and stddev (0-1 scale based on max_points)
-      mean_normalized = None
-      stddev_normalized = None
-      if avg_score is not None and max_points is not None and max_points > 0:
-        mean_normalized = avg_score / max_points
-      if stddev_score is not None and max_points is not None and max_points > 0:
-        stddev_normalized = stddev_score / max_points
-
-      # Calculate percentage blank
-      pct_blank = (num_blank / num_graded * 100) if num_graded > 0 else None
-
-      problem_stats.append(
-        ProblemStatsResponse(
-          problem_number=problem_num,
-          avg_score=avg_score,
-          min_score=min_score,
-          max_score=max_score,
-          median_score=median_score,
-          stddev_score=stddev_score,
-          mean_normalized=mean_normalized,
-          stddev_normalized=stddev_normalized,
-          pct_blank=pct_blank,
-          num_blank=num_blank,
-          num_blank_ungraded=num_blank_ungraded,
-          num_graded=num_graded,
-          num_total=num_total,
-          max_points=max_points,
-        ))
-
-    return SessionStatsResponse(
-      session_id=session_id,
-      total_submissions=total_submissions,
-      total_problems=total_problems,
-      problems_graded=problems_graded,
-      problems_remaining=problems_remaining,
-      progress_percentage=progress,
-      problem_stats=problem_stats,
+    # Debug log
+    log.info(
+      f"[STATS] Problem {problem_num}: total={num_total}, graded={num_graded}, blank_ungraded={num_blank_ungraded}, blank_total={num_blank_total}"
     )
+
+    # Calculate statistics
+    avg_score = statistics.mean(scores) if scores else None
+    min_score = min(scores) if scores else None
+    max_score = max(scores) if scores else None
+    median_score = statistics.median(scores) if scores else None
+    stddev_score = statistics.stdev(scores) if len(scores) > 1 else None
+
+    # Calculate normalized mean and stddev (0-1 scale based on max_points)
+    mean_normalized = None
+    stddev_normalized = None
+    if avg_score is not None and max_points is not None and max_points > 0:
+      mean_normalized = avg_score / max_points
+    if stddev_score is not None and max_points is not None and max_points > 0:
+      stddev_normalized = stddev_score / max_points
+
+    # Calculate percentage blank
+    pct_blank = (num_blank / num_graded * 100) if num_graded > 0 else None
+
+    problem_stats.append(
+      ProblemStatsResponse(
+        problem_number=problem_num,
+        avg_score=avg_score,
+        min_score=min_score,
+        max_score=max_score,
+        median_score=median_score,
+        stddev_score=stddev_score,
+        mean_normalized=mean_normalized,
+        stddev_normalized=stddev_normalized,
+        pct_blank=pct_blank,
+        num_blank=num_blank,
+        num_blank_ungraded=num_blank_ungraded,
+        num_graded=num_graded,
+        num_total=num_total,
+        max_points=max_points,
+      ))
+
+  return SessionStatsResponse(
+    session_id=session_id,
+    total_submissions=total_submissions,
+    total_problems=total_problems,
+    problems_graded=problems_graded,
+    problems_remaining=problems_remaining,
+    progress_percentage=progress,
+    problem_stats=problem_stats,
+  )
 
 
 @router.get("/{session_id}/problem-numbers")
@@ -491,39 +451,41 @@ async def delete_session(session_id: int):
 @router.get("/{session_id}/export")
 async def export_session(session_id: int):
   """Export complete session data as JSON for checkpointing"""
+  from dataclasses import asdict
+
+  session_repo = SessionRepository()
+  submission_repo = SubmissionRepository()
+  problem_repo = ProblemRepository()
+
+  # Get session metadata
+  session = session_repo.get_by_id(session_id)
+  if not session:
+    raise HTTPException(status_code=404, detail="Session not found")
+
+  session_data = asdict(session)
+  session_data['status'] = session.status.value  # Convert enum to string
+
+  # Get all submissions
+  submissions_list = submission_repo.get_by_session(session_id)
+  submissions = []
+  for sub in submissions_list:
+    sub_dict = asdict(sub)
+    # Get all problems for this submission
+    problems_list = problem_repo.get_by_submission(sub.id)
+    sub_dict["problems"] = [asdict(p) for p in problems_list]
+    submissions.append(sub_dict)
+
+  # Get problem stats, metadata, and feedback tags using direct SQL
+  # (These tables don't have repositories yet and are less critical)
   with get_db_connection() as conn:
     cursor = conn.cursor()
-
-    # Get session metadata
-    cursor.execute("SELECT * FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    session_row = cursor.fetchone()
-    if not session_row:
-      raise HTTPException(status_code=404, detail="Session not found")
-
-    session_data = dict(session_row)
-
-    # Get all submissions
-    cursor.execute("SELECT * FROM submissions WHERE session_id = ?",
-                   (session_id, ))
-    submissions = [dict(row) for row in cursor.fetchall()]
-
-    # Get all problems for each submission
-    for submission in submissions:
-      cursor.execute(
-        """
-                SELECT * FROM problems
-                WHERE session_id = ? AND submission_id = ?
-                ORDER BY problem_number
-            """, (session_id, submission["id"]))
-      submission["problems"] = [dict(row) for row in cursor.fetchall()]
 
     # Get problem stats
     cursor.execute("SELECT * FROM problem_stats WHERE session_id = ?",
                    (session_id, ))
     problem_stats = [dict(row) for row in cursor.fetchall()]
 
-    # Get problem metadata (max_points, default_feedback, etc.)
+    # Get problem metadata
     cursor.execute("SELECT * FROM problem_metadata WHERE session_id = ?",
                    (session_id, ))
     problem_metadata = [dict(row) for row in cursor.fetchall()]
@@ -533,35 +495,39 @@ async def export_session(session_id: int):
                    (session_id, ))
     feedback_tags = [dict(row) for row in cursor.fetchall()]
 
-    # Build export structure
-    export_data = {
-      "export_version": 1,
-      "exported_at": datetime.now().isoformat(),
-      "session": session_data,
-      "submissions": submissions,
-      "problem_stats": problem_stats,
-      "problem_metadata": problem_metadata,
-      "feedback_tags": feedback_tags
-    }
+  # Build export structure
+  export_data = {
+    "export_version": 1,
+    "exported_at": datetime.now().isoformat(),
+    "session": session_data,
+    "submissions": submissions,
+    "problem_stats": problem_stats,
+    "problem_metadata": problem_metadata,
+    "feedback_tags": feedback_tags
+  }
 
-    # Create JSON response
-    json_str = json.dumps(export_data, indent=2, default=str)
+  # Create JSON response
+  json_str = json.dumps(export_data, indent=2, default=str)
 
-    # Generate filename
-    assignment_name = session_data["assignment_name"].replace(" ", "_")
-    filename = f"grading_session_{session_id}_{assignment_name}.json"
+  # Generate filename
+  assignment_name = session.assignment_name.replace(" ", "_")
+  filename = f"grading_session_{session_id}_{assignment_name}.json"
 
-    # Return as downloadable file
-    return StreamingResponse(
-      io.BytesIO(json_str.encode()),
-      media_type="application/json",
-      headers={"Content-Disposition": f"attachment; filename={filename}"})
+  # Return as downloadable file
+  return StreamingResponse(
+    io.BytesIO(json_str.encode()),
+    media_type="application/json",
+    headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
 @router.post("/import")
 async def import_session(file: UploadFile = File(...)):
   """Import session data from JSON checkpoint file"""
   import logging
+  from ..repositories import with_transaction
+  from ..domain.submission import Submission
+  from ..domain.problem import Problem
+
   log = logging.getLogger(__name__)
 
   try:
@@ -581,100 +547,105 @@ async def import_session(file: UploadFile = File(...)):
     problem_metadata = import_data.get("problem_metadata", [])
     feedback_tags = import_data.get("feedback_tags", [])
 
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
-
-      # Create new session (without id to get auto-increment)
-      cursor.execute(
-        """
-                INSERT INTO grading_sessions
-                (assignment_id, assignment_name, course_id, course_name, status, canvas_points,
-                 created_at, updated_at, total_exams, processed_exams, matched_exams, processing_message, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-        (
-          session_data["assignment_id"],
-          session_data["assignment_name"],
-          session_data["course_id"],
-          session_data.get("course_name"),
-          session_data["status"],
-          session_data.get("canvas_points"),
-          session_data.get("created_at"),
-          datetime.now(),  # Use current time for updated_at
-          session_data.get("total_exams", 0),
-          session_data.get("processed_exams", 0),
-          session_data.get("matched_exams", 0),
-          session_data.get("processing_message"),
-          session_data.get("metadata")))
-
-      new_session_id = cursor.lastrowid
+    # Use transaction for atomic import
+    with with_transaction() as repos:
+      # Create new session
+      new_session = GradingSession(
+        id=0,  # Will be set by DB
+        assignment_id=session_data["assignment_id"],
+        assignment_name=session_data["assignment_name"],
+        course_id=session_data["course_id"],
+        course_name=session_data.get("course_name"),
+        status=DomainSessionStatus(session_data["status"]),
+        canvas_points=session_data.get("canvas_points"),
+        use_prod_canvas=session_data.get("use_prod_canvas", False),
+        created_at=datetime.fromisoformat(session_data.get("created_at")) if session_data.get("created_at") else datetime.now(),
+        updated_at=datetime.now(),  # Use current time for updated_at
+        total_exams=session_data.get("total_exams", 0),
+        processed_exams=session_data.get("processed_exams", 0),
+        matched_exams=session_data.get("matched_exams", 0),
+        processing_message=session_data.get("processing_message"),
+        metadata=session_data.get("metadata")
+      )
+      created_session = repos.sessions.create(new_session)
+      new_session_id = created_session.id
       log.info(f"Created new session {new_session_id} from import")
 
       # Import submissions and problems
-      submission_id_map = {}  # Map old submission_id -> new submission_id
-
-      for submission in submissions:
-        old_submission_id = submission["id"]
-
-        cursor.execute(
-          """
-                    INSERT INTO submissions
-                    (session_id, document_id, approximate_name, name_image_data, student_name, display_name,
-                     canvas_user_id, page_mappings, total_score, graded_at, file_hash, original_filename, exam_pdf_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-          (new_session_id, submission["document_id"],
-           submission.get("approximate_name"),
-           submission.get("name_image_data"), submission.get("student_name"),
-           submission.get("display_name"),
-           submission.get("canvas_user_id"), submission["page_mappings"],
-           submission.get("total_score"), submission.get("graded_at"),
-           submission.get("file_hash"), submission.get("original_filename"),
-           submission.get("exam_pdf_data")))
-
-        new_submission_id = cursor.lastrowid
-        submission_id_map[old_submission_id] = new_submission_id
+      for submission_data in submissions:
+        # Create submission domain object
+        new_submission = Submission(
+          id=0,  # Will be set by DB
+          session_id=new_session_id,
+          document_id=submission_data["document_id"],
+          approximate_name=submission_data.get("approximate_name"),
+          name_image_data=submission_data.get("name_image_data"),
+          student_name=submission_data.get("student_name"),
+          display_name=submission_data.get("display_name"),
+          canvas_user_id=submission_data.get("canvas_user_id"),
+          page_mappings=submission_data["page_mappings"],
+          total_score=submission_data.get("total_score"),
+          graded_at=datetime.fromisoformat(submission_data.get("graded_at")) if submission_data.get("graded_at") else None,
+          file_hash=submission_data.get("file_hash"),
+          original_filename=submission_data.get("original_filename"),
+          exam_pdf_data=submission_data.get("exam_pdf_data")
+        )
+        created_submission = repos.submissions.create(new_submission)
 
         # Import problems for this submission
-        for problem in submission.get("problems", []):
-          cursor.execute(
-            """
-                        INSERT INTO problems
-                        (session_id, submission_id, problem_number, score, feedback,
-                         graded, graded_at, is_blank, blank_confidence, blank_method, blank_reasoning, max_points,
-                         region_coords, qr_encrypted_data, ai_reasoning, transcription, transcription_model, transcription_cached_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-            (new_session_id, new_submission_id, problem["problem_number"],
-             problem.get("score"), problem.get("feedback"),
-             problem.get("graded", 0), problem.get("graded_at"),
-             problem.get("is_blank", 0), problem.get("blank_confidence", 0.0),
-             problem.get("blank_method"), problem.get("blank_reasoning"),
-             problem.get("max_points"), problem.get("region_coords"),
-             problem.get("qr_encrypted_data"), problem.get("ai_reasoning"),
-             problem.get("transcription"), problem.get("transcription_model"),
-             problem.get("transcription_cached_at")))
+        problems_to_create = []
+        for problem_data in submission_data.get("problems", []):
+          new_problem = Problem(
+            id=0,  # Will be set by DB
+            session_id=new_session_id,
+            submission_id=created_submission.id,
+            problem_number=problem_data["problem_number"],
+            score=problem_data.get("score"),
+            feedback=problem_data.get("feedback"),
+            graded=bool(problem_data.get("graded", 0)),
+            graded_at=datetime.fromisoformat(problem_data.get("graded_at")) if problem_data.get("graded_at") else None,
+            is_blank=bool(problem_data.get("is_blank", 0)),
+            blank_confidence=problem_data.get("blank_confidence", 0.0),
+            blank_method=problem_data.get("blank_method"),
+            blank_reasoning=problem_data.get("blank_reasoning"),
+            max_points=problem_data.get("max_points"),
+            ai_reasoning=problem_data.get("ai_reasoning"),
+            region_coords=problem_data.get("region_coords"),
+            qr_encrypted_data=problem_data.get("qr_encrypted_data"),
+            transcription=problem_data.get("transcription"),
+            transcription_model=problem_data.get("transcription_model"),
+            transcription_cached_at=datetime.fromisoformat(problem_data.get("transcription_cached_at")) if problem_data.get("transcription_cached_at") else None
+          )
+          problems_to_create.append(new_problem)
+
+        # Bulk create all problems for this submission
+        if problems_to_create:
+          repos.problems.bulk_create(problems_to_create)
+
+      # Import problem stats, metadata, and feedback tags using direct SQL
+      # (These tables don't have full repositories yet, okay for import)
+      conn = repos.sessions._get_connection().__enter__()  # Get underlying connection
+      cursor = conn.cursor()
 
       # Import problem stats
       for stat in problem_stats:
         cursor.execute(
           """
-                    INSERT INTO problem_stats
-                    (session_id, problem_number, avg_score, num_graded, num_total, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """,
+          INSERT INTO problem_stats
+          (session_id, problem_number, avg_score, num_graded, num_total, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          """,
           (new_session_id, stat["problem_number"], stat.get("avg_score"),
-           stat.get("num_graded", 0), stat.get("num_total",
-                                               0), datetime.now()))
+           stat.get("num_graded", 0), stat.get("num_total", 0), datetime.now()))
 
       # Import problem metadata (max_points, default_feedback, etc.)
       for metadata in problem_metadata:
         cursor.execute(
           """
-                    INSERT INTO problem_metadata
-                    (session_id, problem_number, max_points, default_feedback, default_feedback_threshold)
-                    VALUES (?, ?, ?, ?, ?)
-                """,
+          INSERT INTO problem_metadata
+          (session_id, problem_number, max_points, default_feedback, default_feedback_threshold)
+          VALUES (?, ?, ?, ?, ?)
+          """,
           (new_session_id, metadata["problem_number"],
            metadata.get("max_points"), metadata.get("default_feedback"),
            metadata.get("default_feedback_threshold", 100.0)))
@@ -683,13 +654,13 @@ async def import_session(file: UploadFile = File(...)):
       for tag in feedback_tags:
         cursor.execute(
           """
-                    INSERT INTO feedback_tags
-                    (session_id, problem_number, short_name, comment_text, use_count, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """,
+          INSERT INTO feedback_tags
+          (session_id, problem_number, short_name, comment_text, use_count, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          """,
           (new_session_id, tag["problem_number"], tag["short_name"],
-           tag["comment_text"], tag.get(
-             "use_count", 0), tag.get("created_at", datetime.now())))
+           tag["comment_text"], tag.get("use_count", 0),
+           tag.get("created_at", datetime.now())))
 
       log.info(
         f"Imported {len(submissions)} submissions, {sum(len(s.get('problems', [])) for s in submissions)} problems, {len(problem_metadata)} metadata entries, and {len(feedback_tags)} feedback tags"

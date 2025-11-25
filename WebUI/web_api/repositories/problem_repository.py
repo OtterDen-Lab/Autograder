@@ -562,3 +562,57 @@ class ProblemRepository(BaseRepository[Problem]):
         WHERE session_id = ? AND problem_number = ?
       """, (max_points, session_id, problem_number))
       return cursor.rowcount
+
+  def get_session_overall_stats(self, session_id: int) -> Dict:
+    """
+    Get overall statistics for a session.
+
+    Returns total_submissions, total_problems, problems_graded.
+
+    Args:
+      session_id: Session primary key
+
+    Returns:
+      Dict with overall statistics
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        SELECT
+          COUNT(DISTINCT submission_id) as total_submissions,
+          COUNT(*) as total_problems,
+          SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as problems_graded
+        FROM problems
+        WHERE session_id = ?
+      """, (session_id,))
+
+      row = cursor.fetchone()
+      return {
+        "total_submissions": row["total_submissions"] or 0,
+        "total_problems": row["total_problems"] or 0,
+        "problems_graded": row["problems_graded"] or 0
+      }
+
+  def get_problem_scores_and_blanks(self, session_id: int, problem_number: int) -> tuple[List[float], int]:
+    """
+    Get scores and blank count for a specific problem.
+
+    Args:
+      session_id: Session primary key
+      problem_number: Problem number
+
+    Returns:
+      Tuple of (list of scores, num_blank)
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        SELECT score, is_blank
+        FROM problems
+        WHERE session_id = ? AND problem_number = ? AND graded = 1
+      """, (session_id, problem_number))
+
+      results = cursor.fetchall()
+      scores = [row["score"] for row in results if row["score"] is not None]
+      num_blank = sum(1 for row in results if row["is_blank"])
+      return (scores, num_blank)
