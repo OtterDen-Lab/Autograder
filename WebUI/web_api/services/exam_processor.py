@@ -37,9 +37,11 @@ class ExamProcessor:
     Can be used by both the web API and the original CLI.
     """
 
-  def __init__(self,
-               name_rect: Optional[dict] = None,
-               ai_provider: str = "anthropic"):
+  def __init__(
+      self,
+      name_rect: Optional[dict] = None,
+      ai_provider: str = "anthropic"
+  ):
     """
         Initialize exam processor.
 
@@ -75,8 +77,13 @@ class ExamProcessor:
         f"Unknown AI provider '{ai_provider}', defaulting to Anthropic")
       self.ai_helper_class = ai_helper.AI_Helper__Anthropic
 
-  def _report_progress(self, progress_callback: Optional[callable],
-                       processed: int, matched: int, message: str):
+  def _report_progress(
+      self,
+      progress_callback: Optional[callable],
+      processed: int,
+      matched: int,
+      message: str
+  ):
     """
     Report progress via callback if provided.
 
@@ -90,8 +97,10 @@ class ExamProcessor:
       progress_callback(processed=processed, matched=matched, message=message)
 
   def _find_suggested_match(
-      self, approximate_name: str,
-      unmatched_students: List[dict]) -> Tuple[Optional[dict], int]:
+      self,
+      approximate_name: str,
+      unmatched_students: List[dict]
+  ) -> Tuple[Optional[dict], int]:
     """
     Find best fuzzy match for a name among unmatched students.
 
@@ -127,40 +136,6 @@ class ExamProcessor:
       log.warning(f"  No match found for: {approximate_name}")
 
     return None, 0
-
-  def _setup_page_mappings(
-      self, input_files: List[Path],
-      manual_split_points: Optional[Dict[int, List[int]]]
-  ) -> Dict:
-    """
-    Set up page mappings and split points based on configuration.
-
-    Args:
-        input_files: List of PDF file paths
-        page_ranges: Optional list of (start, end) page ranges to merge
-        manual_split_points: Optional dict mapping page_number -> list of y-positions
-
-    Returns:
-        Tuple of (use_auto_detection, page_mappings_by_submission, consensus_break_points)
-    """
-    log.info("Using manual split points for problem detection")
-
-    # Manual split points are now required
-    if manual_split_points is None:
-      raise ValueError(
-        "Manual split points are required. Please use the alignment interface to specify split points."
-      )
-
-    log.info(f"Using manual split points for {len(manual_split_points)} pages")
-    consensus_break_points = manual_split_points
-
-    total_consensus_breaks = sum(
-      len(breaks) for breaks in consensus_break_points.values())
-    log.info(
-      f"Using {total_consensus_breaks} manual split points across {len(consensus_break_points)} pages"
-    )
-
-    return consensus_break_points
 
   def _extract_problems(
       self,
@@ -198,11 +173,16 @@ class ExamProcessor:
     return pdf_data, problems
 
   def _build_submission_dict(
-      self, document_id: int, approximate_name: str, name_image: str,
+      self, document_id: int,
+      approximate_name: str,
+      name_image: str,
       suggested_match: Optional[dict],
-      page_mappings_by_submission: Optional[dict], problems: List[Dict],
-      pdf_data: Optional[str], pdf_path: Path,
-      file_metadata: Optional[Dict[Path, Dict]]) -> dict:
+      page_mappings_by_submission: Optional[dict],
+      problems: List[Dict],
+      pdf_data: Optional[str],
+      pdf_path: Path,
+      file_metadata: Optional[Dict[Path, Dict]]
+  ) -> dict:
     """
     Build submission dictionary from extracted data.
 
@@ -286,10 +266,7 @@ class ExamProcessor:
     
     # Set up page mappings and split points
     page_mappings_by_submission = None
-    consensus_break_points = self._setup_page_mappings(
-      input_files,
-      manual_split_points
-    )
+    consensus_break_points = manual_split_points
     
     # Process each PDF
     matched_submissions = []
@@ -355,7 +332,8 @@ class ExamProcessor:
   def extract_name(
       self,
       pdf_path: Path,
-      student_names: Optional[List[str]] = None) -> tuple[str, str]:
+      student_names: Optional[List[str]] = None
+  ) -> tuple[str, str]:
     """Extract student name from PDF using AI.
 
         Returns:
@@ -394,8 +372,10 @@ class ExamProcessor:
       return "", name_image_base64
 
   def redact_and_split(
-      self, pdf_path: Path,
-      page_ranges: List[Tuple[int, int]]) -> List[fitz.Document]:
+      self,
+      pdf_path: Path,
+      page_ranges: List[Tuple[int, int]]
+  ) -> List[fitz.Document]:
     """Redact names and split PDF into problems."""
     pdf_document = fitz.open(str(pdf_path))
 
@@ -416,13 +396,15 @@ class ExamProcessor:
     pdf_document.close()
     return problem_pdfs
 
-  def _extract_cross_page_region(self,
-                                 pdf_document: fitz.Document,
-                                 start_page: int,
-                                 start_y: float,
-                                 end_page: int,
-                                 end_y: float,
-                                 dpi: int = 150) -> Tuple[str, int]:
+  def _extract_cross_page_region(
+      self,
+      pdf_document: fitz.Document,
+      start_page: int,
+      start_y: float,
+      end_page: int,
+      end_y: float,
+      dpi: int = 150
+  ) -> Tuple[str, int]:
     """
         Extract a region that may span multiple pages and return as merged image.
 
@@ -855,9 +837,11 @@ class ExamProcessor:
 
     return pdf_base64, problems
 
-  def is_blank_heuristic_population(self,
-                                    images_base64: list,
-                                    percentile_threshold: float = 5.0) -> list:
+  def is_blank_heuristic_population(
+      self,
+      images_base64: list,
+      percentile_threshold: float = 5.0
+  ) -> list:
     """
         Population-based blank detection using black pixel ratio clustering.
 
@@ -1001,12 +985,14 @@ class ExamProcessor:
 
     return results
 
-  def is_blank_heuristic(self,
-                         image_base64: str,
-                         num_bands: int = 20,
-                         blank_threshold: float = 0.8,
-                         clustering_method: str = "auto",
-                         **kwargs) -> Dict:
+  def is_blank_heuristic(
+      self,
+      image_base64: str,
+      num_bands: int = 20,
+      blank_threshold: float = 0.8,
+      clustering_method: str = "auto",
+      **kwargs
+  ) -> Dict:
     """
         Use band-based heuristics to determine if a problem image appears blank/unanswered.
 
@@ -1229,9 +1215,13 @@ class ExamProcessor:
       "cluster_method": f"{best_n_clusters}-group"
     }
 
-  def _analyze_band_for_handwriting(self, img_array: np.ndarray,
-                                    band_index: int, band_height: int,
-                                    total_height: int) -> bool:
+  def _analyze_band_for_handwriting(
+      self,
+      img_array: np.ndarray,
+      band_index: int,
+      band_height: int,
+      total_height: int
+  ) -> bool:
     """
         Analyze a single band for handwriting by looking at spatial variation.
 
