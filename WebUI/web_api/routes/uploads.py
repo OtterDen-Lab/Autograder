@@ -559,20 +559,11 @@ async def process_exam_files(
       lambda: processor.process_exams(
         input_files=file_paths,
         canvas_students=canvas_students,
-        page_ranges=None,  # TODO: Get from session config
-        use_ai=True,
-        detect_blank=True,  # Enabled with new band-based heuristic
-        blank_confidence_threshold=0.8,
-        use_ai_for_borderline=False,  # Only use heuristics to save cost
         progress_callback=update_progress,
         document_id_offset=start_document_id,
         file_metadata=file_metadata,
-        problem_max_points=problem_max_points,
-        extract_max_points_enabled=False,  # Disabled - use manual entry via UI
-        manual_split_points=
-        manual_split_points,  # Use manual alignment (now percentage-based)
-        skip_first_region=
-        skip_first_region,  # Skip first region (header/title)
+        manual_split_points=manual_split_points,  # Use manual alignment (now percentage-based)
+        skip_first_region=skip_first_region,  # Skip first region (header/title)
         last_page_blank=last_page_blank  # Skip last page if blank
       ))
 

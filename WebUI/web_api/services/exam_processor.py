@@ -129,10 +129,9 @@ class ExamProcessor:
     return None, 0
 
   def _setup_page_mappings(
-      self, input_files: List[Path], page_ranges: Optional[List[Tuple[int,
-                                                                       int]]],
+      self, input_files: List[Path],
       manual_split_points: Optional[Dict[int, List[int]]]
-  ) -> Tuple[bool, Optional[dict], Optional[dict]]:
+  ) -> Dict:
     """
     Set up page mappings and split points based on configuration.
 
@@ -144,51 +143,32 @@ class ExamProcessor:
     Returns:
         Tuple of (use_auto_detection, page_mappings_by_submission, consensus_break_points)
     """
-    use_auto_detection = (page_ranges is None)
+    log.info("Using manual split points for problem detection")
 
-    if not use_auto_detection:
-      log.info(f"Using manual page ranges: {page_ranges}")
-
-      # Create shuffled page mappings
-      num_submissions = len(input_files)
-      num_problems = len(page_ranges)
-      page_mappings_by_submission = collections.defaultdict(list)
-
-      for problem_num in range(num_problems):
-        shuffled_order = random.sample(range(num_submissions),
-                                       k=num_submissions)
-        for submission_id, random_id in enumerate(shuffled_order):
-          page_mappings_by_submission[submission_id].append(random_id)
-
-      return use_auto_detection, page_mappings_by_submission, None
-    else:
-      log.info("Using manual split points for problem detection")
-
-      # Manual split points are now required
-      if manual_split_points is None:
-        raise ValueError(
-          "Manual split points are required. Please use the alignment interface to specify split points."
-        )
-
-      log.info(
-        f"Using manual split points for {len(manual_split_points)} pages")
-      consensus_break_points = manual_split_points
-
-      total_consensus_breaks = sum(
-        len(breaks) for breaks in consensus_break_points.values())
-      log.info(
-        f"Using {total_consensus_breaks} manual split points across {len(consensus_break_points)} pages"
+    # Manual split points are now required
+    if manual_split_points is None:
+      raise ValueError(
+        "Manual split points are required. Please use the alignment interface to specify split points."
       )
 
-      return use_auto_detection, None, consensus_break_points
+    log.info(f"Using manual split points for {len(manual_split_points)} pages")
+    consensus_break_points = manual_split_points
+
+    total_consensus_breaks = sum(
+      len(breaks) for breaks in consensus_break_points.values())
+    log.info(
+      f"Using {total_consensus_breaks} manual split points across {len(consensus_break_points)} pages"
+    )
+
+    return consensus_break_points
 
   def _extract_problems(
-      self, pdf_path: Path, page_ranges: Optional[List[Tuple[int, int]]],
+      self,
+      pdf_path: Path,
       consensus_break_points: Optional[dict],
-      problem_max_points: Optional[Dict[int, float]], detect_blank: bool,
-      blank_confidence_threshold: float, use_ai_for_borderline: bool,
-      extract_max_points_enabled: bool, skip_first_region: bool,
-      last_page_blank: bool) -> Tuple[Optional[str], List[Dict]]:
+      skip_first_region: bool,
+      last_page_blank: bool
+  ) -> Tuple[Optional[str], List[Dict]]:
     """
     Extract problems from PDF using either manual split points or page ranges.
 
@@ -209,41 +189,13 @@ class ExamProcessor:
         pdf_data is base64 PDF (None for manual page ranges)
         problems is list of problem dicts
     """
-    if page_ranges is None:
-      # Use manual split points to extract problem regions
-      pdf_data, problems = self.redact_and_extract_regions(
-        pdf_path,
-        split_points=consensus_break_points,
-        detect_blank=detect_blank,
-        blank_confidence_threshold=blank_confidence_threshold,
-        use_ai_for_borderline=use_ai_for_borderline,
-        problem_max_points=problem_max_points,
-        extract_max_points_enabled=extract_max_points_enabled,
-        skip_first_region=skip_first_region,
-        last_page_blank=last_page_blank)
-      return pdf_data, problems
-    else:
-      # Use manual page ranges (old path - stores individual PNGs)
-      pdf_data = None
-      problem_images = self.redact_and_split(pdf_path, page_ranges)
-
-      # Convert problem images to base64
-      problems = []
-      for problem_num, problem_doc in enumerate(problem_images):
-        # Convert PDF page to PNG
-        page = problem_doc[0]  # First (and only) page
-        pix = page.get_pixmap(dpi=150)
-        img_bytes = pix.tobytes("png")
-        img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-        problems.append({
-          "problem_number": problem_num + 1,
-          "image_base64": img_base64
-        })
-
-        problem_doc.close()
-
-      return pdf_data, problems
+    # Use manual split points to extract problem regions
+    pdf_data, problems = self.redact_and_extract_regions(
+      pdf_path,
+      split_points=consensus_break_points,
+      skip_first_region=skip_first_region,
+      last_page_blank=last_page_blank)
+    return pdf_data, problems
 
   def _build_submission_dict(
       self, document_id: int, approximate_name: str, name_image: str,
@@ -300,19 +252,13 @@ class ExamProcessor:
       self,
       input_files: List[Path],
       canvas_students: List[dict],
-      page_ranges: Optional[List[Tuple[int, int]]] = None,
-      use_ai: bool = True,
-      detect_blank: bool = False,
-      blank_confidence_threshold: float = 0.8,
-      use_ai_for_borderline: bool = False,
       progress_callback: Optional[callable] = None,
       document_id_offset: int = 0,
       file_metadata: Optional[Dict[Path, Dict]] = None,
-      problem_max_points: Optional[Dict[int, float]] = None,
-      extract_max_points_enabled: bool = False,
       manual_split_points: Optional[Dict[int, List[int]]] = None,
       skip_first_region: bool = True,
-      last_page_blank: bool = False) -> Tuple[List[Dict], List[Dict]]:
+      last_page_blank: bool = False
+  ) -> Tuple[List[Dict], List[Dict]]:
     """
         Process exam PDFs.
 
@@ -346,12 +292,11 @@ class ExamProcessor:
       return [], []
 
     # Set up page mappings and split points
-    use_auto_detection, page_mappings_by_submission, consensus_break_points = self._setup_page_mappings(
-      input_files, page_ranges, manual_split_points)
-
-    # Initialize problem_max_points if needed (shared across all exams)
-    if problem_max_points is None:
-      problem_max_points = {}
+    page_mappings_by_submission = None
+    consensus_break_points = self._setup_page_mappings(
+      input_files,
+      manual_split_points
+    )
 
     # Process each PDF
     matched_submissions = []
@@ -375,7 +320,6 @@ class ExamProcessor:
       # Extract name
       approximate_name, name_image = self.extract_name(
         pdf_path,
-        use_ai=use_ai,
         student_names=[s["name"] for s in unmatched_students])
       log.info(f"  Extracted name: {approximate_name}")
 
@@ -385,13 +329,7 @@ class ExamProcessor:
       # Extract problems from PDF
       pdf_data, problems = self._extract_problems(
         pdf_path,
-        page_ranges,
         consensus_break_points,
-        problem_max_points,
-        detect_blank,
-        blank_confidence_threshold,
-        use_ai_for_borderline,
-        extract_max_points_enabled,
         skip_first_region,
         last_page_blank
       )
@@ -423,16 +361,12 @@ class ExamProcessor:
   def extract_name(
       self,
       pdf_path: Path,
-      use_ai: bool = True,
       student_names: Optional[List[str]] = None) -> tuple[str, str]:
     """Extract student name from PDF using AI.
 
         Returns:
             Tuple of (extracted_name, name_image_base64)
         """
-    if not use_ai:
-      return "", ""
-
     # First extract the name image (always do this)
     name_image_base64 = ""
     try:
@@ -663,11 +597,6 @@ class ExamProcessor:
       self,
       pdf_path: Path,
       split_points: Dict[int, List[int]],
-      detect_blank: bool = False,
-      blank_confidence_threshold: float = 0.8,
-      use_ai_for_borderline: bool = False,
-      problem_max_points: Dict[int, float] = None,
-      extract_max_points_enabled: bool = False,
       skip_first_region: bool = True,
       last_page_blank: bool = False) -> Tuple[str, List[Dict]]:
     """
@@ -924,69 +853,11 @@ class ExamProcessor:
         problem_dict["qr_encrypted_data"] = qr_data.get(
           "encrypted_data")  # Store encrypted string for answer regeneration
 
-        # Cache the max points for this problem number (for future exams)
-        if problem_max_points is not None:
-          problem_max_points[problem_number] = qr_data["max_points"]
-
-      # Extract max points from score box
-      if problem_max_points and problem_number in problem_max_points:
-        problem_dict["max_points"] = problem_max_points[problem_number]
-      elif extract_max_points_enabled:
-        max_points = self.extract_max_points(problem_image_base64)
-        if max_points is not None:
-          problem_dict["max_points"] = max_points
-          if problem_max_points is not None:
-            problem_max_points[problem_number] = max_points
-
       problems.append(problem_dict)
       problem_number += 1
 
     pdf_document.close()
 
-    # Filter out blank trailing page if present
-    if problems and detect_blank:
-      last_problem = problems[-1]
-      # For last problem, need to extract and check
-      pdf_doc = fitz.open("pdf", base64.b64decode(pdf_base64))
-      page = pdf_doc[last_problem["page_number"]]
-      region = fitz.Rect(0, last_problem["region_y_start"], page.rect.width,
-                         last_problem["region_y_end"])
-
-      problem_pdf = fitz.open()
-      problem_page = problem_pdf.new_page(width=region.width,
-                                          height=region.height)
-      problem_page.show_pdf_page(problem_page.rect,
-                                 pdf_doc,
-                                 last_problem["page_number"],
-                                 clip=region)
-
-      pix = problem_page.get_pixmap(dpi=150)
-      img_bytes = pix.tobytes("png")
-      img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-      full_page_check = self.is_blank_heuristic(img_base64,
-                                                crop_to_answer_area=False,
-                                                threshold=0.015)
-
-      if full_page_check["is_blank"] and full_page_check["confidence"] > 0.85:
-        log.info(
-          f"Removing blank trailing page (problem {last_problem['problem_number']}) - "
-          f"confidence={full_page_check['confidence']:.2f}, "
-          f"blank_ratio={full_page_check.get('blank_bands', 0)}/{full_page_check.get('answer_bands', 0)} bands"
-        )
-        problems.pop()
-
-      problem_pdf.close()
-      pdf_doc.close()
-
-    if detect_blank:
-      blank_count = sum(1 for p in problems if p["is_blank"])
-      log.info(
-        f"Split PDF into {len(problems)} problems ({blank_count} detected as blank) using manual split points"
-      )
-    else:
-      log.info(
-        f"Split PDF into {len(problems)} problems using manual split points")
 
     return pdf_base64, problems
 
