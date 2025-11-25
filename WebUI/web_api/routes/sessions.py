@@ -80,59 +80,41 @@ async def create_session(session: SessionCreate):
 @router.get("/{session_id}", response_model=SessionResponse)
 async def get_session(session_id: int):
   """Get session details"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    row = cursor.fetchone()
+  from ..repositories import SessionRepository
 
-    if not row:
-      raise HTTPException(status_code=404, detail="Session not found")
+  repo = SessionRepository()
+  session = repo.get_by_id(session_id)
 
-    row_dict = dict(row)
-    return SessionResponse(
-      id=row["id"],
-      assignment_id=row["assignment_id"],
-      assignment_name=row["assignment_name"],
-      course_id=row["course_id"],
-      course_name=row["course_name"],
-      status=row["status"],
-      created_at=row["created_at"],
-      updated_at=row["updated_at"],
-      canvas_points=row["canvas_points"],
-      total_exams=row_dict.get("total_exams", 0),
-      processed_exams=row_dict.get("processed_exams", 0),
-      matched_exams=row_dict.get("matched_exams", 0),
-      processing_message=row_dict.get("processing_message"),
-    )
+  if not session:
+    raise HTTPException(status_code=404, detail="Session not found")
+
+  # Convert domain model to API response model
+  return SessionResponse.model_validate(session)
 
 
 @router.patch("/{session_id}/status")
 async def update_session_status(session_id: int,
                                 status_update: SessionStatusChange):
   """Update session status (e.g., from name_matching_needed to ready)"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  from ..repositories import SessionRepository
+  from ..domain.common import SessionStatus as DomainSessionStatus
 
-    # Verify session exists
-    cursor.execute("SELECT id FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    if not cursor.fetchone():
-      raise HTTPException(status_code=404, detail="Session not found")
+  repo = SessionRepository()
 
-    # Update status
-    cursor.execute(
-      """
-            UPDATE grading_sessions
-            SET status = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (status_update.status, session_id))
+  # Verify session exists
+  if not repo.exists(session_id):
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    return {
-      "status": "updated",
-      "session_id": session_id,
-      "new_status": status_update.status
-    }
+  # Update status using repository
+  # Convert API enum to domain enum
+  domain_status = DomainSessionStatus(status_update.status.value)
+  repo.update_status(session_id, domain_status)
+
+  return {
+    "status": "updated",
+    "session_id": session_id,
+    "new_status": status_update.status
+  }
 
 
 @router.get("", response_model=List[SessionResponse])

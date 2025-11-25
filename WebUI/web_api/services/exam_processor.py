@@ -966,7 +966,9 @@ class ExamProcessor:
 
       if full_page_check["is_blank"] and full_page_check["confidence"] > 0.85:
         log.info(
-          f"Removing blank trailing page (problem {last_problem['problem_number']}) - ink_density={full_page_check['ink_density']:.4f}"
+          f"Removing blank trailing page (problem {last_problem['problem_number']}) - "
+          f"confidence={full_page_check['confidence']:.2f}, "
+          f"blank_ratio={full_page_check.get('blank_bands', 0)}/{full_page_check.get('answer_bands', 0)} bands"
         )
         problems.pop()
 
