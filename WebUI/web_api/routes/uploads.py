@@ -646,112 +646,101 @@ async def process_exam_files(
         last_page_blank=last_page_blank  # Skip last page if blank
       ))
 
-    # Store in database
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
+    # Store in database using repositories
+    from ..repositories import with_transaction
+    from ..domain.submission import Submission
+    from ..domain.problem import Problem
 
-      all_submissions = matched + unmatched
+    with with_transaction() as repos:
+      all_submissions_data = matched + unmatched
 
-      for submission in all_submissions:
-        # Insert submission (with PDF data at end for easier manual editing)
-        cursor.execute(
-          """
-                    INSERT INTO submissions
-                    (session_id, document_id, approximate_name, student_name,
-                     canvas_user_id, page_mappings, file_hash, original_filename,
-                     name_image_data, exam_pdf_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-          (
-            session_id,
-            submission["document_id"],
-            submission.get("approximate_name"),
-            submission["student_name"],
-            submission["canvas_user_id"],
-            json.dumps(submission["page_mappings"]),
-            submission.get("file_hash"),
-            submission.get("original_filename"),
-            submission.get("name_image_data"),  # Large base64 data at end
-            submission.get("pdf_data")  # Large base64 PDF data at end
-          ))
+      # Step 1: Convert submission dicts to domain objects
+      submissions_to_create = []
+      for sub_data in all_submissions_data:
+        submission = Submission(
+          id=0,  # Will be populated on create
+          session_id=session_id,
+          document_id=sub_data["document_id"],
+          approximate_name=sub_data.get("approximate_name"),
+          name_image_data=sub_data.get("name_image_data"),
+          student_name=sub_data["student_name"],
+          display_name=None,  # Not set during upload
+          canvas_user_id=sub_data["canvas_user_id"],
+          page_mappings=sub_data["page_mappings"],
+          file_hash=sub_data.get("file_hash"),
+          original_filename=sub_data.get("original_filename"),
+          exam_pdf_data=sub_data.get("pdf_data")
+        )
+        # Store problems temporarily for later processing
+        submission.problems = sub_data["problems"]
+        submissions_to_create.append(submission)
 
-        submission_id = cursor.lastrowid
+      # Step 2: Bulk create submissions (single transaction)
+      created_submissions = repos.submissions.bulk_create(submissions_to_create)
 
-        # Insert problems and update metadata
-        for problem in submission["problems"]:
-          problem_number = problem["problem_number"]
+      # Step 3: Build problems list with correct submission_ids and handle metadata
+      all_problems = []
+      max_points_to_upsert = {}  # {problem_number: max_points}
 
-          # Check if we have metadata for this problem number
-          cursor.execute(
-            """
-                        SELECT max_points FROM problem_metadata
-                        WHERE session_id = ? AND problem_number = ?
-                    """, (session_id, problem_number))
+      for i, created_sub in enumerate(created_submissions):
+        for prob_data in submissions_to_create[i].problems:
+          problem_number = prob_data["problem_number"]
 
-          metadata_row = cursor.fetchone()
-          if metadata_row:
-            # Use stored max_points
-            max_points = metadata_row["max_points"]
+          # Check if we have max_points from metadata
+          existing_max = repos.metadata.get_max_points(session_id, problem_number)
+          if existing_max is not None:
+            max_points = existing_max
           else:
-            # Use extracted max_points (if any) and store it
-            max_points = problem.get("max_points")
+            # Use extracted max_points and queue for upsert
+            max_points = prob_data.get("max_points")
             if max_points is not None:
-              cursor.execute(
-                """
-                                INSERT INTO problem_metadata (session_id, problem_number, max_points)
-                                VALUES (?, ?, ?)
-                                ON CONFLICT(session_id, problem_number)
-                                DO UPDATE SET max_points = excluded.max_points
-                            """, (session_id, problem_number, max_points))
+              max_points_to_upsert[problem_number] = max_points
 
-          # Prepare region_coords JSON if metadata is available
+          # Prepare region_coords dict
           region_coords = None
-          if (problem.get("page_number") is not None
-              and problem.get("region_y_start") is not None
-              and problem.get("region_y_end") is not None):
-            coords_dict = {
-              "page_number": problem["page_number"],
-              "region_y_start": problem["region_y_start"],
-              "region_y_end": problem["region_y_end"],
-              "region_height": problem.get("region_height")
+          if (prob_data.get("page_number") is not None
+              and prob_data.get("region_y_start") is not None
+              and prob_data.get("region_y_end") is not None):
+            region_coords = {
+              "page_number": prob_data["page_number"],
+              "region_y_start": prob_data["region_y_start"],
+              "region_y_end": prob_data["region_y_end"],
+              "region_height": prob_data.get("region_height")
             }
             # Add cross-page fields if present
-            if problem.get("end_page_number") is not None:
-              coords_dict["end_page_number"] = problem["end_page_number"]
-              coords_dict["end_region_y"] = problem["end_region_y"]
-            region_coords = json.dumps(coords_dict)
+            if prob_data.get("end_page_number") is not None:
+              region_coords["end_page_number"] = prob_data["end_page_number"]
+              region_coords["end_region_y"] = prob_data["end_region_y"]
 
-          # Insert problem with region metadata and QR encrypted data if available
-          # Note: image_data column removed in v21, using PDF-based storage only
-          cursor.execute(
-            """
-                        INSERT INTO problems
-                        (session_id, submission_id, problem_number, graded,
-                         is_blank, blank_confidence, blank_method, blank_reasoning, max_points,
-                         region_coords, qr_encrypted_data)
-                        VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-            (
-              session_id,
-              submission_id,
-              problem_number,
-              1 if problem.get("is_blank", False) else 0,
-              problem.get("blank_confidence", 0.0),
-              problem.get("blank_method"),
-              problem.get("blank_reasoning"),
-              max_points,
-              region_coords,  # JSON with page_number, region_y_start, region_y_end, region_height
-              problem.get("qr_encrypted_data")  # Encrypted QR data
-            ))
+          # Create problem domain object
+          problem = Problem(
+            id=0,
+            session_id=session_id,
+            submission_id=created_sub.id,  # Now has real ID from bulk_create
+            problem_number=problem_number,
+            graded=False,
+            is_blank=prob_data.get("is_blank", False),
+            blank_confidence=prob_data.get("blank_confidence", 0.0),
+            blank_method=prob_data.get("blank_method"),
+            blank_reasoning=prob_data.get("blank_reasoning"),
+            max_points=max_points,
+            region_coords=region_coords,
+            qr_encrypted_data=prob_data.get("qr_encrypted_data")
+          )
+          all_problems.append(problem)
 
-      # Update session status - always require name matching confirmation
-      # Even if all names were auto-matched, user should review and confirm
-      cursor.execute(
-        """
-                UPDATE grading_sessions
-                SET status = 'name_matching_needed', updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (session_id, ))
+      # Step 4: Bulk create all problems
+      repos.problems.bulk_create(all_problems)
+
+      # Step 5: Upsert metadata for new max_points
+      for problem_num, max_pts in max_points_to_upsert.items():
+        repos.metadata.upsert_max_points(session_id, problem_num, max_pts)
+
+      # Step 6: Update session status
+      repos.sessions.update_status(
+        session_id,
+        SessionStatus.NAME_MATCHING_NEEDED
+      )
 
     log.info(
       f"Completed processing for session {session_id}: {len(matched)} matched, {len(unmatched)} unmatched"
