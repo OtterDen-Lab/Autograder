@@ -7,6 +7,7 @@ import json
 
 from ..models import NameMatchRequest
 from ..database import get_db_connection
+from ..repositories import SessionRepository, SubmissionRepository
 from lms_interface.canvas_interface import CanvasInterface
 
 router = APIRouter()
@@ -15,165 +16,109 @@ router = APIRouter()
 @router.get("/{session_id}/submissions")
 async def get_all_submissions(session_id: int):
   """Get all submissions for a session (unmatched first, then matched)"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  submission_repo = SubmissionRepository()
 
-    # Get all submissions, unmatched first
-    cursor.execute(
-      """
-            SELECT id, document_id, approximate_name, name_image_data, student_name, canvas_user_id
-            FROM submissions
-            WHERE session_id = ?
-            ORDER BY
-                CASE WHEN canvas_user_id IS NULL THEN 0 ELSE 1 END,
-                document_id
-        """, (session_id, ))
+  # Get all submissions, ordered by match status
+  all_submissions = submission_repo.get_by_session(session_id)
 
-    submissions = []
-    for row in cursor.fetchall():
-      submissions.append({
-        "id": row["id"],
-        "document_id": row["document_id"],
-        "approximate_name": row["approximate_name"] or "(no name detected)",
-        "name_image_data": row["name_image_data"],
-        "student_name": row["student_name"],
-        "canvas_user_id": row["canvas_user_id"],
-        "is_matched": row["canvas_user_id"] is not None
-      })
+  # Sort: unmatched first, then by document_id
+  all_submissions.sort(key=lambda s: (s.is_matched(), s.document_id))
 
-    return {"submissions": submissions}
+  submissions = []
+  for sub in all_submissions:
+    submissions.append({
+      "id": sub.id,
+      "document_id": sub.document_id,
+      "approximate_name": sub.approximate_name or "(no name detected)",
+      "name_image_data": sub.name_image_data,
+      "student_name": sub.student_name,
+      "canvas_user_id": sub.canvas_user_id,
+      "is_matched": sub.is_matched()
+    })
+
+  return {"submissions": submissions}
 
 
 @router.get("/{session_id}/students")
 async def get_all_students(session_id: int):
   """Get all Canvas students with match status (unmatched first, then matched)"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  session_repo = SessionRepository()
+  submission_repo = SubmissionRepository()
 
-    # Get session info
-    cursor.execute(
-      "SELECT course_id, assignment_id, use_prod_canvas FROM grading_sessions WHERE id = ?",
-      (session_id, ))
-    session = cursor.fetchone()
-    if not session:
-      raise HTTPException(status_code=404, detail="Session not found")
+  # Get session info
+  session = session_repo.get_by_id(session_id)
+  if not session:
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    # Get Canvas environment from session (default to False for older sessions)
-    # Note: SQLite stores booleans as INTEGER (0 or 1)
-    use_prod = bool(session["use_prod_canvas"]
-                    ) if "use_prod_canvas" in session.keys() else False
+  # Get Canvas students
+  canvas_interface = CanvasInterface(prod=session.use_prod_canvas)
+  course = canvas_interface.get_course(session.course_id)
+  assignment = course.get_assignment(session.assignment_id)
+  all_students = assignment.get_students()
 
-    # Get Canvas students
-    canvas_interface = CanvasInterface(prod=use_prod)
-    course = canvas_interface.get_course(session["course_id"])
-    assignment = course.get_assignment(session["assignment_id"])
-    all_students = assignment.get_students()
+  # Get already matched user IDs
+  matched_ids = submission_repo.get_existing_canvas_users(session_id)
 
-    # Get already matched user IDs
-    cursor.execute(
-      """
-            SELECT DISTINCT canvas_user_id
-            FROM submissions
-            WHERE session_id = ? AND canvas_user_id IS NOT NULL
-        """, (session_id, ))
-    matched_ids = {row["canvas_user_id"] for row in cursor.fetchall()}
+  # Create list with all students, marked as matched or not
+  students = [{
+    "user_id": s.user_id,
+    "name": s.name,
+    "is_matched": s.user_id in matched_ids
+  } for s in all_students]
 
-    # Create list with all students, marked as matched or not
-    students = [{
-      "user_id": s.user_id,
-      "name": s.name,
-      "is_matched": s.user_id in matched_ids
-    } for s in all_students]
+  # Sort: unmatched first, then alphabetically within each group
+  students.sort(key=lambda s: (s["is_matched"], s["name"]))
 
-    # Sort: unmatched first, then alphabetically within each group
-    students.sort(key=lambda s: (s["is_matched"], s["name"]))
-
-    return {"students": students}
+  return {"students": students}
 
 
 @router.post("/{session_id}/match")
 async def match_submission(session_id: int, match: NameMatchRequest):
   """Manually match a submission to a Canvas student (allows reassignment)"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  session_repo = SessionRepository()
+  submission_repo = SubmissionRepository()
 
-    # Verify the submission exists and belongs to this session
-    cursor.execute(
-      """
-            SELECT id FROM submissions
-            WHERE id = ? AND session_id = ?
-        """, (match.submission_id, session_id))
+  # Verify the submission exists and belongs to this session
+  submission = submission_repo.get_by_id(match.submission_id)
+  if not submission or submission.session_id != session_id:
+    raise HTTPException(status_code=404, detail="Submission not found")
 
-    if not cursor.fetchone():
-      raise HTTPException(status_code=404, detail="Submission not found")
+  # Get session info for Canvas access
+  session = session_repo.get_by_id(session_id)
+  if not session:
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    # Get student name from Canvas
-    cursor.execute(
-      "SELECT course_id, assignment_id, use_prod_canvas FROM grading_sessions WHERE id = ?",
-      (session_id, ))
-    session = cursor.fetchone()
+  # Get student name from Canvas
+  canvas_interface = CanvasInterface(prod=session.use_prod_canvas)
+  course = canvas_interface.get_course(session.course_id)
+  assignment = course.get_assignment(session.assignment_id)
+  students = assignment.get_students()
 
-    # Get Canvas environment from session (default to False for older sessions)
-    # Note: SQLite stores booleans as INTEGER (0 or 1)
-    use_prod = bool(session["use_prod_canvas"]
-                    ) if "use_prod_canvas" in session.keys() else False
+  student = next((s for s in students if s.user_id == match.canvas_user_id), None)
+  if not student:
+    raise HTTPException(status_code=404, detail="Student not found in Canvas")
 
-    canvas_interface = CanvasInterface(prod=use_prod)
-    course = canvas_interface.get_course(session["course_id"])
-    assignment = course.get_assignment(session["assignment_id"])
-    students = assignment.get_students()
+  # Check if this student is already matched to another submission
+  previous_submission = submission_repo.get_by_canvas_user(session_id, match.canvas_user_id)
+  previous_submission_id = None
 
-    student = next((s for s in students if s.user_id == match.canvas_user_id),
-                   None)
-    if not student:
-      raise HTTPException(status_code=404,
-                          detail="Student not found in Canvas")
-
-    # Check if this student is already matched to another submission
-    cursor.execute(
-      """
-            SELECT id, document_id FROM submissions
-            WHERE session_id = ? AND canvas_user_id = ? AND id != ?
-        """, (session_id, match.canvas_user_id, match.submission_id))
-
-    previous_match = cursor.fetchone()
-    previous_submission_id = previous_match["id"] if previous_match else None
-
+  if previous_submission and previous_submission.id != match.submission_id:
     # If student was previously matched to a different submission, unassign them
-    if previous_submission_id:
-      cursor.execute(
-        """
-                UPDATE submissions
-                SET canvas_user_id = NULL,
-                    student_name = NULL
-                WHERE id = ?
-            """, (previous_submission_id, ))
+    previous_submission_id = previous_submission.id
+    submission_repo.clear_match(previous_submission_id)
 
-    # Update submission with new match
-    cursor.execute(
-      """
-            UPDATE submissions
-            SET canvas_user_id = ?,
-                student_name = ?
-            WHERE id = ?
-        """, (match.canvas_user_id, student.name, match.submission_id))
+  # Update submission with new match
+  submission_repo.update_match(match.submission_id, match.canvas_user_id, student.name)
 
-    # Check if all submissions are now matched
-    cursor.execute(
-      """
-            SELECT COUNT(*) as unmatched_count
-            FROM submissions
-            WHERE session_id = ? AND canvas_user_id IS NULL
-        """, (session_id, ))
+  # Check if all submissions are now matched
+  unmatched_count = submission_repo.count_unmatched(session_id)
 
-    unmatched_count = cursor.fetchone()["unmatched_count"]
+  # DON'T auto-update status to 'ready' - wait for user to click "Confirm All Matches"
+  # This allows the user to review all matches before proceeding
 
-    # DON'T auto-update status to 'ready' - wait for user to click "Confirm All Matches"
-    # This allows the user to review all matches before proceeding
-
-    return {
-      "status": "matched",
-      "student_name": student.name,
-      "remaining_unmatched": unmatched_count,
-      "reassigned_from": previous_submission_id
-    }
+  return {
+    "status": "matched",
+    "student_name": student.name,
+    "remaining_unmatched": unmatched_count,
+    "reassigned_from": previous_submission_id
+  }

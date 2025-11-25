@@ -429,3 +429,21 @@ class SubmissionRepository(BaseRepository[Submission]):
       )
       result = cursor.fetchone()[0]
       return result if result is not None else -1
+
+  def count_unmatched(self, session_id: int) -> int:
+    """
+    Count submissions without Canvas student match.
+
+    Args:
+      session_id: Session primary key
+
+    Returns:
+      Number of unmatched submissions
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute(
+        "SELECT COUNT(*) FROM submissions WHERE session_id = ? AND canvas_user_id IS NULL",
+        (session_id,)
+      )
+      return cursor.fetchone()[0]
