@@ -505,15 +505,10 @@ async def process_exam_files(
     )
 
     # Check for duplicate files (same hash already processed)
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
-      cursor.execute(
-        """
-                SELECT file_hash, original_filename
-                FROM submissions
-                WHERE session_id = ? AND file_hash IS NOT NULL
-            """, (session_id, ))
-      existing_hashes = {row[0]: row[1] for row in cursor.fetchall()}
+    from ..repositories import SubmissionRepository, SessionRepository
+    from ..domain.common import SessionStatus
+    submission_repo = SubmissionRepository()
+    existing_hashes = submission_repo.get_existing_hashes(session_id)
 
     # Filter out duplicate files
     new_file_paths = []
@@ -535,16 +530,12 @@ async def process_exam_files(
 
     if not new_file_paths:
       log.info("No new files to process (all were duplicates)")
-      with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-          """
-                    UPDATE grading_sessions
-                    SET status = 'ready',
-                        processing_message = 'All uploaded files were duplicates - no new exams added',
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                """, (session_id, ))
+      session_repo = SessionRepository()
+      session_repo.update_status(
+        session_id,
+        SessionStatus.READY,
+        'All uploaded files were duplicates - no new exams added'
+      )
       return
 
     file_paths = new_file_paths
@@ -552,30 +543,15 @@ async def process_exam_files(
       f"Processing {len(file_paths)} new file(s) after duplicate detection")
 
     # Get the highest existing document_id to avoid conflicts
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
-      cursor.execute(
-        """
-                SELECT MAX(document_id) FROM submissions WHERE session_id = ?
-            """, (session_id, ))
-      max_doc_id = cursor.fetchone()[0]
-      start_document_id = (max_doc_id + 1) if max_doc_id is not None else 0
-
+    start_document_id = submission_repo.get_max_document_id(session_id) + 1
     log.info(f"Starting document_id offset: {start_document_id}")
 
     # Get current totals for progress tracking
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
-      cursor.execute(
-        """
-                SELECT total_exams, processed_exams, matched_exams
-                FROM grading_sessions
-                WHERE id = ?
-            """, (session_id, ))
-      row = cursor.fetchone()
-      base_total = row[0] or 0
-      base_processed = row[1] or 0
-      base_matched = row[2] or 0
+    session_repo = SessionRepository()
+    session = session_repo.get_by_id(session_id)
+    base_total = session.total_exams
+    base_processed = session.processed_exams
+    base_matched = session.matched_exams
 
     # Get event loop reference for sending SSE events from thread
     main_loop = asyncio.get_event_loop()

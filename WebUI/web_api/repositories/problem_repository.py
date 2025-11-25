@@ -1,0 +1,441 @@
+"""
+Repository for individual problems within submissions.
+"""
+from typing import Optional, List, Dict
+import sqlite3
+import json
+from datetime import datetime
+
+from .base import BaseRepository
+from ..domain.problem import Problem
+
+
+class ProblemRepository(BaseRepository[Problem]):
+  """
+  Data access for problems.
+
+  Handles individual problem instances within student submissions.
+  Supports bulk operations and grading workflows.
+  """
+
+  def _row_to_domain(self, row: sqlite3.Row) -> Problem:
+    """Convert database row to Problem domain object."""
+    region_coords = None
+    if row["region_coords"]:
+      try:
+        region_coords = json.loads(row["region_coords"])
+      except json.JSONDecodeError:
+        region_coords = None
+
+    # Parse timestamps
+    graded_at = None
+    if row["graded_at"]:
+      try:
+        graded_at = datetime.fromisoformat(row["graded_at"])
+      except (ValueError, TypeError):
+        pass
+
+    transcription_cached_at = None
+    if row["transcription_cached_at"]:
+      try:
+        transcription_cached_at = datetime.fromisoformat(row["transcription_cached_at"])
+      except (ValueError, TypeError):
+        pass
+
+    return Problem(
+      id=row["id"],
+      session_id=row["session_id"],
+      submission_id=row["submission_id"],
+      problem_number=row["problem_number"],
+      score=row["score"],
+      feedback=row["feedback"],
+      graded=bool(row["graded"]),
+      graded_at=graded_at,
+      is_blank=bool(row["is_blank"]),
+      blank_confidence=row["blank_confidence"] or 0.0,
+      blank_method=row["blank_method"],
+      blank_reasoning=row["blank_reasoning"],
+      max_points=row["max_points"],
+      ai_reasoning=row["ai_reasoning"],
+      region_coords=region_coords,
+      qr_encrypted_data=row["qr_encrypted_data"],
+      transcription=row["transcription"],
+      transcription_model=row["transcription_model"],
+      transcription_cached_at=transcription_cached_at
+    )
+
+  def get_by_id(self, problem_id: int) -> Optional[Problem]:
+    """
+    Get problem by ID.
+
+    Args:
+      problem_id: Problem primary key
+
+    Returns:
+      Problem or None if not found
+    """
+    with self._get_connection() as conn:
+      return self._execute_and_fetch_one(
+        conn,
+        "SELECT * FROM problems WHERE id = ?",
+        (problem_id,)
+      )
+
+  def get_by_submission(self, submission_id: int) -> List[Problem]:
+    """
+    Get all problems for a submission.
+
+    Args:
+      submission_id: Submission primary key
+
+    Returns:
+      List of Problem objects ordered by problem_number
+    """
+    with self._get_connection() as conn:
+      return self._execute_and_fetch_all(
+        conn,
+        """
+        SELECT * FROM problems
+        WHERE submission_id = ?
+        ORDER BY problem_number
+        """,
+        (submission_id,)
+      )
+
+  def get_by_session_batch(self, session_id: int) -> List[Problem]:
+    """
+    Get all problems for all submissions in a session.
+
+    More efficient than per-submission queries (avoids N+1).
+    Use for export operations.
+
+    Args:
+      session_id: Session primary key
+
+    Returns:
+      List of Problem objects ordered by submission_id, problem_number
+    """
+    with self._get_connection() as conn:
+      return self._execute_and_fetch_all(
+        conn,
+        """
+        SELECT * FROM problems
+        WHERE session_id = ?
+        ORDER BY submission_id, problem_number
+        """,
+        (session_id,)
+      )
+
+  def create(self, problem: Problem) -> Problem:
+    """
+    Create single problem.
+
+    Args:
+      problem: Problem to create (id will be ignored)
+
+    Returns:
+      Problem with id populated
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+
+      region_coords_json = None
+      if problem.region_coords:
+        region_coords_json = json.dumps(problem.region_coords)
+
+      cursor.execute("""
+        INSERT INTO problems
+        (session_id, submission_id, problem_number, graded,
+         is_blank, blank_confidence, blank_method, blank_reasoning,
+         max_points, region_coords, qr_encrypted_data,
+         score, feedback, graded_at, ai_reasoning,
+         transcription, transcription_model, transcription_cached_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      """, (
+        problem.session_id,
+        problem.submission_id,
+        problem.problem_number,
+        1 if problem.graded else 0,
+        1 if problem.is_blank else 0,
+        problem.blank_confidence,
+        problem.blank_method,
+        problem.blank_reasoning,
+        problem.max_points,
+        region_coords_json,
+        problem.qr_encrypted_data,
+        problem.score,
+        problem.feedback,
+        problem.graded_at.isoformat() if problem.graded_at else None,
+        problem.ai_reasoning,
+        problem.transcription,
+        problem.transcription_model,
+        problem.transcription_cached_at.isoformat() if problem.transcription_cached_at else None
+      ))
+
+      problem_id = cursor.lastrowid
+      cursor.execute("SELECT * FROM problems WHERE id = ?", (problem_id,))
+      row = cursor.fetchone()
+      return self._row_to_domain(row)
+
+  def bulk_create(self, problems: List[Problem]) -> List[Problem]:
+    """
+    Create multiple problems in one transaction.
+
+    Critical for uploads.py - creates 1000+ problems per upload.
+    Must be fast and maintain transaction boundary.
+
+    Args:
+      problems: List of Problem objects to create
+
+    Returns:
+      List of created Problem objects with IDs
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      created_problems = []
+
+      for prob in problems:
+        region_coords_json = None
+        if prob.region_coords:
+          region_coords_json = json.dumps(prob.region_coords)
+
+        cursor.execute("""
+          INSERT INTO problems
+          (session_id, submission_id, problem_number, graded,
+           is_blank, blank_confidence, blank_method, blank_reasoning,
+           max_points, region_coords, qr_encrypted_data,
+           score, feedback, graded_at, ai_reasoning,
+           transcription, transcription_model, transcription_cached_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+          prob.session_id,
+          prob.submission_id,
+          prob.problem_number,
+          1 if prob.graded else 0,
+          1 if prob.is_blank else 0,
+          prob.blank_confidence,
+          prob.blank_method,
+          prob.blank_reasoning,
+          prob.max_points,
+          region_coords_json,
+          prob.qr_encrypted_data,
+          prob.score,
+          prob.feedback,
+          prob.graded_at.isoformat() if prob.graded_at else None,
+          prob.ai_reasoning,
+          prob.transcription,
+          prob.transcription_model,
+          prob.transcription_cached_at.isoformat() if prob.transcription_cached_at else None
+        ))
+
+        problem_id = cursor.lastrowid
+        cursor.execute("SELECT * FROM problems WHERE id = ?", (problem_id,))
+        row = cursor.fetchone()
+        created_problems.append(self._row_to_domain(row))
+
+      return created_problems
+
+  def get_next_ungraded(self, session_id: int, problem_number: int) -> Optional[Problem]:
+    """
+    Get next ungraded problem for a specific problem number.
+
+    Orders non-blank before blank, then random.
+    Used in grading workflow.
+
+    Args:
+      session_id: Session primary key
+      problem_number: Problem number to grade
+
+    Returns:
+      Next ungraded Problem or None if all graded
+    """
+    with self._get_connection() as conn:
+      return self._execute_and_fetch_one(
+        conn,
+        """
+        SELECT * FROM problems
+        WHERE session_id = ? AND problem_number = ? AND graded = 0
+        ORDER BY is_blank ASC, RANDOM()
+        LIMIT 1
+        """,
+        (session_id, problem_number)
+      )
+
+  def get_previous_graded(self, session_id: int, problem_number: int) -> Optional[Problem]:
+    """
+    Get most recently graded problem for a problem number.
+
+    Used for review functionality.
+
+    Args:
+      session_id: Session primary key
+      problem_number: Problem number
+
+    Returns:
+      Most recently graded Problem or None
+    """
+    with self._get_connection() as conn:
+      return self._execute_and_fetch_one(
+        conn,
+        """
+        SELECT * FROM problems
+        WHERE session_id = ? AND problem_number = ? AND graded = 1
+        ORDER BY graded_at DESC
+        LIMIT 1
+        """,
+        (session_id, problem_number)
+      )
+
+  def update_grade(self, problem_id: int, score: float,
+                  feedback: Optional[str] = None,
+                  ai_reasoning: Optional[str] = None) -> None:
+    """
+    Update problem with grade.
+
+    Common operation - called frequently during grading.
+
+    Args:
+      problem_id: Problem primary key
+      score: Points awarded
+      feedback: Optional grader feedback
+      ai_reasoning: Optional AI-generated reasoning
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        UPDATE problems
+        SET score = ?, feedback = ?, ai_reasoning = ?,
+            graded = 1, graded_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      """, (score, feedback, ai_reasoning, problem_id))
+
+  def get_counts_for_problem_number(self, session_id: int,
+                                   problem_number: int) -> Dict[str, int]:
+    """
+    Get various counts for a problem number.
+
+    Used in problem display to show progress.
+
+    Args:
+      session_id: Session primary key
+      problem_number: Problem number
+
+    Returns:
+      Dict with: total, graded, ungraded_blank, ungraded_nonblank
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN graded = 1 THEN 1 ELSE 0 END) as graded,
+          SUM(CASE WHEN graded = 0 AND is_blank = 1 THEN 1 ELSE 0 END) as ungraded_blank,
+          SUM(CASE WHEN graded = 0 AND is_blank = 0 THEN 1 ELSE 0 END) as ungraded_nonblank
+        FROM problems
+        WHERE session_id = ? AND problem_number = ?
+      """, (session_id, problem_number))
+
+      row = cursor.fetchone()
+      return {
+        "total": row["total"] or 0,
+        "graded": row["graded"] or 0,
+        "ungraded_blank": row["ungraded_blank"] or 0,
+        "ungraded_nonblank": row["ungraded_nonblank"] or 0
+      }
+
+  def get_all_for_problem_number(self, session_id: int,
+                                 problem_number: int,
+                                 graded_only: bool = False) -> List[Problem]:
+    """
+    Get all instances of a specific problem number.
+
+    Used for statistics and AI grading.
+
+    Args:
+      session_id: Session primary key
+      problem_number: Problem number
+      graded_only: Only return graded problems
+
+    Returns:
+      List of Problem objects
+    """
+    with self._get_connection() as conn:
+      if graded_only:
+        return self._execute_and_fetch_all(
+          conn,
+          """
+          SELECT * FROM problems
+          WHERE session_id = ? AND problem_number = ? AND graded = 1
+          ORDER BY submission_id
+          """,
+          (session_id, problem_number)
+        )
+      else:
+        return self._execute_and_fetch_all(
+          conn,
+          """
+          SELECT * FROM problems
+          WHERE session_id = ? AND problem_number = ?
+          ORDER BY submission_id
+          """,
+          (session_id, problem_number)
+        )
+
+  def delete_by_session(self, session_id: int) -> int:
+    """
+    Delete all problems for session.
+
+    Args:
+      session_id: Session primary key
+
+    Returns:
+      Number of problems deleted
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("DELETE FROM problems WHERE session_id = ?", (session_id,))
+      return cursor.rowcount
+
+  def get_distinct_problem_numbers(self, session_id: int) -> List[int]:
+    """
+    Get list of all problem numbers in session.
+
+    Args:
+      session_id: Session primary key
+
+    Returns:
+      Sorted list of problem numbers
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        SELECT DISTINCT problem_number
+        FROM problems
+        WHERE session_id = ?
+        ORDER BY problem_number
+      """, (session_id,))
+      return [row["problem_number"] for row in cursor.fetchall()]
+
+  def update_max_points_bulk(self, session_id: int, problem_number: int,
+                            max_points: float) -> int:
+    """
+    Update max_points for all problems with given problem_number.
+
+    Used when metadata max_points is updated.
+
+    Args:
+      session_id: Session primary key
+      problem_number: Problem number
+      max_points: New max points value
+
+    Returns:
+      Number of problems updated
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        UPDATE problems
+        SET max_points = ?
+        WHERE session_id = ? AND problem_number = ?
+      """, (max_points, session_id, problem_number))
+      return cursor.rowcount
