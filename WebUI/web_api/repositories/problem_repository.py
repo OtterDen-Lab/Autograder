@@ -235,6 +235,30 @@ class ProblemRepository(BaseRepository[Problem]):
 
       return created_problems
 
+  def get_sample_for_problem_number(self, session_id: int, problem_number: int) -> Optional[Problem]:
+    """
+    Get a sample problem for a specific problem number.
+
+    Used for AI question extraction - any problem instance will do.
+
+    Args:
+      session_id: Session primary key
+      problem_number: Problem number
+
+    Returns:
+      A sample Problem or None if not found
+    """
+    with self._get_connection() as conn:
+      return self._execute_and_fetch_one(
+        conn,
+        """
+        SELECT * FROM problems
+        WHERE session_id = ? AND problem_number = ?
+        LIMIT 1
+        """,
+        (session_id, problem_number)
+      )
+
   def get_next_ungraded(self, session_id: int, problem_number: int) -> Optional[Problem]:
     """
     Get next ungraded problem for a specific problem number.
@@ -400,6 +424,29 @@ class ProblemRepository(BaseRepository[Problem]):
         "ungraded_blank": row["ungraded_blank"] or 0,
         "ungraded_nonblank": row["ungraded_nonblank"] or 0
       }
+
+  def count_ungraded_for_problem_number(self, session_id: int, problem_number: int) -> int:
+    """
+    Count ungraded problems for specific problem number.
+
+    Args:
+      session_id: Session primary key
+      problem_number: Problem number
+
+    Returns:
+      Count of ungraded problems
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute(
+        """
+        SELECT COUNT(*) as count
+        FROM problems
+        WHERE session_id = ? AND problem_number = ? AND graded = 0
+        """,
+        (session_id, problem_number)
+      )
+      return cursor.fetchone()["count"]
 
   def count_ungraded(self, session_id: int) -> int:
     """
@@ -616,3 +663,219 @@ class ProblemRepository(BaseRepository[Problem]):
       scores = [row["score"] for row in results if row["score"] is not None]
       num_blank = sum(1 for row in results if row["is_blank"])
       return (scores, num_blank)
+
+  def get_blank_distribution(self, session_id: int) -> Dict[int, Dict]:
+    """
+    Get blank detection distribution across all problems.
+
+    Used by debug endpoints to see how many submissions were marked blank
+    for each problem number.
+
+    Args:
+      session_id: Session primary key
+
+    Returns:
+      Dict mapping problem_number to dict with: total, blank, percentage
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        SELECT
+          p.problem_number,
+          COUNT(*) as total_submissions,
+          SUM(CASE WHEN p.is_blank = 1 THEN 1 ELSE 0 END) as blank_count,
+          CAST(SUM(CASE WHEN p.is_blank = 1 THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*) * 100 as blank_percentage
+        FROM problems p
+        JOIN submissions s ON p.submission_id = s.id
+        WHERE s.session_id = ?
+        GROUP BY p.problem_number
+        ORDER BY p.problem_number
+      """, (session_id,))
+
+      distribution = {}
+      for row in cursor.fetchall():
+        distribution[row["problem_number"]] = {
+          "total": row["total_submissions"],
+          "blank": row["blank_count"] or 0,
+          "percentage": row["blank_percentage"] or 0.0
+        }
+
+      return distribution
+
+  def get_problems_with_submission_data(self, session_id: int, problem_number: int) -> List[Dict]:
+    """
+    Get all problems for a specific problem number with submission data.
+
+    Used by debug endpoints for detailed analysis with submission info.
+
+    Args:
+      session_id: Session primary key
+      problem_number: Problem number
+
+    Returns:
+      List of dicts with problem and submission data
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        SELECT
+          p.id as problem_id,
+          p.submission_id,
+          p.problem_number,
+          p.region_coords,
+          p.is_blank,
+          p.blank_confidence,
+          p.blank_method,
+          p.blank_reasoning,
+          p.score,
+          p.feedback,
+          p.graded,
+          s.exam_pdf_data,
+          s.student_name,
+          s.display_name
+        FROM problems p
+        JOIN submissions s ON p.submission_id = s.id
+        WHERE s.session_id = ? AND p.problem_number = ?
+        ORDER BY p.id
+      """, (session_id, problem_number))
+
+      results = []
+      for row in cursor.fetchall():
+        results.append({
+          "problem_id": row["problem_id"],
+          "submission_id": row["submission_id"],
+          "problem_number": row["problem_number"],
+          "region_coords": row["region_coords"],
+          "is_blank": row["is_blank"],
+          "blank_confidence": row["blank_confidence"],
+          "blank_method": row["blank_method"],
+          "blank_reasoning": row["blank_reasoning"],
+          "score": row["score"],
+          "feedback": row["feedback"],
+          "graded": row["graded"],
+          "exam_pdf_data": row["exam_pdf_data"],
+          "student_name": row["student_name"],
+          "display_name": row["display_name"]
+        })
+
+      return results
+
+  def clear_blank_flags_for_session(self, session_id: int) -> int:
+    """
+    Clear all is_blank flags for ungraded problems in a session.
+
+    Used by debug endpoints for testing blank detection from scratch.
+
+    Args:
+      session_id: Session primary key
+
+    Returns:
+      Number of problems updated
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        UPDATE problems
+        SET is_blank = 0,
+            blank_confidence = NULL,
+            blank_method = NULL,
+            blank_reasoning = NULL
+        WHERE submission_id IN (
+          SELECT id FROM submissions WHERE session_id = ?
+        ) AND graded = 0
+      """, (session_id,))
+
+      return cursor.rowcount
+
+  def get_grading_examples(self, session_id: int, problem_number: int, limit: int = 3) -> List[Dict]:
+    """
+    Get graded problems for few-shot learning examples.
+
+    Returns random sample of graded, non-blank problems with feedback.
+    Used by AI grading service.
+
+    Args:
+      session_id: Session primary key
+      problem_number: Problem number
+      limit: Maximum number of examples
+
+    Returns:
+      List of dicts with problem fields
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        SELECT p.id, p.image_data, p.region_coords, p.submission_id, p.score, p.feedback
+        FROM problems p
+        WHERE p.session_id = ? AND p.problem_number = ? AND p.graded = 1
+              AND p.is_blank = 0 AND p.feedback IS NOT NULL AND p.feedback != ''
+        ORDER BY RANDOM()
+        LIMIT ?
+      """, (session_id, problem_number, limit))
+
+      results = []
+      for row in cursor.fetchall():
+        results.append({
+          "id": row["id"],
+          "image_data": row["image_data"],
+          "region_coords": row["region_coords"],
+          "submission_id": row["submission_id"],
+          "score": row["score"],
+          "feedback": row["feedback"]
+        })
+
+      return results
+
+  def get_ungraded_for_problem_number(self, session_id: int, problem_number: int) -> List[Dict]:
+    """
+    Get all ungraded problems for a specific problem number.
+
+    Used by AI autograding service.
+
+    Args:
+      session_id: Session primary key
+      problem_number: Problem number
+
+    Returns:
+      List of dicts with problem fields (id, image_data, region_coords, submission_id, is_blank)
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        SELECT id, image_data, region_coords, submission_id, is_blank
+        FROM problems
+        WHERE session_id = ? AND problem_number = ? AND graded = 0
+        ORDER BY id
+      """, (session_id, problem_number))
+
+      results = []
+      for row in cursor.fetchall():
+        results.append({
+          "id": row["id"],
+          "image_data": row["image_data"],
+          "region_coords": row["region_coords"],
+          "submission_id": row["submission_id"],
+          "is_blank": row["is_blank"]
+        })
+
+      return results
+
+  def update_ai_grade(self, problem_id: int, score: float, feedback: str) -> None:
+    """
+    Update problem with AI-suggested grade.
+
+    Sets score and feedback but leaves graded=0 for instructor review.
+    Used by AI autograding service.
+
+    Args:
+      problem_id: Problem primary key
+      score: Suggested score
+      feedback: AI-generated feedback
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        UPDATE problems
+        SET score = ?, feedback = ?, graded = 0
+        WHERE id = ?
+      """, (score, feedback, problem_id))

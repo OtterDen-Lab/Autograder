@@ -10,12 +10,14 @@ from .session_repository import SessionRepository
 from .submission_repository import SubmissionRepository
 from .problem_repository import ProblemRepository
 from .problem_metadata_repository import ProblemMetadataRepository
+from .feedback_tag_repository import FeedbackTagRepository
 
 __all__ = [
   "SessionRepository",
   "SubmissionRepository",
   "ProblemRepository",
   "ProblemMetadataRepository",
+  "FeedbackTagRepository",
   "with_transaction",
   "RepositoryFactory",
 ]

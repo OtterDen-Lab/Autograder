@@ -11,7 +11,7 @@ from typing import List, Dict, Tuple
 import fitz  # PyMuPDF
 from PIL import Image
 
-from ..database import get_db_connection
+from ..repositories import SessionRepository, SubmissionRepository, ProblemRepository
 from lms_interface.canvas_interface import CanvasInterface
 from lms_interface.classes import Feedback
 from .. import sse
@@ -96,35 +96,26 @@ class FinalizationService:
 
   def _get_session_info(self) -> Dict:
     """Get session information from database"""
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
-      cursor.execute(
-        """
-                SELECT course_id, assignment_id, canvas_points, use_prod_canvas
-                FROM grading_sessions
-                WHERE id = ?
-            """, (self.session_id, ))
+    session_repo = SessionRepository()
+    session = session_repo.get_by_id(self.session_id)
 
-      row = cursor.fetchone()
+    if not session:
+      raise ValueError(f"Session {self.session_id} not found")
 
-      # Handle older sessions without use_prod_canvas column
-      # Note: SQLite stores booleans as INTEGER (0 or 1)
-      try:
-        use_prod = row["use_prod_canvas"] if "use_prod_canvas" in row.keys(
-        ) else 0
-      except (KeyError, IndexError):
-        use_prod = 0
+    # Handle older sessions without use_prod_canvas column
+    # Note: SQLite stores booleans as INTEGER (0 or 1)
+    use_prod = session.use_prod_canvas if session.use_prod_canvas is not None else 0
 
-      log.info(
-        f"Session {self.session_id}: use_prod_canvas from DB = {row['use_prod_canvas'] if 'use_prod_canvas' in row.keys() else 'NOT FOUND'} (type: {type(row['use_prod_canvas']) if 'use_prod_canvas' in row.keys() else 'N/A'}), computed use_prod = {use_prod}"
-      )
+    log.info(
+      f"Session {self.session_id}: use_prod_canvas from DB = {session.use_prod_canvas} (type: {type(session.use_prod_canvas)}), computed use_prod = {use_prod}"
+    )
 
-      return {
-        "course_id": row["course_id"],
-        "assignment_id": row["assignment_id"],
-        "canvas_points": row["canvas_points"],
-        "use_prod_canvas": use_prod
-      }
+    return {
+      "course_id": session.course_id,
+      "assignment_id": session.assignment_id,
+      "canvas_points": session.canvas_points,
+      "use_prod_canvas": use_prod
+    }
 
   def _init_canvas(self, session_info: Dict):
     """Initialize Canvas interface"""
@@ -142,66 +133,36 @@ class FinalizationService:
 
   def _get_submissions(self) -> List[Dict]:
     """Get all submissions for the session"""
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
+    submission_repo = SubmissionRepository()
+    problem_repo = ProblemRepository()
 
-      # Get submissions with exam_pdf_data
-      cursor.execute(
-        """
-                SELECT
-                    s.id,
-                    s.student_name,
-                    s.canvas_user_id,
-                    s.page_mappings,
-                    s.exam_pdf_data
-                FROM submissions s
-                WHERE s.session_id = ?
-            """, (self.session_id, ))
+    # Get all submissions for this session
+    submissions_list = submission_repo.get_by_session(self.session_id)
 
-      submissions = []
-      for row in cursor.fetchall():
-        submission_id = row["id"]
+    submissions = []
+    for sub in submissions_list:
+      # Get problems for this submission
+      problems_list = problem_repo.get_by_submission(sub.id)
 
-        # Get problems for this submission
-        cursor.execute(
-          """
-                    SELECT
-                        problem_number,
-                        score,
-                        COALESCE(feedback, '') as feedback,
-                        region_coords
-                    FROM problems
-                    WHERE submission_id = ?
-                    ORDER BY problem_number
-                """, (submission_id, ))
-
-        problems = []
-
-        for prob_row in cursor.fetchall():
-          prob_num = prob_row["problem_number"]
-
-          # Parse region coordinates if available
-          region_coords = None
-          if prob_row["region_coords"]:
-            region_coords = json.loads(prob_row["region_coords"])
-
-          problems.append({
-            "problem_number": prob_num,
-            "score": prob_row["score"] or 0.0,
-            "feedback": prob_row["feedback"],
-            "region_coords": region_coords
-          })
-
-        submissions.append({
-          "id": submission_id,
-          "student_name": row["student_name"],
-          "canvas_user_id": row["canvas_user_id"],
-          "page_mappings": json.loads(row["page_mappings"]),
-          "exam_pdf_data": row["exam_pdf_data"],
-          "problems": problems
+      problems = []
+      for prob in problems_list:
+        problems.append({
+          "problem_number": prob.problem_number,
+          "score": prob.score or 0.0,
+          "feedback": prob.feedback or '',
+          "region_coords": prob.region_coords
         })
 
-      return submissions
+      submissions.append({
+        "id": sub.id,
+        "student_name": sub.student_name,
+        "canvas_user_id": sub.canvas_user_id,
+        "page_mappings": sub.page_mappings,
+        "exam_pdf_data": sub.exam_pdf_data,
+        "problems": problems
+      })
+
+    return submissions
 
   def _extract_problem_image_from_pdf(self, pdf_base64: str, page_number: int,
                                       region_y_start: int,
@@ -397,14 +358,11 @@ class FinalizationService:
     self.current_step += 1
 
     # Update database
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
-      cursor.execute(
-        """
-                UPDATE grading_sessions
-                SET processing_message = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (message, self.session_id))
+    session_repo = SessionRepository()
+    session = session_repo.get_by_id(self.session_id)
+    if session:
+      session.processing_message = message
+      session_repo.update(session)
 
     # Send SSE progress event based on steps completed
     if self.total_steps > 0:

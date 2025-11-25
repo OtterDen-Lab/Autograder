@@ -7,7 +7,7 @@ from pydantic import BaseModel
 import logging
 import asyncio
 
-from ..database import get_db_connection
+from ..repositories import SessionRepository, ProblemRepository, SubmissionRepository, ProblemMetadataRepository
 from ..services.ai_grader import AIGraderService
 from .. import sse
 
@@ -84,79 +84,70 @@ async def autograde_progress_stream(session_id: int):
 async def extract_question(session_id: int, request: ExtractQuestionRequest):
   """Extract question text from a problem image"""
 
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  session_repo = SessionRepository()
+  problem_repo = ProblemRepository()
+  submission_repo = SubmissionRepository()
 
-    # Verify session exists
-    cursor.execute("SELECT id FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    if not cursor.fetchone():
-      raise HTTPException(status_code=404, detail="Session not found")
+  # Verify session exists
+  if not session_repo.exists(session_id):
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    # Get a sample problem for this problem number
-    cursor.execute(
-      """
-            SELECT id, image_data, region_coords, submission_id
-            FROM problems
-            WHERE session_id = ? AND problem_number = ?
-            LIMIT 1
-        """, (session_id, request.problem_number))
+  # Get a sample problem for this problem number
+  problem = problem_repo.get_sample_for_problem_number(
+    session_id, request.problem_number)
 
-    problem = cursor.fetchone()
-    if not problem:
-      raise HTTPException(
-        status_code=404,
-        detail=f"No problems found for problem number {request.problem_number}"
-      )
+  if not problem:
+    raise HTTPException(
+      status_code=404,
+      detail=f"No problems found for problem number {request.problem_number}"
+    )
 
-    # Get image data - either directly or extract from PDF
-    image_data = None
-    if problem["image_data"]:
-      # Legacy: image_data is stored
-      image_data = problem["image_data"]
-    elif problem["region_coords"]:
-      # New: extract from PDF using region_coords
-      import json
-      import base64
-      import fitz
+  # Get image data - either directly or extract from PDF
+  image_data = None
+  if problem.image_data:
+    # Legacy: image_data is stored
+    image_data = problem.image_data
+  elif problem.region_coords:
+    # New: extract from PDF using region_coords
+    import json
+    import base64
+    import fitz
 
-      region_data = json.loads(problem["region_coords"])
+    region_data = problem.region_coords
 
-      # Get PDF data from submission
-      cursor.execute("SELECT exam_pdf_data FROM submissions WHERE id = ?",
-                     (problem["submission_id"], ))
-      submission_row = cursor.fetchone()
+    # Get PDF data from submission
+    submission = submission_repo.get_by_id(problem.submission_id)
 
-      if submission_row and submission_row["exam_pdf_data"]:
-        # Extract region from PDF
-        pdf_bytes = base64.b64decode(submission_row["exam_pdf_data"])
-        pdf_document = fitz.open("pdf", pdf_bytes)
-        page = pdf_document[region_data["page_number"]]
+    if submission and submission.exam_pdf_data:
+      # Extract region from PDF
+      pdf_bytes = base64.b64decode(submission.exam_pdf_data)
+      pdf_document = fitz.open("pdf", pdf_bytes)
+      page = pdf_document[region_data["page_number"]]
 
-        region = fitz.Rect(0, region_data["region_y_start"], page.rect.width,
-                           region_data["region_y_end"])
+      region = fitz.Rect(0, region_data["region_y_start"], page.rect.width,
+                         region_data["region_y_end"])
 
-        # Extract region as new PDF page
-        problem_pdf = fitz.open()
-        problem_page = problem_pdf.new_page(width=region.width,
-                                            height=region.height)
-        problem_page.show_pdf_page(problem_page.rect,
-                                   pdf_document,
-                                   region_data["page_number"],
-                                   clip=region)
+      # Extract region as new PDF page
+      problem_pdf = fitz.open()
+      problem_page = problem_pdf.new_page(width=region.width,
+                                          height=region.height)
+      problem_page.show_pdf_page(problem_page.rect,
+                                 pdf_document,
+                                 region_data["page_number"],
+                                 clip=region)
 
-        # Convert to PNG
-        pix = problem_page.get_pixmap(dpi=150)
-        img_bytes = pix.tobytes("png")
-        image_data = base64.b64encode(img_bytes).decode("utf-8")
+      # Convert to PNG
+      pix = problem_page.get_pixmap(dpi=150)
+      img_bytes = pix.tobytes("png")
+      image_data = base64.b64encode(img_bytes).decode("utf-8")
 
-        # Cleanup
-        problem_pdf.close()
-        pdf_document.close()
+      # Cleanup
+      problem_pdf.close()
+      pdf_document.close()
 
-    if not image_data:
-      raise HTTPException(status_code=500,
-                          detail="Problem image data not available")
+  if not image_data:
+    raise HTTPException(status_code=500,
+                        detail="Problem image data not available")
 
   try:
     # Extract question text
@@ -181,42 +172,30 @@ async def start_autograde(session_id: int, request: AutogradeRequest,
                           background_tasks: BackgroundTasks):
   """Start autograding process for a problem"""
 
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  session_repo = SessionRepository()
+  problem_repo = ProblemRepository()
+  metadata_repo = ProblemMetadataRepository()
 
-    # Verify session exists
-    cursor.execute("SELECT id FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    if not cursor.fetchone():
-      raise HTTPException(status_code=404, detail="Session not found")
+  # Verify session exists
+  if not session_repo.exists(session_id):
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    # Count ungraded problems (include blank submissions for feedback)
-    cursor.execute(
-      """
-            SELECT COUNT(*) as count
-            FROM problems
-            WHERE session_id = ? AND problem_number = ? AND graded = 0
-        """, (session_id, request.problem_number))
+  # Count ungraded problems (include blank submissions for feedback)
+  ungraded_count = problem_repo.count_ungraded_for_problem_number(
+    session_id, request.problem_number)
 
-    ungraded_count = cursor.fetchone()["count"]
-    if ungraded_count == 0:
-      raise HTTPException(
-        status_code=400,
-        detail=
-        f"No ungraded problems found for problem number {request.problem_number}"
-      )
+  if ungraded_count == 0:
+    raise HTTPException(
+      status_code=400,
+      detail=
+      f"No ungraded problems found for problem number {request.problem_number}"
+    )
 
-    # Update question_text and max_points in metadata
-    cursor.execute(
-      """
-            INSERT INTO problem_metadata (session_id, problem_number, question_text, max_points)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(session_id, problem_number)
-            DO UPDATE SET
-                question_text = excluded.question_text,
-                max_points = excluded.max_points
-        """, (session_id, request.problem_number, request.question_text,
-              request.max_points))
+  # Update question_text and max_points in metadata
+  metadata_repo.upsert_question_text(session_id, request.problem_number,
+                                     request.question_text)
+  metadata_repo.upsert_max_points(session_id, request.problem_number,
+                                  request.max_points)
 
   # Create SSE stream for progress updates
   stream_id = sse.make_stream_id("autograde", session_id)
@@ -306,14 +285,11 @@ async def run_autograding(session_id: int, problem_number: int,
 async def generate_rubric(session_id: int, request: GenerateRubricRequest):
   """Generate a grading rubric using AI and representative examples"""
 
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  session_repo = SessionRepository()
 
-    # Verify session exists
-    cursor.execute("SELECT id FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    if not cursor.fetchone():
-      raise HTTPException(status_code=404, detail="Session not found")
+  # Verify session exists
+  if not session_repo.exists(session_id):
+    raise HTTPException(status_code=404, detail="Session not found")
 
   try:
     ai_grader = AIGraderService()
@@ -351,23 +327,16 @@ async def generate_rubric(session_id: int, request: GenerateRubricRequest):
 async def save_rubric(session_id: int, request: SaveRubricRequest):
   """Save or update a grading rubric"""
 
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  session_repo = SessionRepository()
+  metadata_repo = ProblemMetadataRepository()
 
-    # Verify session exists
-    cursor.execute("SELECT id FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    if not cursor.fetchone():
-      raise HTTPException(status_code=404, detail="Session not found")
+  # Verify session exists
+  if not session_repo.exists(session_id):
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    # Save rubric to metadata
-    cursor.execute(
-      """
-            INSERT INTO problem_metadata (session_id, problem_number, grading_rubric)
-            VALUES (?, ?, ?)
-            ON CONFLICT(session_id, problem_number)
-            DO UPDATE SET grading_rubric = excluded.grading_rubric
-        """, (session_id, request.problem_number, request.rubric))
+  # Save rubric to metadata
+  metadata_repo.upsert_grading_rubric(session_id, request.problem_number,
+                                      request.rubric)
 
   return {"status": "success", "message": "Rubric saved successfully"}
 
@@ -376,24 +345,14 @@ async def save_rubric(session_id: int, request: SaveRubricRequest):
 async def get_rubric(session_id: int, problem_number: int):
   """Get the current rubric for a problem"""
 
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  session_repo = SessionRepository()
+  metadata_repo = ProblemMetadataRepository()
 
-    # Verify session exists
-    cursor.execute("SELECT id FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    if not cursor.fetchone():
-      raise HTTPException(status_code=404, detail="Session not found")
+  # Verify session exists
+  if not session_repo.exists(session_id):
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    # Get rubric from metadata
-    cursor.execute(
-      """
-            SELECT grading_rubric FROM problem_metadata
-            WHERE session_id = ? AND problem_number = ?
-        """, (session_id, problem_number))
+  # Get rubric from metadata
+  rubric = metadata_repo.get_grading_rubric(session_id, problem_number)
 
-    row = cursor.fetchone()
-    if not row or not row["grading_rubric"]:
-      return {"problem_number": problem_number, "rubric": None}
-
-    return {"problem_number": problem_number, "rubric": row["grading_rubric"]}
+  return {"problem_number": problem_number, "rubric": rubric}

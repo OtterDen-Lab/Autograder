@@ -492,3 +492,48 @@ class SubmissionRepository(BaseRepository[Submission]):
         })
 
       return students
+
+  def get_blank_stats(self, session_id: int) -> List[Dict]:
+    """
+    Get blank detection statistics for all submissions.
+
+    Used by debug endpoints for analyzing blank detection performance.
+
+    Args:
+      session_id: Session primary key
+
+    Returns:
+      List of dicts with submission_id, student_name, display_name,
+      total_problems, blank_detected, graded_problems, blank_percentage
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        SELECT
+          s.id as submission_id,
+          s.student_name,
+          s.display_name,
+          COUNT(p.id) as total_problems,
+          SUM(CASE WHEN p.is_blank = 1 THEN 1 ELSE 0 END) as blank_detected,
+          SUM(CASE WHEN p.graded = 1 THEN 1 ELSE 0 END) as graded_problems,
+          CAST(SUM(CASE WHEN p.is_blank = 1 THEN 1 ELSE 0 END) AS FLOAT) / COUNT(p.id) * 100 as blank_percentage
+        FROM submissions s
+        LEFT JOIN problems p ON p.submission_id = s.id
+        WHERE s.session_id = ?
+        GROUP BY s.id, s.student_name, s.display_name
+        ORDER BY blank_percentage DESC
+      """, (session_id,))
+
+      results = []
+      for row in cursor.fetchall():
+        results.append({
+          "submission_id": row["submission_id"],
+          "student_name": row["student_name"],
+          "display_name": row["display_name"],
+          "total_problems": row["total_problems"],
+          "blank_detected": row["blank_detected"] or 0,
+          "graded_problems": row["graded_problems"] or 0,
+          "blank_percentage": row["blank_percentage"] or 0.0
+        })
+
+      return results

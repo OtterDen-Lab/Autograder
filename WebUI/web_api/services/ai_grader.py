@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from Autograder.ai_helper import AI_Helper__Anthropic
 
-from ..database import get_db_connection
+from ..repositories import ProblemRepository, ProblemMetadataRepository, SubmissionRepository
 
 log = logging.getLogger(__name__)
 
@@ -277,36 +277,23 @@ class AIGraderService:
         Returns:
             Question text
         """
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
+    metadata_repo = ProblemMetadataRepository()
 
-      # Check if question already extracted
-      cursor.execute(
-        """
-                SELECT question_text
-                FROM problem_metadata
-                WHERE session_id = ? AND problem_number = ?
-            """, (session_id, problem_number))
+    # Check if question already extracted
+    question_text = metadata_repo.get_question_text(session_id, problem_number)
 
-      row = cursor.fetchone()
-      if row and row["question_text"]:
-        log.info(f"Using cached question text for problem {problem_number}")
-        return row["question_text"]
-
-      # Extract question text
-      log.info(f"Extracting question text for problem {problem_number}")
-      question_text = self.extract_question_text(sample_image_base64)
-
-      # Store in metadata
-      cursor.execute(
-        """
-                INSERT INTO problem_metadata (session_id, problem_number, question_text)
-                VALUES (?, ?, ?)
-                ON CONFLICT(session_id, problem_number)
-                DO UPDATE SET question_text = excluded.question_text
-            """, (session_id, problem_number, question_text))
-
+    if question_text:
+      log.info(f"Using cached question text for problem {problem_number}")
       return question_text
+
+    # Extract question text
+    log.info(f"Extracting question text for problem {problem_number}")
+    question_text = self.extract_question_text(sample_image_base64)
+
+    # Store in metadata
+    metadata_repo.upsert_question_text(session_id, problem_number, question_text)
+
+    return question_text
 
   def get_grading_examples(self,
                            session_id: int,
@@ -323,95 +310,81 @@ class AIGraderService:
             List of dicts with 'answer', 'score', 'feedback'
         """
     examples = []
+    problem_repo = ProblemRepository()
+    submission_repo = SubmissionRepository()
 
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
+    # Get graded problems (exclude blanks and problems without feedback)
+    rows = problem_repo.get_grading_examples(session_id, problem_number, limit)
 
-      # Get graded problems (exclude blanks and problems without feedback)
-      cursor.execute(
-        """
-                SELECT p.id, p.image_data, p.region_coords, p.submission_id, p.score, p.feedback
-                FROM problems p
-                WHERE p.session_id = ? AND p.problem_number = ? AND p.graded = 1
-                      AND p.is_blank = 0 AND p.feedback IS NOT NULL AND p.feedback != ''
-                ORDER BY RANDOM()
-                LIMIT ?
-            """, (session_id, problem_number, limit))
+    if not rows:
+      log.info(f"No graded examples found for problem {problem_number}")
+      return examples
 
-      rows = cursor.fetchall()
+    log.info(
+      f"Found {len(rows)} graded examples for problem {problem_number}, deciphering..."
+    )
 
-      if not rows:
-        log.info(f"No graded examples found for problem {problem_number}")
-        return examples
+    for row in rows:
+      try:
+        # Get image data - either directly or extract from PDF
+        image_data = None
+        if row["image_data"]:
+          # Legacy: image_data is stored
+          image_data = row["image_data"]
+        elif row["region_coords"]:
+          # New: extract from PDF using region_coords
+          import json
+          import base64
+          import fitz
 
-      log.info(
-        f"Found {len(rows)} graded examples for problem {problem_number}, deciphering..."
-      )
+          region_data = row["region_coords"]
 
-      for row in rows:
-        try:
-          # Get image data - either directly or extract from PDF
-          image_data = None
-          if row["image_data"]:
-            # Legacy: image_data is stored
-            image_data = row["image_data"]
-          elif row["region_coords"]:
-            # New: extract from PDF using region_coords
-            import json
-            import base64
-            import fitz
+          # Get PDF data from submission
+          submission = submission_repo.get_by_id(row["submission_id"])
 
-            region_data = json.loads(row["region_coords"])
+          if submission and submission.exam_pdf_data:
+            # Extract region from PDF
+            pdf_bytes = base64.b64decode(submission.exam_pdf_data)
+            pdf_document = fitz.open("pdf", pdf_bytes)
+            page = pdf_document[region_data["page_number"]]
 
-            # Get PDF data from submission
-            cursor.execute(
-              "SELECT exam_pdf_data FROM submissions WHERE id = ?",
-              (row["submission_id"], ))
-            submission_row = cursor.fetchone()
+            region = fitz.Rect(0, region_data["region_y_start"],
+                               page.rect.width, region_data["region_y_end"])
 
-            if submission_row and submission_row["exam_pdf_data"]:
-              # Extract region from PDF
-              pdf_bytes = base64.b64decode(submission_row["exam_pdf_data"])
-              pdf_document = fitz.open("pdf", pdf_bytes)
-              page = pdf_document[region_data["page_number"]]
+            # Extract region as new PDF page
+            problem_pdf = fitz.open()
+            problem_page = problem_pdf.new_page(width=region.width,
+                                                height=region.height)
+            problem_page.show_pdf_page(problem_page.rect,
+                                       pdf_document,
+                                       region_data["page_number"],
+                                       clip=region)
 
-              region = fitz.Rect(0, region_data["region_y_start"],
-                                 page.rect.width, region_data["region_y_end"])
+            # Convert to PNG
+            pix = problem_page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            image_data = base64.b64encode(img_bytes).decode("utf-8")
 
-              # Extract region as new PDF page
-              problem_pdf = fitz.open()
-              problem_page = problem_pdf.new_page(width=region.width,
-                                                  height=region.height)
-              problem_page.show_pdf_page(problem_page.rect,
-                                         pdf_document,
-                                         region_data["page_number"],
-                                         clip=region)
+            # Cleanup
+            problem_pdf.close()
+            pdf_document.close()
 
-              # Convert to PNG
-              pix = problem_page.get_pixmap(dpi=150)
-              img_bytes = pix.tobytes("png")
-              image_data = base64.b64encode(img_bytes).decode("utf-8")
-
-              # Cleanup
-              problem_pdf.close()
-              pdf_document.close()
-
-          if not image_data:
-            log.warning(
-              f"No image data available for problem {row['id']}, skipping")
-            continue
-
-          # Decipher the handwriting from the example
-          student_answer = self.decipher_handwriting(image_data)
-
-          examples.append({
-            'answer': student_answer,
-            'score': row["score"],
-            'feedback': row["feedback"]
-          })
-        except Exception as e:
-          log.warning(f"Failed to decipher example submission: {e}")
+        if not image_data:
+          log.warning(
+            f"No image data available for problem {row['id']}, skipping")
           continue
+
+        # Decipher the handwriting from the example
+        student_answer = self.decipher_handwriting(image_data)
+
+        examples.append({
+          'answer': student_answer,
+          'score': row["score"],
+          'feedback': row["feedback"]
+        })
+      except Exception as e:
+        log.warning(f"Failed to decipher example submission: {e}")
+        continue
 
     log.info(f"Successfully prepared {len(examples)} grading examples")
     return examples
@@ -432,123 +405,89 @@ class AIGraderService:
         Returns:
             Dictionary with grading results
         """
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
+    metadata_repo = ProblemMetadataRepository()
+    problem_repo = ProblemRepository()
 
-      # If max_points not provided, try to get from database
-      if max_points is None:
-        # Get max points for this problem - first check metadata
-        cursor.execute(
-          """
-                    SELECT max_points FROM problem_metadata
-                    WHERE session_id = ? AND problem_number = ?
-                """, (session_id, problem_number))
+    # If max_points not provided, try to get from database
+    if max_points is None:
+      # Get max points for this problem - first check metadata
+      max_points = metadata_repo.get_max_points(session_id, problem_number)
 
-        metadata_row = cursor.fetchone()
+      if not max_points:
+        # Fall back to max_points from problems table
+        sample_problem = problem_repo.get_sample_for_problem_number(
+          session_id, problem_number)
 
-        if metadata_row and metadata_row["max_points"]:
-          max_points = metadata_row["max_points"]
-        else:
-          # Fall back to max_points from problems table
-          cursor.execute(
-            """
-                        SELECT max_points FROM problems
-                        WHERE session_id = ? AND problem_number = ?
-                        LIMIT 1
-                    """, (session_id, problem_number))
+        if sample_problem and sample_problem.max_points:
+          max_points = sample_problem.max_points
 
-          problem_row = cursor.fetchone()
-          if problem_row and problem_row["max_points"]:
-            max_points = problem_row["max_points"]
+          # Save to metadata for future use
+          metadata_repo.upsert_max_points(session_id, problem_number,
+                                          max_points)
 
-            # Save to metadata for future use
-            cursor.execute(
-              """
-                            INSERT INTO problem_metadata (session_id, problem_number, max_points)
-                            VALUES (?, ?, ?)
-                            ON CONFLICT(session_id, problem_number)
-                            DO UPDATE SET max_points = excluded.max_points
-                        """, (session_id, problem_number, max_points))
+      if not max_points:
+        raise ValueError(f"Max points not set for problem {problem_number}")
 
-        if not max_points:
-          raise ValueError(f"Max points not set for problem {problem_number}")
+    # Get all ungraded problems for this problem number (include blanks for feedback)
+    problems = problem_repo.get_ungraded_for_problem_number(
+      session_id, problem_number)
+    total = len(problems)
 
-      # Get all ungraded problems for this problem number (include blanks for feedback)
-      cursor.execute(
-        """
-                SELECT id, image_data, region_coords, submission_id, is_blank
-                FROM problems
-                WHERE session_id = ? AND problem_number = ? AND graded = 0
-                ORDER BY id
-            """, (session_id, problem_number))
+    if total == 0:
+      return {"graded": 0, "message": "No ungraded problems found"}
 
-      problems = cursor.fetchall()
-      total = len(problems)
+    log.info(
+      f"Autograding {total} problems for problem number {problem_number}")
 
-      if total == 0:
-        return {"graded": 0, "message": "No ungraded problems found"}
+    submission_repo = SubmissionRepository()
 
-      log.info(
-        f"Autograding {total} problems for problem number {problem_number}")
+    # Get question text (use first problem's image as sample)
+    # Extract image from first problem
+    first_problem = problems[0]
+    first_image_data = None
+    if first_problem["image_data"]:
+      first_image_data = first_problem["image_data"]
+    elif first_problem["region_coords"]:
+      import json
+      import base64
+      import fitz
 
-      # Get question text (use first problem's image as sample)
-      # Extract image from first problem
-      first_problem = problems[0]
-      first_image_data = None
-      if first_problem["image_data"]:
-        first_image_data = first_problem["image_data"]
-      elif first_problem["region_coords"]:
-        import json
-        import base64
-        import fitz
+      region_data = first_problem["region_coords"]
+      submission = submission_repo.get_by_id(first_problem["submission_id"])
 
-        region_data = json.loads(first_problem["region_coords"])
-        cursor.execute("SELECT exam_pdf_data FROM submissions WHERE id = ?",
-                       (first_problem["submission_id"], ))
-        submission_row = cursor.fetchone()
+      if submission and submission.exam_pdf_data:
+        pdf_bytes = base64.b64decode(submission.exam_pdf_data)
+        pdf_document = fitz.open("pdf", pdf_bytes)
+        page = pdf_document[region_data["page_number"]]
+        region = fitz.Rect(0, region_data["region_y_start"], page.rect.width,
+                           region_data["region_y_end"])
 
-        if submission_row and submission_row["exam_pdf_data"]:
-          pdf_bytes = base64.b64decode(submission_row["exam_pdf_data"])
-          pdf_document = fitz.open("pdf", pdf_bytes)
-          page = pdf_document[region_data["page_number"]]
-          region = fitz.Rect(0, region_data["region_y_start"], page.rect.width,
-                             region_data["region_y_end"])
+        problem_pdf = fitz.open()
+        problem_page = problem_pdf.new_page(width=region.width,
+                                            height=region.height)
+        problem_page.show_pdf_page(problem_page.rect,
+                                   pdf_document,
+                                   region_data["page_number"],
+                                   clip=region)
 
-          problem_pdf = fitz.open()
-          problem_page = problem_pdf.new_page(width=region.width,
-                                              height=region.height)
-          problem_page.show_pdf_page(problem_page.rect,
-                                     pdf_document,
-                                     region_data["page_number"],
-                                     clip=region)
+        pix = problem_page.get_pixmap(dpi=150)
+        img_bytes = pix.tobytes("png")
+        first_image_data = base64.b64encode(img_bytes).decode("utf-8")
 
-          pix = problem_page.get_pixmap(dpi=150)
-          img_bytes = pix.tobytes("png")
-          first_image_data = base64.b64encode(img_bytes).decode("utf-8")
+        problem_pdf.close()
+        pdf_document.close()
 
-          problem_pdf.close()
-          pdf_document.close()
+    question_text = self.get_or_extract_question(session_id, problem_number,
+                                                 first_image_data)
 
-      question_text = self.get_or_extract_question(session_id, problem_number,
-                                                   first_image_data)
+    if progress_callback:
+      progress_callback(0, total,
+                        f"Extracted question for problem {problem_number}")
 
-      if progress_callback:
-        progress_callback(0, total,
-                          f"Extracted question for problem {problem_number}")
-
-      # Get rubric from metadata if available
-      rubric = None
-      with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-          """
-                    SELECT grading_rubric FROM problem_metadata
-                    WHERE session_id = ? AND problem_number = ?
-                """, (session_id, problem_number))
-        rubric_row = cursor.fetchone()
-        if rubric_row and rubric_row["grading_rubric"]:
-          rubric = rubric_row["grading_rubric"]
-          log.info(f"Using rubric for problem {problem_number}")
+    # Get rubric from metadata if available
+    rubric = metadata_repo.get_grading_rubric(session_id, problem_number)
+    if rubric:
+      log.info(f"Using rubric for problem {problem_number}")
 
       # Get grading examples for few-shot prompting
       if progress_callback:
@@ -586,38 +525,33 @@ class AIGraderService:
             import base64
             import fitz
 
-            region_data = json.loads(problem["region_coords"])
+            region_data = problem["region_coords"]
 
-            # Need a new DB connection since we're in a thread executor
-            with get_db_connection() as pdf_conn:
-              pdf_cursor = pdf_conn.cursor()
-              pdf_cursor.execute(
-                "SELECT exam_pdf_data FROM submissions WHERE id = ?",
-                (problem["submission_id"], ))
-              submission_row = pdf_cursor.fetchone()
+            # Get submission PDF data
+            submission = submission_repo.get_by_id(problem["submission_id"])
 
-              if submission_row and submission_row["exam_pdf_data"]:
-                pdf_bytes = base64.b64decode(submission_row["exam_pdf_data"])
-                pdf_document = fitz.open("pdf", pdf_bytes)
-                page = pdf_document[region_data["page_number"]]
-                region = fitz.Rect(0, region_data["region_y_start"],
-                                   page.rect.width,
-                                   region_data["region_y_end"])
+            if submission and submission.exam_pdf_data:
+              pdf_bytes = base64.b64decode(submission.exam_pdf_data)
+              pdf_document = fitz.open("pdf", pdf_bytes)
+              page = pdf_document[region_data["page_number"]]
+              region = fitz.Rect(0, region_data["region_y_start"],
+                                 page.rect.width,
+                                 region_data["region_y_end"])
 
-                problem_pdf = fitz.open()
-                problem_page = problem_pdf.new_page(width=region.width,
-                                                    height=region.height)
-                problem_page.show_pdf_page(problem_page.rect,
-                                           pdf_document,
-                                           region_data["page_number"],
-                                           clip=region)
+              problem_pdf = fitz.open()
+              problem_page = problem_pdf.new_page(width=region.width,
+                                                  height=region.height)
+              problem_page.show_pdf_page(problem_page.rect,
+                                         pdf_document,
+                                         region_data["page_number"],
+                                         clip=region)
 
-                pix = problem_page.get_pixmap(dpi=150)
-                img_bytes = pix.tobytes("png")
-                image_data = base64.b64encode(img_bytes).decode("utf-8")
+              pix = problem_page.get_pixmap(dpi=150)
+              img_bytes = pix.tobytes("png")
+              image_data = base64.b64encode(img_bytes).decode("utf-8")
 
-                problem_pdf.close()
-                pdf_document.close()
+              problem_pdf.close()
+              pdf_document.close()
 
           if not image_data:
             log.warning(
@@ -643,15 +577,7 @@ class AIGraderService:
             rubric=rubric)
 
           # Update problem with AI suggestion (score and feedback ready for instructor review)
-          # Need a new DB connection since we're in a thread executor
-          with get_db_connection() as update_conn:
-            update_cursor = update_conn.cursor()
-            update_cursor.execute(
-              """
-                            UPDATE problems
-                            SET score = ?, feedback = ?, graded = 0
-                            WHERE id = ?
-                        """, (score, feedback, problem["id"]))
+          problem_repo.update_ai_grade(problem["id"], score, feedback)
 
           graded_count += 1
           log.info(f"AI graded problem {problem['id']}: {score}/{max_points}")
