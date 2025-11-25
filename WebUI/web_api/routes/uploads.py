@@ -13,6 +13,8 @@ from pathlib import Path
 
 from ..models import UploadResponse
 from ..database import get_db_connection
+from ..repositories import SessionRepository, SubmissionRepository
+from ..domain.common import SessionStatus
 from .. import sse
 import json
 
@@ -62,14 +64,10 @@ async def upload_exams(session_id: int, files: List[UploadFile] = File(...)):
     """
   from ..services.manual_alignment import ManualAlignmentService
 
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
-
-    # Verify session exists
-    cursor.execute("SELECT id FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    if not cursor.fetchone():
-      raise HTTPException(status_code=404, detail="Session not found")
+  # Verify session exists
+  session_repo = SessionRepository()
+  if not session_repo.exists(session_id):
+    raise HTTPException(status_code=404, detail="Session not found")
 
   # Save uploaded files temporarily and compute hashes
   temp_dir = Path(tempfile.mkdtemp())
@@ -127,112 +125,105 @@ async def upload_exams(session_id: int, files: List[UploadFile] = File(...)):
   # Store file paths and metadata in session for later processing
   # Append to existing uploads if any (support multiple upload batches)
 
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  session_repo = SessionRepository()
 
-    # Get existing session data
-    cursor.execute("SELECT metadata FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    row = cursor.fetchone()
-    existing_data = json.loads(
-      row["metadata"]) if row and row["metadata"] else None
+  # Get existing session data
+  existing_data = session_repo.get_metadata(session_id)
 
-    # Check if we have existing split points from a previous upload
-    has_existing_split_points = (existing_data
-                                 and "split_points" in existing_data
-                                 and existing_data["split_points"])
+  # Check if we have existing split points from a previous upload
+  has_existing_split_points = (existing_data
+                               and "split_points" in existing_data
+                               and existing_data["split_points"])
 
+  if has_existing_split_points:
+    log.info(f"Found existing split points - will auto-process new uploads")
+  else:
+    log.info(f"No existing split points found - will show alignment UI")
+
+  if existing_data and "file_paths" in existing_data:
+    # Append to existing files
+    log.info(
+      f"Appending {len(saved_files)} files to existing {len(existing_data['file_paths'])} files"
+    )
+
+    existing_files = [Path(p) for p in existing_data["file_paths"]]
+    existing_metadata = {
+      Path(k): v
+      for k, v in existing_data["file_metadata"].items()
+    }
+
+    # Combine with new files (avoiding duplicates by hash)
+    existing_hashes = {meta["hash"] for meta in existing_metadata.values()}
+    new_files_added = 0
+
+    for new_file in saved_files:
+      new_hash = file_metadata[new_file]["hash"]
+      if new_hash not in existing_hashes:
+        existing_files.append(new_file)
+        existing_metadata[new_file] = file_metadata[new_file]
+        new_files_added += 1
+      else:
+        log.info(f"Skipping duplicate file: {new_file.name}")
+
+    log.info(
+      f"Added {new_files_added} new files (skipped {len(saved_files) - new_files_added} duplicates)"
+    )
+
+    # Use the first temp_dir or create new one
+    temp_dir_to_use = existing_data.get("temp_dir", str(temp_dir))
+
+    # Preserve existing split points and settings if they exist
+    session_data = {
+      "temp_dir": temp_dir_to_use,
+      "file_paths": [str(f) for f in existing_files],
+      "file_metadata": {
+        str(k): v
+        for k, v in existing_metadata.items()
+      }
+    }
+
+    # Preserve split points and other settings from previous upload
     if has_existing_split_points:
-      log.info(f"Found existing split points - will auto-process new uploads")
-    else:
-      log.info(f"No existing split points found - will show alignment UI")
-
-    if existing_data and "file_paths" in existing_data:
-      # Append to existing files
+      # Convert string keys back to integers (JSON serialization converts int keys to strings)
+      raw_split_points = existing_data["split_points"]
+      session_data["split_points"] = {
+        int(k): v
+        for k, v in raw_split_points.items()
+      }
+      session_data["skip_first_region"] = existing_data.get(
+        "skip_first_region", True)
+      session_data["last_page_blank"] = existing_data.get(
+        "last_page_blank", False)
+      session_data["ai_provider"] = existing_data.get(
+        "ai_provider", "anthropic")
+      session_data["composite_dimensions"] = existing_data.get(
+        "composite_dimensions", {})
       log.info(
-        f"Appending {len(saved_files)} files to existing {len(existing_data['file_paths'])} files"
+        f"Reusing existing split points from previous upload: {session_data['split_points']}"
       )
 
-      existing_files = [Path(p) for p in existing_data["file_paths"]]
-      existing_metadata = {
-        Path(k): v
-        for k, v in existing_data["file_metadata"].items()
+    total_files = len(existing_files)
+  else:
+    # First upload for this session
+    log.info(f"First upload: {len(saved_files)} files")
+    session_data = {
+      "temp_dir": str(temp_dir),
+      "file_paths": [str(f) for f in saved_files],
+      "file_metadata": {
+        str(k): v
+        for k, v in file_metadata.items()
       }
+    }
+    total_files = len(saved_files)
 
-      # Combine with new files (avoiding duplicates by hash)
-      existing_hashes = {meta["hash"] for meta in existing_metadata.values()}
-      new_files_added = 0
+  # Update session with file metadata and status
+  session_repo.update_metadata(session_id, session_data)
+  session_repo.update_status(session_id, SessionStatus.AWAITING_ALIGNMENT, "Uploaded. Please align split points.")
 
-      for new_file in saved_files:
-        new_hash = file_metadata[new_file]["hash"]
-        if new_hash not in existing_hashes:
-          existing_files.append(new_file)
-          existing_metadata[new_file] = file_metadata[new_file]
-          new_files_added += 1
-        else:
-          log.info(f"Skipping duplicate file: {new_file.name}")
-
-      log.info(
-        f"Added {new_files_added} new files (skipped {len(saved_files) - new_files_added} duplicates)"
-      )
-
-      # Use the first temp_dir or create new one
-      temp_dir_to_use = existing_data.get("temp_dir", str(temp_dir))
-
-      # Preserve existing split points and settings if they exist
-      session_data = {
-        "temp_dir": temp_dir_to_use,
-        "file_paths": [str(f) for f in existing_files],
-        "file_metadata": {
-          str(k): v
-          for k, v in existing_metadata.items()
-        }
-      }
-
-      # Preserve split points and other settings from previous upload
-      if has_existing_split_points:
-        # Convert string keys back to integers (JSON serialization converts int keys to strings)
-        raw_split_points = existing_data["split_points"]
-        session_data["split_points"] = {
-          int(k): v
-          for k, v in raw_split_points.items()
-        }
-        session_data["skip_first_region"] = existing_data.get(
-          "skip_first_region", True)
-        session_data["last_page_blank"] = existing_data.get(
-          "last_page_blank", False)
-        session_data["ai_provider"] = existing_data.get(
-          "ai_provider", "anthropic")
-        session_data["composite_dimensions"] = existing_data.get(
-          "composite_dimensions", {})
-        log.info(
-          f"Reusing existing split points from previous upload: {session_data['split_points']}"
-        )
-
-      total_files = len(existing_files)
-    else:
-      # First upload for this session
-      log.info(f"First upload: {len(saved_files)} files")
-      session_data = {
-        "temp_dir": str(temp_dir),
-        "file_paths": [str(f) for f in saved_files],
-        "file_metadata": {
-          str(k): v
-          for k, v in file_metadata.items()
-        }
-      }
-      total_files = len(saved_files)
-
-    cursor.execute(
-      """
-            UPDATE grading_sessions
-            SET status = 'awaiting_alignment',
-                total_exams = ?,
-                metadata = ?,
-                processing_message = 'Uploaded. Please align split points.',
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (total_files, json.dumps(session_data), session_id))
+  # Also update total_exams count
+  session = session_repo.get_by_id(session_id)
+  session.total_exams = total_files
+  session_repo.update(session)
 
   # If we already have split points from a previous upload, auto-submit and skip alignment UI
   if has_existing_split_points:
