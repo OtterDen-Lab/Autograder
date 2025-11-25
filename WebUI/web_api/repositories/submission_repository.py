@@ -447,3 +447,48 @@ class SubmissionRepository(BaseRepository[Submission]):
         (session_id,)
       )
       return cursor.fetchone()[0]
+
+  def get_student_scores(self, session_id: int) -> List[Dict]:
+    """
+    Get aggregated scores for all students in a session.
+
+    Returns list of dicts with student_name, canvas_user_id,
+    total_problems, graded_problems, total_score, is_complete.
+
+    Args:
+      session_id: Session primary key
+
+    Returns:
+      List of student score dictionaries
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute(
+        """
+        SELECT
+          s.id,
+          s.student_name,
+          s.canvas_user_id,
+          COUNT(p.id) as total_problems,
+          SUM(CASE WHEN p.graded = 1 THEN 1 ELSE 0 END) as graded_problems,
+          SUM(CASE WHEN p.graded = 1 THEN p.score ELSE 0 END) as total_score
+        FROM submissions s
+        LEFT JOIN problems p ON p.submission_id = s.id
+        WHERE s.session_id = ?
+        GROUP BY s.id
+        ORDER BY s.student_name
+        """, (session_id,)
+      )
+
+      students = []
+      for row in cursor.fetchall():
+        students.append({
+          "student_name": row["student_name"],
+          "canvas_user_id": row["canvas_user_id"],
+          "total_problems": row["total_problems"],
+          "graded_problems": row["graded_problems"],
+          "total_score": row["total_score"],
+          "is_complete": row["graded_problems"] == row["total_problems"]
+        })
+
+      return students

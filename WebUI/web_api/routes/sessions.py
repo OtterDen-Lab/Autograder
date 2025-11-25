@@ -23,7 +23,10 @@ from ..models import (
   SessionStatusUpdate,
   SessionStatusChange,
 )
-from ..database import get_db_connection
+from ..database import get_db_connection  # Still needed for unrefactored endpoints
+from ..repositories import SessionRepository, SubmissionRepository, ProblemRepository, ProblemMetadataRepository
+from ..domain.common import SessionStatus as DomainSessionStatus
+from ..domain.session import GradingSession
 from lms_interface.canvas_interface import CanvasInterface
 from ..services.qr_scanner import QRScanner
 import os
@@ -34,47 +37,29 @@ router = APIRouter()
 @router.post("", response_model=SessionResponse)
 async def create_session(session: SessionCreate):
   """Create a new grading session"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  repo = SessionRepository()
 
-    cursor.execute(
-      """
-            INSERT INTO grading_sessions
-            (assignment_id, assignment_name, course_id, course_name, status, canvas_points, use_prod_canvas)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-        session.assignment_id,
-        session.assignment_name,
-        session.course_id,
-        session.course_name,
-        "preprocessing",
-        session.canvas_points,
-        1 if session.use_prod_canvas else 0,
-      ))
+  # Create domain object
+  new_session = GradingSession(
+    id=0,  # Will be set by DB
+    assignment_id=session.assignment_id,
+    assignment_name=session.assignment_name,
+    course_id=session.course_id,
+    course_name=session.course_name,
+    status=DomainSessionStatus.PREPROCESSING,
+    canvas_points=session.canvas_points,
+    use_prod_canvas=session.use_prod_canvas,
+    created_at=datetime.now(),
+    updated_at=datetime.now(),
+    total_exams=0,
+    processed_exams=0,
+    matched_exams=0,
+    processing_message=None,
+    metadata=None
+  )
 
-    session_id = cursor.lastrowid
-
-    # Fetch created session
-    cursor.execute("SELECT * FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    row = cursor.fetchone()
-    row_dict = dict(row)
-
-    return SessionResponse(
-      id=row["id"],
-      assignment_id=row["assignment_id"],
-      assignment_name=row["assignment_name"],
-      course_id=row["course_id"],
-      course_name=row["course_name"],
-      status=row["status"],
-      created_at=row["created_at"],
-      updated_at=row["updated_at"],
-      canvas_points=row["canvas_points"],
-      total_exams=row_dict.get("total_exams", 0),
-      processed_exams=row_dict.get("processed_exams", 0),
-      matched_exams=row_dict.get("matched_exams", 0),
-      processing_message=row_dict.get("processing_message"),
-    )
+  created_session = repo.create(new_session)
+  return SessionResponse.model_validate(created_session)
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
@@ -120,34 +105,9 @@ async def update_session_status(session_id: int,
 @router.get("", response_model=List[SessionResponse])
 async def list_sessions():
   """List all grading sessions"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
-    cursor.execute("""
-            SELECT * FROM grading_sessions
-            ORDER BY created_at DESC
-        """)
-
-    sessions = []
-    for row in cursor.fetchall():
-      row_dict = dict(row)
-      sessions.append(
-        SessionResponse(
-          id=row["id"],
-          assignment_id=row["assignment_id"],
-          assignment_name=row["assignment_name"],
-          course_id=row["course_id"],
-          course_name=row["course_name"],
-          status=row["status"],
-          created_at=row["created_at"],
-          updated_at=row["updated_at"],
-          canvas_points=row["canvas_points"],
-          total_exams=row_dict.get("total_exams", 0),
-          processed_exams=row_dict.get("processed_exams", 0),
-          matched_exams=row_dict.get("matched_exams", 0),
-          processing_message=row_dict.get("processing_message"),
-        ))
-
-    return sessions
+  repo = SessionRepository()
+  sessions = repo.list_all()
+  return [SessionResponse.model_validate(session) for session in sessions]
 
 
 @router.get("/{session_id}/stats", response_model=SessionStatsResponse)
@@ -287,62 +247,17 @@ async def get_session_stats(session_id: int):
 @router.get("/{session_id}/problem-numbers")
 async def get_problem_numbers(session_id: int):
   """Get list of distinct problem numbers for a session"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
-
-    cursor.execute(
-      """
-            SELECT DISTINCT problem_number
-            FROM problems
-            WHERE session_id = ?
-            ORDER BY problem_number
-        """, (session_id, ))
-
-    problem_numbers = [row["problem_number"] for row in cursor.fetchall()]
-
-    return {"problem_numbers": problem_numbers}
+  repo = ProblemRepository()
+  problem_numbers = repo.get_distinct_problem_numbers(session_id)
+  return {"problem_numbers": problem_numbers}
 
 
 @router.get("/{session_id}/student-scores")
 async def get_student_scores(session_id: int):
   """Get aggregated scores for all students in a session"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
-
-    cursor.execute(
-      """
-            SELECT
-                s.id,
-                s.student_name,
-                s.canvas_user_id,
-                COUNT(p.id) as total_problems,
-                SUM(CASE WHEN p.graded = 1 THEN 1 ELSE 0 END) as graded_problems,
-                SUM(CASE WHEN p.graded = 1 THEN p.score ELSE 0 END) as total_score
-            FROM submissions s
-            LEFT JOIN problems p ON p.submission_id = s.id
-            WHERE s.session_id = ?
-            GROUP BY s.id
-            ORDER BY s.student_name
-        """, (session_id, ))
-
-    students = []
-    for row in cursor.fetchall():
-      students.append({
-        "student_name":
-        row["student_name"],
-        "canvas_user_id":
-        row["canvas_user_id"],
-        "total_problems":
-        row["total_problems"],
-        "graded_problems":
-        row["graded_problems"],
-        "total_score":
-        row["total_score"],
-        "is_complete":
-        row["graded_problems"] == row["total_problems"]
-      })
-
-    return {"students": students}
+  submission_repo = SubmissionRepository()
+  students = submission_repo.get_student_scores(session_id)
+  return {"students": students}
 
 
 @router.get("/{session_id}/submissions/{submission_id}/problems")
@@ -350,109 +265,82 @@ async def get_submission_problems(session_id: int, submission_id: int):
   """Get all problems for a specific submission"""
   from ..models import ProblemResponse
 
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  submission_repo = SubmissionRepository()
+  submission = submission_repo.get_by_id(submission_id)
 
-    # Verify submission belongs to this session and get PDF data
-    cursor.execute(
-      """
-            SELECT id, exam_pdf_data FROM submissions
-            WHERE id = ? AND session_id = ?
-        """, (submission_id, session_id))
+  if not submission or submission.session_id != session_id:
+    raise HTTPException(status_code=404,
+                        detail="Submission not found in this session")
 
-    submission_row = cursor.fetchone()
-    if not submission_row:
-      raise HTTPException(status_code=404,
-                          detail="Submission not found in this session")
+  pdf_base64 = submission.exam_pdf_data
 
-    pdf_base64 = submission_row["exam_pdf_data"]
+  # Get all problems for this submission
+  problem_repo = ProblemRepository()
+  problems_list = problem_repo.get_by_submission(submission_id)
 
-    # Get all problems for this submission
-    cursor.execute(
-      """
-            SELECT
-                id, problem_number, submission_id, region_coords,
-                score, feedback, graded, is_blank,
-                blank_confidence, blank_method, blank_reasoning
-            FROM problems
-            WHERE submission_id = ?
-            ORDER BY problem_number
-        """, (submission_id, ))
+  problems = []
+  exam_processor = ExamProcessor()
 
-    problems = []
-    exam_processor = ExamProcessor()
+  for problem in problems_list:
+    # Extract image from PDF using region coords
+    region_coords = problem.region_coords
+    start_page = region_coords["page_number"]
+    start_y = region_coords["region_y_start"]
+    end_page = region_coords.get("end_page_number", start_page)
+    end_y = region_coords["region_y_end"]
 
-    for row in cursor.fetchall():
-      # Extract image from PDF using region coords
-      region_coords = json.loads(row["region_coords"])
-      start_page = region_coords["page_number"]
-      start_y = region_coords["region_y_start"]
-      end_page = region_coords.get("end_page_number", start_page)
-      end_y = region_coords["region_y_end"]
+    try:
+      problem_image_base64, _ = exam_processor._extract_cross_page_region(
+        fitz.open(stream=base64.b64decode(pdf_base64), filetype="pdf"),
+        start_page,
+        start_y,
+        end_page,
+        end_y,
+        dpi=150)
+    except Exception as e:
+      import logging
+      log = logging.getLogger(__name__)
+      log.error(f"Failed to extract image for problem {problem.id}: {e}")
+      problem_image_base64 = ""
 
-      try:
-        problem_image_base64, _ = exam_processor._extract_cross_page_region(
-          fitz.open(stream=base64.b64decode(pdf_base64), filetype="pdf"),
-          start_page,
-          start_y,
-          end_page,
-          end_y,
-          dpi=150)
-      except Exception as e:
-        log.error(f"Failed to extract image for problem {row['id']}: {e}")
-        problem_image_base64 = ""
+    problems.append(
+      ProblemResponse(
+        id=problem.id,
+        problem_number=problem.problem_number,
+        submission_id=problem.submission_id,
+        image_data=problem_image_base64,
+        score=problem.score,
+        feedback=problem.feedback,
+        graded=problem.graded,
+        is_blank=problem.is_blank,
+        blank_confidence=problem.blank_confidence,
+        blank_method=problem.blank_method,
+        blank_reasoning=problem.blank_reasoning,
+        current_index=0,  # Not applicable for this endpoint
+        total_count=0,  # Not applicable for this endpoint
+        ungraded_blank=0,  # Not applicable for this endpoint
+        ungraded_nonblank=0,  # Not applicable for this endpoint
+        has_qr_data=False  # Not needed for debug view
+      ))
 
-      problems.append(
-        ProblemResponse(
-          id=row["id"],
-          problem_number=row["problem_number"],
-          submission_id=row["submission_id"],
-          image_data=problem_image_base64,
-          score=row["score"],
-          feedback=row["feedback"],
-          graded=bool(row["graded"]),
-          is_blank=bool(row["is_blank"]),
-          blank_confidence=row["blank_confidence"] or 0.0,
-          blank_method=row["blank_method"],
-          blank_reasoning=row["blank_reasoning"],
-          current_index=0,  # Not applicable for this endpoint
-          total_count=0,  # Not applicable for this endpoint
-          ungraded_blank=0,  # Not applicable for this endpoint
-          ungraded_nonblank=0,  # Not applicable for this endpoint
-          has_qr_data=False  # Not needed for debug view
-        ))
-
-    return problems
+  return problems
 
 
 @router.get("/{session_id}/canvas-info")
 async def get_canvas_info(session_id: int):
   """Get Canvas course and assignment information for verification before finalization"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
-    cursor.execute(
-      """
-            SELECT course_id, assignment_id, course_name, assignment_name, use_prod_canvas
-            FROM grading_sessions
-            WHERE id = ?
-        """, (session_id, ))
+  repo = SessionRepository()
+  session = repo.get_by_id(session_id)
 
-    row = cursor.fetchone()
-    if not row:
-      raise HTTPException(status_code=404, detail="Session not found")
+  if not session:
+    raise HTTPException(status_code=404, detail="Session not found")
 
-  # Get Canvas environment from session (default to False for older sessions)
-  # Note: SQLite stores booleans as INTEGER (0 or 1)
-  try:
-    use_prod = bool(
-      row["use_prod_canvas"]) if "use_prod_canvas" in row.keys() else False
-  except (KeyError, IndexError):
-    use_prod = False
+  use_prod = session.use_prod_canvas
   canvas = CanvasInterface(prod=use_prod)
 
   # Get course and assignment to construct URL
-  course = canvas.get_course(row["course_id"])
-  assignment = course.get_assignment(row["assignment_id"])
+  course = canvas.get_course(session.course_id)
+  assignment = course.get_assignment(session.assignment_id)
 
   # Get base URL from Canvas interface
   # Remove trailing slash and /api/v1 if present
@@ -462,13 +350,13 @@ async def get_canvas_info(session_id: int):
   base_url = base_url.rstrip('/')
 
   # Construct Canvas URL
-  canvas_url = f"{base_url}/courses/{row['course_id']}/assignments/{row['assignment_id']}"
+  canvas_url = f"{base_url}/courses/{session.course_id}/assignments/{session.assignment_id}"
 
   return {
-    "course_id": row["course_id"],
-    "course_name": row["course_name"],
-    "assignment_id": row["assignment_id"],
-    "assignment_name": row["assignment_name"],
+    "course_id": session.course_id,
+    "course_name": session.course_name,
+    "assignment_id": session.assignment_id,
+    "assignment_name": session.assignment_name,
     "canvas_url": canvas_url,
     "environment": "production" if use_prod else "development"
   }
@@ -486,24 +374,18 @@ async def update_canvas_config(session_id: int,
     course = canvas_interface.get_course(course_id)
     assignment = course.get_assignment(assignment_id)
 
-    with get_db_connection() as conn:
-      cursor = conn.cursor()
+    repo = SessionRepository()
+    session = repo.get_by_id(session_id)
+    if not session:
+      raise HTTPException(status_code=404, detail="Session not found")
 
-      cursor.execute(
-        """
-                UPDATE grading_sessions
-                SET course_id = ?,
-                    course_name = ?,
-                    assignment_id = ?,
-                    assignment_name = ?,
-                    use_prod_canvas = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (course_id, course.name, assignment_id, assignment.name,
-                  1 if use_prod else 0, session_id))
-
-      if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Session not found")
+    # Update session fields
+    session.course_id = course_id
+    session.course_name = course.name
+    session.assignment_id = assignment_id
+    session.assignment_name = assignment.name
+    session.use_prod_canvas = use_prod
+    repo.update(session)
 
     return {
       "status": "updated",
@@ -522,92 +404,53 @@ async def update_canvas_config(session_id: int,
 @router.get("/{session_id}/problem-max-points-all")
 async def get_all_problem_max_points(session_id: int):
   """Get max points for all problems in a session"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  session_repo = SessionRepository()
+  if not session_repo.exists(session_id):
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    # Verify session exists
-    cursor.execute("SELECT id FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    if not cursor.fetchone():
-      raise HTTPException(status_code=404, detail="Session not found")
+  metadata_repo = ProblemMetadataRepository()
+  max_points = metadata_repo.get_all_max_points(session_id)
 
-    # Get all max points from metadata
-    cursor.execute(
-      """
-            SELECT problem_number, max_points
-            FROM problem_metadata
-            WHERE session_id = ?
-        """, (session_id, ))
-
-    max_points = {
-      row["problem_number"]: row["max_points"]
-      for row in cursor.fetchall()
-    }
-
-    return {"max_points": max_points}
+  return {"max_points": max_points}
 
 
 @router.put("/{session_id}/problem-max-points")
 async def update_problem_max_points(session_id: int, problem_number: int,
                                     max_points: float):
   """Update max points for a specific problem number in a session"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  session_repo = SessionRepository()
+  if not session_repo.exists(session_id):
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    # Verify session exists
-    cursor.execute("SELECT id FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    if not cursor.fetchone():
-      raise HTTPException(status_code=404, detail="Session not found")
+  # Update metadata
+  metadata_repo = ProblemMetadataRepository()
+  metadata_repo.upsert_max_points(session_id, problem_number, max_points)
 
-    # Update metadata
-    cursor.execute(
-      """
-            INSERT INTO problem_metadata (session_id, problem_number, max_points)
-            VALUES (?, ?, ?)
-            ON CONFLICT(session_id, problem_number)
-            DO UPDATE SET max_points = excluded.max_points, updated_at = CURRENT_TIMESTAMP
-        """, (session_id, problem_number, max_points))
+  # Update all existing problems with this number
+  problem_repo = ProblemRepository()
+  problems_updated = problem_repo.update_max_points_bulk(
+    session_id, problem_number, max_points)
 
-    # Update all existing problems with this number
-    cursor.execute(
-      """
-            UPDATE problems
-            SET max_points = ?
-            WHERE session_id = ? AND problem_number = ?
-        """, (max_points, session_id, problem_number))
-
-    return {
-      "status": "updated",
-      "session_id": session_id,
-      "problem_number": problem_number,
-      "max_points": max_points,
-      "problems_updated": cursor.rowcount
-    }
+  return {
+    "status": "updated",
+    "session_id": session_id,
+    "problem_number": problem_number,
+    "max_points": max_points,
+    "problems_updated": problems_updated
+  }
 
 
 @router.get("/{session_id}/default-feedback/{problem_number}")
 async def get_default_feedback(session_id: int, problem_number: int):
   """Get default feedback for a specific problem number"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  metadata_repo = ProblemMetadataRepository()
+  feedback, threshold = metadata_repo.get_default_feedback(
+    session_id, problem_number)
 
-    cursor.execute(
-      """
-            SELECT default_feedback, default_feedback_threshold
-            FROM problem_metadata
-            WHERE session_id = ? AND problem_number = ?
-        """, (session_id, problem_number))
-
-    row = cursor.fetchone()
-    if row:
-      return {
-        "default_feedback": row["default_feedback"],
-        "default_feedback_threshold": row["default_feedback_threshold"]
-        or 100.0
-      }
-    else:
-      return {"default_feedback": None, "default_feedback_threshold": 100.0}
+  return {
+    "default_feedback": feedback,
+    "default_feedback_threshold": threshold if threshold is not None else 100.0
+  }
 
 
 @router.put("/{session_id}/default-feedback")
@@ -616,54 +459,33 @@ async def update_default_feedback(session_id: int,
                                   default_feedback: str = None,
                                   threshold: float = 100.0):
   """Update default feedback for a specific problem number"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  session_repo = SessionRepository()
+  if not session_repo.exists(session_id):
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    # Verify session exists
-    cursor.execute("SELECT id FROM grading_sessions WHERE id = ?",
-                   (session_id, ))
-    if not cursor.fetchone():
-      raise HTTPException(status_code=404, detail="Session not found")
+  metadata_repo = ProblemMetadataRepository()
+  metadata_repo.upsert_default_feedback(session_id, problem_number,
+                                        default_feedback, threshold)
 
-    # Update or create metadata
-    cursor.execute(
-      """
-            INSERT INTO problem_metadata (session_id, problem_number, default_feedback, default_feedback_threshold)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(session_id, problem_number)
-            DO UPDATE SET
-                default_feedback = excluded.default_feedback,
-                default_feedback_threshold = excluded.default_feedback_threshold,
-                updated_at = CURRENT_TIMESTAMP
-        """, (session_id, problem_number, default_feedback, threshold))
-
-    return {
-      "status": "updated",
-      "session_id": session_id,
-      "problem_number": problem_number,
-      "default_feedback": default_feedback,
-      "threshold": threshold
-    }
+  return {
+    "status": "updated",
+    "session_id": session_id,
+    "problem_number": problem_number,
+    "default_feedback": default_feedback,
+    "threshold": threshold
+  }
 
 
 @router.delete("/{session_id}")
 async def delete_session(session_id: int):
   """Delete a grading session and all associated data"""
-  with get_db_connection() as conn:
-    cursor = conn.cursor()
+  session_repo = SessionRepository()
+  deleted_count = session_repo.delete(session_id)
 
-    # Delete in order due to foreign keys
-    cursor.execute("DELETE FROM problems WHERE session_id = ?", (session_id, ))
-    cursor.execute("DELETE FROM problem_stats WHERE session_id = ?",
-                   (session_id, ))
-    cursor.execute("DELETE FROM submissions WHERE session_id = ?",
-                   (session_id, ))
-    cursor.execute("DELETE FROM grading_sessions WHERE id = ?", (session_id, ))
+  if deleted_count == 0:
+    raise HTTPException(status_code=404, detail="Session not found")
 
-    if cursor.rowcount == 0:
-      raise HTTPException(status_code=404, detail="Session not found")
-
-    return {"status": "deleted", "session_id": session_id}
+  return {"status": "deleted", "session_id": session_id}
 
 
 @router.get("/{session_id}/export")
