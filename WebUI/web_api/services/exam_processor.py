@@ -6,6 +6,7 @@ This service handles:
 - Student name extraction
 - Page shuffling and redaction
 """
+import pprint
 from typing import List, Tuple, Optional, Dict
 from pathlib import Path
 import logging
@@ -54,7 +55,7 @@ class ExamProcessor:
       "x": 350,
       "y": 0,
       "width": 250,
-      "height": 150
+      "height": 100
     }
     self.fitz_name_rect = fitz.Rect([
       self.name_rect["x"],
@@ -76,157 +77,6 @@ class ExamProcessor:
       log.warning(
         f"Unknown AI provider '{ai_provider}', defaulting to Anthropic")
       self.ai_helper_class = ai_helper.AI_Helper__Anthropic
-
-  def _report_progress(
-      self,
-      progress_callback: Optional[callable],
-      processed: int,
-      matched: int,
-      message: str
-  ):
-    """
-    Report progress via callback if provided.
-
-    Args:
-        progress_callback: Optional callback function
-        processed: Number of submissions processed
-        matched: Number of submissions matched
-        message: Progress message to display
-    """
-    if progress_callback:
-      progress_callback(processed=processed, matched=matched, message=message)
-
-  def _find_suggested_match(
-      self,
-      approximate_name: str,
-      unmatched_students: List[dict]
-  ) -> Tuple[Optional[dict], int]:
-    """
-    Find best fuzzy match for a name among unmatched students.
-
-    Args:
-        approximate_name: The extracted student name
-        unmatched_students: List of student dicts with name and user_id
-
-    Returns:
-        Tuple of (suggested_match, match_confidence)
-        suggested_match is None if no good match found
-    """
-    if not approximate_name or not unmatched_students:
-      return None, 0
-
-    best_score = 0
-    best_match = None
-
-    for student in unmatched_students:
-      score = fuzzywuzzy.fuzz.ratio(student["name"], approximate_name)
-      if score > best_score:
-        best_score = score
-        best_match = student
-
-    # Return suggestion only if meets threshold
-    if best_match and best_score >= NAME_SIMILARITY_THRESHOLD:
-      log.info(
-        f"  Suggested match: {best_match['name']} ({best_score}%) - requires confirmation"
-      )
-      return best_match, best_score
-    elif best_match:
-      log.warning(f"  Weak match suggestion: {best_match['name']} at {best_score}%")
-    else:
-      log.warning(f"  No match found for: {approximate_name}")
-
-    return None, 0
-
-  def _extract_problems(
-      self,
-      pdf_path: Path,
-      consensus_break_points: Optional[dict],
-      skip_first_region: bool,
-      last_page_blank: bool
-  ) -> Tuple[Optional[str], List[Dict]]:
-    """
-    Extract problems from PDF using either manual split points or page ranges.
-
-    Args:
-        pdf_path: Path to PDF file
-        page_ranges: Optional list of (start, end) page ranges
-        consensus_break_points: Optional dict of manual split points
-        problem_max_points: Dict mapping problem_number -> max_points
-        detect_blank: Whether to detect blank problems
-        blank_confidence_threshold: Threshold for blank detection
-        use_ai_for_borderline: Use AI for borderline cases
-        extract_max_points_enabled: Extract max points from images
-        skip_first_region: Skip first region (header)
-        last_page_blank: Skip last page
-
-    Returns:
-        Tuple of (pdf_data, problems)
-        pdf_data is base64 PDF (None for manual page ranges)
-        problems is list of problem dicts
-    """
-    # Use manual split points to extract problem regions
-    pdf_data, problems = self.redact_and_extract_regions(
-      pdf_path,
-      split_points=consensus_break_points,
-      skip_first_region=skip_first_region,
-      last_page_blank=last_page_blank)
-    return pdf_data, problems
-
-  def _build_submission_dict(
-      self, document_id: int,
-      approximate_name: str,
-      name_image: str,
-      suggested_match: Optional[dict],
-      page_mappings_by_submission: Optional[dict],
-      problems: List[Dict],
-      pdf_data: Optional[str],
-      pdf_path: Path,
-      file_metadata: Optional[Dict[Path, Dict]]
-  ) -> dict:
-    """
-    Build submission dictionary from extracted data.
-
-    Args:
-        document_id: Unique document ID
-        approximate_name: Extracted student name
-        name_image: Base64 image of name region
-        suggested_match: Suggested student match (if any)
-        page_mappings_by_submission: Page mappings for shuffled problems
-        problems: List of problem dicts
-        pdf_data: Base64 encoded PDF (None for manual page ranges)
-        pdf_path: Path to original PDF
-        file_metadata: Optional metadata about uploaded files
-
-    Returns:
-        Submission dictionary
-    """
-    return {
-      "document_id":
-      document_id,
-      "approximate_name":
-      approximate_name,
-      "name_image_data":
-      name_image,
-      "student_name":
-      None,  # No auto-matching - requires manual confirmation
-      "canvas_user_id":
-      None,  # No auto-matching - requires manual confirmation
-      "suggested_canvas_user_id":
-      suggested_match["user_id"] if suggested_match else None,
-      "page_mappings":
-      page_mappings_by_submission[document_id]
-      if page_mappings_by_submission else [],
-      "problems":
-      problems,
-      "pdf_data":
-      pdf_data,  # Base64 PDF (None for manual page ranges)
-      "file_hash":
-      file_metadata[pdf_path]["hash"]
-      if file_metadata and pdf_path in file_metadata else None,
-      "original_filename":
-      file_metadata[pdf_path]["original_filename"]
-      if file_metadata and pdf_path in file_metadata else pdf_path.name
-    }
   
   def process_exams(
       self,
@@ -298,7 +148,7 @@ class ExamProcessor:
       suggested_match, match_confidence = self._find_suggested_match(approximate_name, unmatched_students)
       
       # Extract problems from PDF
-      pdf_data, problems = self._extract_problems(
+      pdf_data, problems = self.redact_and_extract_regions(
         pdf_path,
         consensus_break_points,
         skip_first_region,
@@ -324,10 +174,129 @@ class ExamProcessor:
       else:
         unmatched_submissions.append(submission)
     
+    for submission in matched_submissions + unmatched_submissions:
+      log.info(f"There are {pprint.pformat(submission)}")
+    
     log.info(
       f"Matched: {len(matched_submissions)}, Unmatched: {len(unmatched_submissions)}"
     )
     return matched_submissions, unmatched_submissions
+  
+  def _report_progress(
+      self,
+      progress_callback: Optional[callable],
+      processed: int,
+      matched: int,
+      message: str
+  ):
+    """
+    Report progress via callback if provided.
+
+    Args:
+        progress_callback: Optional callback function
+        processed: Number of submissions processed
+        matched: Number of submissions matched
+        message: Progress message to display
+    """
+    if progress_callback:
+      progress_callback(processed=processed, matched=matched, message=message)
+
+  def _find_suggested_match(
+      self,
+      approximate_name: str,
+      unmatched_students: List[dict]
+  ) -> Tuple[Optional[dict], int]:
+    """
+    Find best fuzzy match for a name among unmatched students.
+
+    Args:
+        approximate_name: The extracted student name
+        unmatched_students: List of student dicts with name and user_id
+
+    Returns:
+        Tuple of (suggested_match, match_confidence)
+        suggested_match is None if no good match found
+    """
+    if not approximate_name or not unmatched_students:
+      return None, 0
+
+    best_score = 0
+    best_match = None
+
+    for student in unmatched_students:
+      score = fuzzywuzzy.fuzz.ratio(student["name"], approximate_name)
+      if score > best_score:
+        best_score = score
+        best_match = student
+
+    # Return suggestion only if meets threshold
+    if best_match and best_score >= NAME_SIMILARITY_THRESHOLD:
+      log.info(
+        f"  Suggested match: {best_match['name']} ({best_score}%) - requires confirmation"
+      )
+      return best_match, best_score
+    elif best_match:
+      log.warning(f"  Weak match suggestion: {best_match['name']} at {best_score}%")
+    else:
+      log.warning(f"  No match found for: {approximate_name}")
+
+    return None, 0
+ 
+  def _build_submission_dict(
+      self, document_id: int,
+      approximate_name: str,
+      name_image: str,
+      suggested_match: Optional[dict],
+      page_mappings_by_submission: Optional[dict],
+      problems: List[Dict],
+      pdf_data: Optional[str],
+      pdf_path: Path,
+      file_metadata: Optional[Dict[Path, Dict]]
+  ) -> dict:
+    """
+    Build submission dictionary from extracted data.
+
+    Args:
+        document_id: Unique document ID
+        approximate_name: Extracted student name
+        name_image: Base64 image of name region
+        suggested_match: Suggested student match (if any)
+        page_mappings_by_submission: Page mappings for shuffled problems
+        problems: List of problem dicts
+        pdf_data: Base64 encoded PDF (None for manual page ranges)
+        pdf_path: Path to original PDF
+        file_metadata: Optional metadata about uploaded files
+
+    Returns:
+        Submission dictionary
+    """
+    return {
+      "document_id":
+      document_id,
+      "approximate_name":
+      approximate_name,
+      "name_image_data":
+      name_image,
+      "student_name":
+      None,  # No auto-matching - requires manual confirmation
+      "canvas_user_id":
+      None,  # No auto-matching - requires manual confirmation
+      "suggested_canvas_user_id":
+      suggested_match["user_id"] if suggested_match else None,
+      "page_mappings":
+      page_mappings_by_submission[document_id]
+      if page_mappings_by_submission else [],
+      "problems":
+      problems,
+      "pdf_data":
+      pdf_data,  # Base64 PDF (None for manual page ranges)
+      "file_hash":
+      file_metadata[pdf_path]["hash"]
+      if file_metadata and pdf_path in file_metadata else None,
+      "original_filename":
+      file_metadata[pdf_path]["original_filename"]
+      if file_metadata and pdf_path in file_metadata else pdf_path.name
+    }
   
   def extract_name(
       self,
@@ -370,31 +339,6 @@ class ExamProcessor:
         f"AI name extraction failed (falling back to image only): {e}")
       # Return empty name but still include the image so user can manually match
       return "", name_image_base64
-
-  def redact_and_split(
-      self,
-      pdf_path: Path,
-      page_ranges: List[Tuple[int, int]]
-  ) -> List[fitz.Document]:
-    """Redact names and split PDF into problems."""
-    pdf_document = fitz.open(str(pdf_path))
-
-    # Redact first page name area
-    pdf_document[0].draw_rect(self.fitz_name_rect,
-                              color=(0, 0, 0),
-                              fill=(0, 0, 0))
-
-    # Split into problems based on page ranges
-    problem_pdfs = []
-    for start_page, end_page in page_ranges:
-      problem_pdf = fitz.open()
-      problem_pdf.insert_pdf(pdf_document,
-                             from_page=start_page,
-                             to_page=end_page)
-      problem_pdfs.append(problem_pdf)
-
-    pdf_document.close()
-    return problem_pdfs
 
   def _extract_cross_page_region(
       self,
@@ -984,281 +928,3 @@ class ExamProcessor:
     )
 
     return results
-
-  def is_blank_heuristic(
-      self,
-      image_base64: str,
-      num_bands: int = 20,
-      blank_threshold: float = 0.8,
-      clustering_method: str = "auto",
-      **kwargs
-  ) -> Dict:
-    """
-        Use band-based heuristics to determine if a problem image appears blank/unanswered.
-
-        This method divides the image into horizontal bands and analyzes the darkness
-        of each band to distinguish between:
-        - Printed question text (consistently dark bands at top)
-        - Handwritten answers (medium darkness in middle/bottom)
-        - Blank answer areas (light bands in middle/bottom)
-
-        Args:
-            image_base64: Base64 encoded image
-            num_bands: Number of horizontal bands to divide image into (default: 20)
-            blank_threshold: Fraction of answer bands that must be blank (default: 0.8 = 80%)
-            clustering_method: "2-group", "3-group", or "auto" (default: auto tries both)
-
-        Returns:
-            Dict with {is_blank: bool, confidence: float, band_count: int, ...}
-        """
-    import io
-    from PIL import Image
-    from sklearn.cluster import KMeans
-    from sklearn.metrics import silhouette_score, davies_bouldin_score
-
-    # Decode image
-    img_bytes = base64.b64decode(image_base64)
-    img = Image.open(io.BytesIO(img_bytes))
-
-    # Convert to grayscale
-    if img.mode != 'L':
-      img = img.convert('L')
-
-    # Apply minimal margins to avoid edge artifacts only
-    width, height = img.size
-    margin = 10  # Minimal margin
-    img = img.crop((margin, margin, width - margin, height - margin))
-
-    # Convert to numpy array
-    img_array = np.array(img)
-    height, width = img_array.shape
-
-    # Step 1: Divide into horizontal bands and analyze each
-    band_height = height // num_bands
-    band_stats = []
-
-    for i in range(num_bands):
-      start_y = i * band_height
-      end_y = start_y + band_height if i < num_bands - 1 else height
-      band = img_array[start_y:end_y, :]
-
-      # Calculate statistics for this band
-      median_darkness = np.median(band)
-      max_darkness = 255 - np.max(band)  # Invert: higher = darker
-      min_darkness = 255 - np.min(band)
-      darkness_range = max_darkness - (255 - median_darkness)
-
-      band_stats.append({
-        'index': i,
-        'median': median_darkness,
-        'max_darkness': max_darkness,
-        'darkness_range': darkness_range
-      })
-
-    # Step 2: Cluster bands by maximum darkness
-    max_darkness_values = np.array([b['max_darkness']
-                                    for b in band_stats]).reshape(-1, 1)
-
-    best_clustering = None
-    best_score = -np.inf
-    best_n_clusters = 2
-
-    # Try both 2 and 3 group clustering if auto mode
-    n_clusters_to_try = [2, 3] if clustering_method == "auto" else [
-      int(clustering_method.split('-')[0])
-    ]
-
-    for n_clusters in n_clusters_to_try:
-      if len(max_darkness_values) < n_clusters:
-        continue
-
-      try:
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        labels = kmeans.fit_predict(max_darkness_values)
-
-        # Evaluate clustering quality using silhouette score (higher is better)
-        # Need at least 2 distinct clusters for silhouette score
-        num_distinct_clusters = len(set(labels))
-        if num_distinct_clusters > 1:
-          score = silhouette_score(max_darkness_values, labels)
-          log.debug(
-            f"{n_clusters}-group clustering: silhouette score = {score:.3f}, distinct clusters = {num_distinct_clusters}"
-          )
-
-          if score > best_score:
-            best_score = score
-            best_clustering = labels
-            best_n_clusters = n_clusters
-        elif best_clustering is None:
-          # If we haven't found any valid clustering yet, use this one even with only 1 cluster
-          log.debug(
-            f"{n_clusters}-group clustering: only {num_distinct_clusters} distinct cluster(s) found, using as fallback"
-          )
-          best_clustering = labels
-          best_n_clusters = num_distinct_clusters
-      except Exception as e:
-        log.warning(f"Clustering with {n_clusters} groups failed: {e}")
-        continue
-
-    # Handle case where clustering completely failed
-    if best_clustering is None:
-      log.warning(
-        "All clustering attempts failed, treating all bands as single group (assuming blank)"
-      )
-      best_clustering = np.zeros(len(band_stats), dtype=int)
-      best_n_clusters = 1
-
-    # Assign cluster labels to bands
-    for i, label in enumerate(best_clustering):
-      band_stats[i]['cluster'] = label
-
-    # Log band clustering for debugging
-    log.debug(f"Band clustering results ({best_n_clusters} clusters):")
-    for i, band in enumerate(band_stats):
-      log.debug(
-        f"  Band {i}: max_darkness={band['max_darkness']:.1f}, cluster={band['cluster']}"
-      )
-
-    # Step 3: Identify question vs answer bands
-    # Question bands are in the darkest cluster and typically at the top
-    cluster_darkness = {}
-    for cluster_id in range(best_n_clusters):
-      cluster_bands = [b for b in band_stats if b['cluster'] == cluster_id]
-      if cluster_bands:
-        avg_darkness = np.mean([b['max_darkness'] for b in cluster_bands])
-        cluster_darkness[cluster_id] = avg_darkness
-
-    # Darkest cluster = question text
-    question_cluster = max(cluster_darkness.keys(),
-                           key=lambda k: cluster_darkness[k])
-
-    # Find where question area ends (last band in question cluster)
-    question_bands_indices = [
-      b['index'] for b in band_stats if b['cluster'] == question_cluster
-    ]
-    if question_bands_indices:
-      question_end = max(question_bands_indices)
-    else:
-      question_end = 0
-
-    # Answer bands are everything after the question area
-    answer_bands = [b for b in band_stats if b['index'] > question_end]
-
-    # Step 4: Classify answer bands as handwritten or blank
-    if not answer_bands:
-      # No answer area detected - consider blank
-      log.debug("No answer bands detected - marking as blank")
-      return {
-        "is_blank": True,
-        "confidence": 0.5,
-        "band_count": num_bands,
-        "question_bands": len(question_bands_indices),
-        "answer_bands": 0,
-        "blank_bands": 0,
-        "handwritten_bands": 0,
-        "cluster_method": f"{best_n_clusters}-group"
-      }
-
-    # Determine blank vs handwritten in answer area
-    if best_n_clusters == 3:
-      # With 3 clusters, we can potentially identify: dark (question), medium (handwriting), light (blank)
-      sorted_clusters = sorted(cluster_darkness.keys(),
-                               key=lambda k: cluster_darkness[k],
-                               reverse=True)
-      medium_cluster = sorted_clusters[1] if len(sorted_clusters) > 1 else None
-      light_cluster = sorted_clusters[2] if len(
-        sorted_clusters) > 2 else sorted_clusters[-1]
-
-      blank_bands = [b for b in answer_bands if b['cluster'] == light_cluster]
-      handwritten_bands = [
-        b for b in answer_bands if b['cluster'] == medium_cluster
-      ] if medium_cluster else []
-    else:
-      # With 2 clusters, non-question bands need further analysis
-      # Use intra-band analysis for borderline cases
-      blank_bands = []
-      handwritten_bands = []
-
-      for band in answer_bands:
-        # Apply intra-band analysis
-        is_blank_band = self._analyze_band_for_handwriting(
-          img_array, band['index'], band_height, height)
-        if is_blank_band:
-          blank_bands.append(band)
-        else:
-          handwritten_bands.append(band)
-
-    # Step 5: Final decision
-    blank_ratio = len(blank_bands) / len(answer_bands) if answer_bands else 1.0
-    is_blank = blank_ratio >= blank_threshold
-
-    # Confidence based on how clear the distinction is
-    confidence = abs(blank_ratio -
-                     0.5) * 2  # 0.5 = uncertain, 0 or 1 = certain
-    confidence = max(0.0, min(1.0, confidence))
-
-    log.info(
-      f"Band-based blank detection: is_blank={is_blank}, "
-      f"blank_ratio={blank_ratio:.2f}, confidence={confidence:.2f}, "
-      f"question_bands={len(question_bands_indices)}, answer_bands={len(answer_bands)}, "
-      f"blank_bands={len(blank_bands)}, handwritten_bands={len(handwritten_bands)}, "
-      f"cluster_method={best_n_clusters}-group, question_end={question_end}")
-
-    return {
-      "is_blank": is_blank,
-      "confidence": confidence,
-      "band_count": num_bands,
-      "question_bands": len(question_bands_indices),
-      "answer_bands": len(answer_bands),
-      "blank_bands": len(blank_bands),
-      "handwritten_bands": len(handwritten_bands),
-      "cluster_method": f"{best_n_clusters}-group"
-    }
-
-  def _analyze_band_for_handwriting(
-      self,
-      img_array: np.ndarray,
-      band_index: int,
-      band_height: int,
-      total_height: int
-  ) -> bool:
-    """
-        Analyze a single band for handwriting by looking at spatial variation.
-
-        Args:
-            img_array: Full image as numpy array
-            band_index: Index of the band to analyze
-            band_height: Height of each band in pixels
-            total_height: Total image height
-
-        Returns:
-            True if band appears blank, False if it has handwriting
-        """
-    start_y = band_index * band_height
-    end_y = min(start_y + band_height, total_height)
-    band = img_array[start_y:end_y, :]
-
-    # Divide band into horizontal sub-regions
-    num_segments = 10
-    band_width = band.shape[1]
-    segment_width = band_width // num_segments
-
-    segment_max_darkness = []
-    for i in range(num_segments):
-      start_x = i * segment_width
-      end_x = start_x + segment_width if i < num_segments - 1 else band_width
-      segment = band[:, start_x:end_x]
-
-      # Maximum darkness in this segment
-      max_dark = 255 - np.min(segment)  # Invert: higher = darker
-      segment_max_darkness.append(max_dark)
-
-    # If segments show high variation in darkness, it's likely handwriting
-    # Blank areas have uniform (low) darkness across segments
-    darkness_variance = np.var(segment_max_darkness)
-    mean_darkness = np.mean(segment_max_darkness)
-
-    # Thresholds: low variance + low mean = blank
-    is_blank = (darkness_variance < 100 and mean_darkness < 50)
-
-    return is_blank
