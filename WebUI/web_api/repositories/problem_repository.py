@@ -309,6 +309,64 @@ class ProblemRepository(BaseRepository[Problem]):
         WHERE id = ?
       """, (score, feedback, ai_reasoning, problem_id))
 
+  def mark_as_blank(self, problem_id: int, feedback: Optional[str] = None) -> None:
+    """
+    Mark problem as blank (manual detection).
+
+    Sets score to 0, graded to 1, is_blank to 1, and records manual blank method.
+
+    Args:
+      problem_id: Problem primary key
+      feedback: Optional grader feedback
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        UPDATE problems
+        SET score = 0,
+            feedback = ?,
+            graded = 1,
+            graded_at = CURRENT_TIMESTAMP,
+            is_blank = 1,
+            blank_method = 'manual',
+            blank_reasoning = 'Manually marked as blank by grader (dash in score field)'
+        WHERE id = ?
+      """, (feedback, problem_id))
+
+  def update_transcription(self, problem_id: int, transcription: str, model: str) -> None:
+    """
+    Cache transcription for a problem.
+
+    Args:
+      problem_id: Problem primary key
+      transcription: Transcribed text
+      model: Model name used for transcription
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        UPDATE problems
+        SET transcription = ?, transcription_model = ?, transcription_cached_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      """, (transcription, model, problem_id))
+
+  def update_qr_data(self, problem_id: int, max_points: float, encrypted_data: Optional[str] = None) -> None:
+    """
+    Update problem with QR code data.
+
+    Args:
+      problem_id: Problem primary key
+      max_points: Maximum points from QR code
+      encrypted_data: Encrypted QR data
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute("""
+        UPDATE problems
+        SET max_points = ?, qr_encrypted_data = ?
+        WHERE id = ?
+      """, (max_points, encrypted_data, problem_id))
+
   def get_counts_for_problem_number(self, session_id: int,
                                    problem_number: int) -> Dict[str, int]:
     """
@@ -380,6 +438,53 @@ class ProblemRepository(BaseRepository[Problem]):
           """,
           (session_id, problem_number)
         )
+
+  def get_graded_with_student_names(self, session_id: int, problem_number: int,
+                                     limit: int = 20, offset: int = 0) -> tuple[List[dict], int]:
+    """
+    Get graded problems with student names for review.
+
+    Returns problems joined with submission data for display.
+
+    Args:
+      session_id: Session primary key
+      problem_number: Problem number
+      limit: Max number of problems to return
+      offset: Pagination offset
+
+    Returns:
+      Tuple of (list of problem dicts with student_name, total count)
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+
+      # Get total count
+      cursor.execute("""
+        SELECT COUNT(*) as count
+        FROM problems
+        WHERE session_id = ? AND problem_number = ? AND graded = 1
+      """, (session_id, problem_number))
+
+      total_count = cursor.fetchone()["count"]
+
+      if total_count == 0:
+        return ([], 0)
+
+      # Get graded problems with student names
+      cursor.execute("""
+        SELECT p.*, s.student_name
+        FROM problems p
+        LEFT JOIN submissions s ON p.submission_id = s.id
+        WHERE p.session_id = ? AND p.problem_number = ? AND p.graded = 1
+        ORDER BY p.graded_at DESC
+        LIMIT ? OFFSET ?
+      """, (session_id, problem_number, limit, offset))
+
+      problems = []
+      for row in cursor.fetchall():
+        problems.append(dict(row))
+
+      return (problems, total_count)
 
   def delete_by_session(self, session_id: int) -> int:
     """
