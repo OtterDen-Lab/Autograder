@@ -422,14 +422,16 @@ async def submit_alignment(session_id: int, background_tasks: BackgroundTasks,
   }
 
 
-async def process_exam_files(session_id: int,
-                             file_paths: List[Path],
-                             file_metadata: Dict[Path, Dict],
-                             stream_id: str,
-                             manual_split_points: Dict[int, List[int]] = None,
-                             skip_first_region: bool = True,
-                             last_page_blank: bool = False,
-                             ai_provider: str = "anthropic"):
+async def process_exam_files(
+  session_id: int,
+  file_paths: List[Path],
+  file_metadata: Dict[Path, Dict],
+  stream_id: str,
+  manual_split_points: Dict[int, List[int]] = None,
+  skip_first_region: bool = True,
+  last_page_blank: bool = False,
+  ai_provider: str = "anthropic"
+):
   """
     Background task to process uploaded exam files.
 
