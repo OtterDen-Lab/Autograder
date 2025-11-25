@@ -401,6 +401,24 @@ class ProblemRepository(BaseRepository[Problem]):
         "ungraded_nonblank": row["ungraded_nonblank"] or 0
       }
 
+  def count_ungraded(self, session_id: int) -> int:
+    """
+    Count ungraded problems in session.
+
+    Args:
+      session_id: Session primary key
+
+    Returns:
+      Number of ungraded problems
+    """
+    with self._get_connection() as conn:
+      cursor = conn.cursor()
+      cursor.execute(
+        "SELECT COUNT(*) FROM problems WHERE session_id = ? AND graded = 0",
+        (session_id,)
+      )
+      return cursor.fetchone()[0]
+
   def get_all_for_problem_number(self, session_id: int,
                                  problem_number: int,
                                  graded_only: bool = False) -> List[Problem]:
