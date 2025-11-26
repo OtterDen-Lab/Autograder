@@ -27,6 +27,9 @@ import Autograder.ai_helper as ai_helper
 # Import QR scanner service
 from .qr_scanner import QRScanner
 
+# Import DTOs
+from ..dtos import SubmissionDTO, ProblemDTO
+
 log = logging.getLogger(__name__)
 
 NAME_SIMILARITY_THRESHOLD = 97  # Percentage threshold for fuzzy matching (exact match required)
@@ -88,7 +91,7 @@ class ExamProcessor:
       manual_split_points: Optional[Dict[int, List[int]]] = None,
       skip_first_region: bool = True,
       last_page_blank: bool = False
-  ) -> Tuple[List[Dict], List[Dict]]:
+  ) -> Tuple[List[SubmissionDTO], List[SubmissionDTO]]:
     """
         Process exam PDFs.
 
@@ -104,9 +107,10 @@ class ExamProcessor:
 
         Returns:
             Tuple of (matched_submissions, unmatched_submissions)
-            Each submission dict contains: document_id, student_name, canvas_user_id,
-            page_mappings, problems (list of {problem_number, image_base64, is_blank, blank_confidence}),
-            file_hash, original_filename
+            Each submission is a SubmissionDTO containing:
+            - document_id, student_name, canvas_user_id
+            - problems: List[ProblemDTO] with problem_number, image_base64, region_coords, is_blank, etc.
+            - file_hash, original_filename, pdf_data
         """
     log.info(f"Processing {len(input_files)} exams")
     
@@ -246,13 +250,13 @@ class ExamProcessor:
       name_image: str,
       suggested_match: Optional[dict],
       page_mappings_by_submission: Optional[dict],
-      problems: List[Dict],
+      problems: List[ProblemDTO],
       pdf_data: Optional[str],
       pdf_path: Path,
       file_metadata: Optional[Dict[Path, Dict]]
-  ) -> dict:
+  ) -> SubmissionDTO:
     """
-    Build submission dictionary from extracted data.
+    Build submission DTO from extracted data.
 
     Args:
         document_id: Unique document ID
@@ -260,41 +264,30 @@ class ExamProcessor:
         name_image: Base64 image of name region
         suggested_match: Suggested student match (if any)
         page_mappings_by_submission: Page mappings for shuffled problems
-        problems: List of problem dicts
+        problems: List of problem DTOs
         pdf_data: Base64 encoded PDF (None for manual page ranges)
         pdf_path: Path to original PDF
         file_metadata: Optional metadata about uploaded files
 
     Returns:
-        Submission dictionary
+        SubmissionDTO
     """
-    return {
-      "document_id":
-      document_id,
-      "approximate_name":
-      approximate_name,
-      "name_image_data":
-      name_image,
-      "student_name":
-      None,  # No auto-matching - requires manual confirmation
-      "canvas_user_id":
-      None,  # No auto-matching - requires manual confirmation
-      "suggested_canvas_user_id":
-      suggested_match["user_id"] if suggested_match else None,
-      "page_mappings":
-      page_mappings_by_submission[document_id]
+    return SubmissionDTO(
+      document_id=document_id,
+      approximate_name=approximate_name,
+      name_image_data=name_image,
+      student_name=None,  # No auto-matching - requires manual confirmation
+      canvas_user_id=None,  # No auto-matching - requires manual confirmation
+      suggested_canvas_user_id=suggested_match["user_id"] if suggested_match else None,
+      page_mappings=page_mappings_by_submission[document_id]
       if page_mappings_by_submission else [],
-      "problems":
-      problems,
-      "pdf_data":
-      pdf_data,  # Base64 PDF (None for manual page ranges)
-      "file_hash":
-      file_metadata[pdf_path]["hash"]
+      problems=problems,
+      pdf_data=pdf_data,  # Base64 PDF (None for manual page ranges)
+      file_hash=file_metadata[pdf_path]["hash"]
       if file_metadata and pdf_path in file_metadata else None,
-      "original_filename":
-      file_metadata[pdf_path]["original_filename"]
+      original_filename=file_metadata[pdf_path]["original_filename"]
       if file_metadata and pdf_path in file_metadata else pdf_path.name
-    }
+    )
   
   def extract_name(
       self,
@@ -516,7 +509,7 @@ class ExamProcessor:
       pdf_path: Path,
       split_points: Dict[int, List[int]],
       skip_first_region: bool = True,
-      last_page_blank: bool = False) -> Tuple[str, List[Dict]]:
+      last_page_blank: bool = False) -> Tuple[str, List[ProblemDTO]]:
     """
         Redact names and extract problem regions using manual split points.
         Returns PDF data once and region metadata for each problem.
@@ -733,45 +726,45 @@ class ExamProcessor:
       problem_image_base64, region_height = self._extract_cross_page_region(
         pdf_document, start_page, start_y, end_page, end_y)
 
-      # Initialize problem dict with region coordinates
-      problem_dict = {
-        "problem_number":
-        problem_number,
-        "page_number":
-        start_page,  # Start page for backwards compatibility
-        "region_y_start":
-        int(start_y),
-        "region_y_end":
-        int(end_y) if start_page == end_page else int(
+      # Build region coordinates dict
+      region_coords = {
+        "page_number": start_page,
+        "region_y_start": int(start_y),
+        "region_y_end": int(end_y) if start_page == end_page else int(
           pdf_document[start_page].rect.height),
-        "region_height":
-        region_height,
-        "is_blank":
-        False,
-        "blank_confidence":
-        0.0
+        "region_height": region_height,
       }
 
       # For cross-page problems, add end page info
       if end_page != start_page:
-        problem_dict["end_page_number"] = end_page
-        problem_dict["end_region_y"] = int(end_y)
+        region_coords["end_page_number"] = end_page
+        region_coords["end_region_y"] = int(end_y)
         log.info(
           f"Problem {problem_number} spans multiple pages: {start_page} to {end_page}"
         )
 
       # Check if we have pre-scanned QR data for this problem
       qr_data = qr_data_by_problem.get(problem_number)
+      max_points = None
 
       if qr_data:
         log.info(
           f"Problem {problem_number}: Using pre-scanned QR code data with max_points={qr_data['max_points']}"
         )
-        problem_dict["max_points"] = qr_data["max_points"]
-        problem_dict["qr_encrypted_data"] = qr_data.get(
-          "encrypted_data")  # Store encrypted string for answer regeneration
+        max_points = qr_data["max_points"]
+        # Note: qr_encrypted_data not included in DTO - will be handled separately if needed
 
-      problems.append(problem_dict)
+      # Create ProblemDTO
+      problem = ProblemDTO(
+        problem_number=problem_number,
+        image_base64=problem_image_base64,
+        region_coords=region_coords,
+        is_blank=False,
+        blank_confidence=0.0,
+        max_points=max_points
+      )
+
+      problems.append(problem)
       problem_number += 1
 
     pdf_document.close()

@@ -164,45 +164,6 @@ class FinalizationService:
 
     return submissions
 
-  def _extract_problem_image_from_pdf(self, pdf_base64: str, page_number: int,
-                                      region_y_start: int,
-                                      region_y_end: int) -> str:
-    """
-        Extract a problem image from stored PDF data using region coordinates.
-
-        Returns:
-            Base64 encoded PNG image of the problem region
-        """
-    # Decode PDF from base64
-    pdf_bytes = base64.b64decode(pdf_base64)
-    pdf_document = fitz.open("pdf", pdf_bytes)
-
-    # Get the page
-    page = pdf_document[page_number]
-
-    # Create region rectangle
-    region = fitz.Rect(0, region_y_start, page.rect.width, region_y_end)
-
-    # Extract region as new PDF page
-    problem_pdf = fitz.open()
-    problem_page = problem_pdf.new_page(width=region.width,
-                                        height=region.height)
-    problem_page.show_pdf_page(problem_page.rect,
-                               pdf_document,
-                               page_number,
-                               clip=region)
-
-    # Convert to PNG
-    pix = problem_page.get_pixmap(dpi=150)
-    img_bytes = pix.tobytes("png")
-    img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-    # Cleanup
-    problem_pdf.close()
-    pdf_document.close()
-
-    return img_base64
-
   def _create_annotated_pdf(self, submission: Dict) -> Path:
     """
         Create annotated PDF by adding score stickers to the original PDF.

@@ -111,7 +111,7 @@ async def get_submissions_by_ink_for_problem(session_id: int,
   import base64
   import json
   import fitz
-  from ..services.exam_processor import ExamProcessor
+  from ..services.problem_service import ProblemService
 
   log.info(
     f"Getting submissions for session {session_id}, problem {problem_number}, sorted by ink"
@@ -130,7 +130,7 @@ async def get_submissions_by_ink_for_problem(session_id: int,
   if not problems:
     return []
 
-  exam_processor = ExamProcessor()
+  problem_service = ProblemService()
   submissions_with_ink = []
 
   for problem in problems:
@@ -144,10 +144,11 @@ async def get_submissions_by_ink_for_problem(session_id: int,
     end_y = region_coords["region_y_end"]
 
     try:
-      problem_image_base64, _ = exam_processor._extract_cross_page_region(
-        fitz.open(stream=base64.b64decode(pdf_base64), filetype="pdf"),
+      problem_image_base64 = problem_service.extract_image_from_pdf_data(
+        pdf_base64,
         start_page,
         start_y,
+        end_y,
         end_page,
         end_y,
         dpi=150)

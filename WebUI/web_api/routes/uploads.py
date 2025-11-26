@@ -576,25 +576,25 @@ async def process_exam_files(
     with with_transaction() as repos:
       all_submissions_data = matched + unmatched
 
-      # Step 1: Convert submission dicts to domain objects
+      # Step 1: Convert submission DTOs to domain objects
       submissions_to_create = []
-      for sub_data in all_submissions_data:
+      for sub_dto in all_submissions_data:
         submission = Submission(
           id=0,  # Will be populated on create
           session_id=session_id,
-          document_id=sub_data["document_id"],
-          approximate_name=sub_data.get("approximate_name"),
-          name_image_data=sub_data.get("name_image_data"),
-          student_name=sub_data["student_name"],
+          document_id=sub_dto.document_id,
+          approximate_name=sub_dto.approximate_name,
+          name_image_data=sub_dto.name_image_data,
+          student_name=sub_dto.student_name,
           display_name=None,  # Not set during upload
-          canvas_user_id=sub_data["canvas_user_id"],
-          page_mappings=sub_data["page_mappings"],
-          file_hash=sub_data.get("file_hash"),
-          original_filename=sub_data.get("original_filename"),
-          exam_pdf_data=sub_data.get("pdf_data")
+          canvas_user_id=sub_dto.canvas_user_id,
+          page_mappings=sub_dto.page_mappings,
+          file_hash=sub_dto.file_hash,
+          original_filename=sub_dto.original_filename,
+          exam_pdf_data=sub_dto.pdf_data
         )
-        # Store problems temporarily for later processing
-        submission.problems = sub_data["problems"]
+        # Store problem DTOs temporarily for later processing
+        submission.problems = sub_dto.problems
         submissions_to_create.append(submission)
 
       # Step 2: Bulk create submissions (single transaction)
@@ -605,8 +605,8 @@ async def process_exam_files(
       max_points_to_upsert = {}  # {problem_number: max_points}
 
       for i, created_sub in enumerate(created_submissions):
-        for prob_data in submissions_to_create[i].problems:
-          problem_number = prob_data["problem_number"]
+        for prob_dto in submissions_to_create[i].problems:
+          problem_number = prob_dto.problem_number
 
           # Check if we have max_points from metadata
           existing_max = repos.metadata.get_max_points(session_id, problem_number)
@@ -614,25 +614,12 @@ async def process_exam_files(
             max_points = existing_max
           else:
             # Use extracted max_points and queue for upsert
-            max_points = prob_data.get("max_points")
+            max_points = prob_dto.max_points
             if max_points is not None:
               max_points_to_upsert[problem_number] = max_points
 
-          # Prepare region_coords dict
-          region_coords = None
-          if (prob_data.get("page_number") is not None
-              and prob_data.get("region_y_start") is not None
-              and prob_data.get("region_y_end") is not None):
-            region_coords = {
-              "page_number": prob_data["page_number"],
-              "region_y_start": prob_data["region_y_start"],
-              "region_y_end": prob_data["region_y_end"],
-              "region_height": prob_data.get("region_height")
-            }
-            # Add cross-page fields if present
-            if prob_data.get("end_page_number") is not None:
-              region_coords["end_page_number"] = prob_data["end_page_number"]
-              region_coords["end_region_y"] = prob_data["end_region_y"]
+          # Region coords are already a dict in the DTO
+          region_coords = prob_dto.region_coords
 
           # Create problem domain object
           problem = Problem(
@@ -641,10 +628,13 @@ async def process_exam_files(
             submission_id=created_sub.id,  # Now has real ID from bulk_create
             problem_number=problem_number,
             graded=False,
-            is_blank=prob_data.get("is_blank", False),
+            is_blank=prob_dto.is_blank,
+            blank_confidence=prob_dto.blank_confidence,
+            blank_method=prob_dto.blank_method,
+            blank_reasoning=prob_dto.blank_reasoning,
             max_points=max_points,
             region_coords=region_coords,
-            qr_encrypted_data=prob_data.get("qr_encrypted_data")
+            qr_encrypted_data=None  # Not stored in DTO currently
           )
           all_problems.append(problem)
 

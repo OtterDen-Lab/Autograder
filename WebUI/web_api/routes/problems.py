@@ -15,6 +15,7 @@ import fitz  # PyMuPDF
 from ..models import ProblemResponse, GradeSubmission
 from ..database import get_db_connection, update_problem_stats
 from ..repositories import ProblemRepository, SubmissionRepository
+from ..services.problem_service import ProblemService
 
 # Add parent to path for AI helper import
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -30,6 +31,9 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Create singleton problem service
+_problem_service = ProblemService()
+
 
 def extract_problem_image(pdf_data: str,
                           page_number: int,
@@ -40,6 +44,9 @@ def extract_problem_image(pdf_data: str,
   """
     Extract a problem image from stored PDF data using region coordinates.
     Supports cross-page regions.
+
+    DEPRECATED: Use ProblemService.extract_image_from_pdf_data() directly.
+    This function is kept for backwards compatibility.
 
     Args:
         pdf_data: Base64 encoded PDF
@@ -52,142 +59,13 @@ def extract_problem_image(pdf_data: str,
     Returns:
         Base64 encoded PNG image of the problem region
     """
-
-  # Decode PDF from base64
-  pdf_bytes = base64.b64decode(pdf_data)
-  pdf_document = fitz.open("pdf", pdf_bytes)
-
-  # Determine if this is a cross-page region
-  is_cross_page = (end_page_number is not None
-                   and end_page_number != page_number)
-
-  if not is_cross_page:
-    # Single page extraction (original logic)
-    page = pdf_document[page_number]
-    region = fitz.Rect(0, region_y_start, page.rect.width, region_y_end)
-
-    # Validate region is not empty
-    if region.is_empty or region.height <= 0:
-      img = Image.new('RGB', (int(page.rect.width), 1), color='white')
-      buffer = io.BytesIO()
-      img.save(buffer, format='PNG')
-      img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-      pdf_document.close()
-      return img_base64
-
-    # Extract region as new PDF page
-    problem_pdf = fitz.open()
-    problem_page = problem_pdf.new_page(width=region.width,
-                                        height=region.height)
-    problem_page.show_pdf_page(problem_page.rect,
-                               pdf_document,
-                               page_number,
-                               clip=region)
-
-    # Convert to PNG
-    pix = problem_page.get_pixmap(dpi=150)
-    img_bytes = pix.tobytes("png")
-    img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-    problem_pdf.close()
-    pdf_document.close()
-
-    return img_base64
-
-  else:
-    # Cross-page extraction - merge multiple pages
-    page_images = []
-    start_page = page_number
-    end_page = end_page_number
-    start_y = region_y_start
-    end_y = end_region_y
-
-    # Extract first page (from start_y to bottom)
-    first_page = pdf_document[start_page]
-    first_region = fitz.Rect(0, start_y, first_page.rect.width,
-                             first_page.rect.height)
-
-    if not first_region.is_empty and first_region.height > 0:
-      problem_pdf = fitz.open()
-      problem_page = problem_pdf.new_page(width=first_region.width,
-                                          height=first_region.height)
-      problem_page.show_pdf_page(problem_page.rect,
-                                 pdf_document,
-                                 start_page,
-                                 clip=first_region)
-
-      pix = problem_page.get_pixmap(dpi=150)
-      img_bytes = pix.tobytes("png")
-      img = Image.open(io.BytesIO(img_bytes))
-      page_images.append(img)
-      problem_pdf.close()
-
-    # Extract middle pages (full pages)
-    for page_num in range(start_page + 1, end_page):
-      page = pdf_document[page_num]
-      region = fitz.Rect(0, 0, page.rect.width, page.rect.height)
-
-      problem_pdf = fitz.open()
-      problem_page = problem_pdf.new_page(width=region.width,
-                                          height=region.height)
-      problem_page.show_pdf_page(problem_page.rect,
-                                 pdf_document,
-                                 page_num,
-                                 clip=region)
-
-      pix = problem_page.get_pixmap(dpi=150)
-      img_bytes = pix.tobytes("png")
-      img = Image.open(io.BytesIO(img_bytes))
-      page_images.append(img)
-      problem_pdf.close()
-
-    # Extract last page (from top to end_y)
-    last_page = pdf_document[end_page]
-    last_region = fitz.Rect(0, 0, last_page.rect.width, end_y)
-
-    if not last_region.is_empty and last_region.height > 0:
-      problem_pdf = fitz.open()
-      problem_page = problem_pdf.new_page(width=last_region.width,
-                                          height=last_region.height)
-      problem_page.show_pdf_page(problem_page.rect,
-                                 pdf_document,
-                                 end_page,
-                                 clip=last_region)
-
-      pix = problem_page.get_pixmap(dpi=150)
-      img_bytes = pix.tobytes("png")
-      img = Image.open(io.BytesIO(img_bytes))
-      page_images.append(img)
-      problem_pdf.close()
-
-    # Handle case where we have no images
-    if not page_images:
-      width = int(pdf_document[start_page].rect.width)
-      img = Image.new('RGB', (width, 1), color='white')
-      buffer = io.BytesIO()
-      img.save(buffer, format='PNG')
-      img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-      pdf_document.close()
-      return img_base64
-
-    # Merge images vertically
-    width = page_images[0].width
-    total_height = sum(img.height for img in page_images)
-
-    merged = Image.new('RGB', (width, total_height), color='white')
-    current_y = 0
-    for img in page_images:
-      merged.paste(img, (0, current_y))
-      current_y += img.height
-
-    # Convert to base64
-    buffer = io.BytesIO()
-    merged.save(buffer, format='PNG')
-    merged_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-
-    pdf_document.close()
-
-    return merged_base64
+  return _problem_service.extract_image_from_pdf_data(
+    pdf_base64=pdf_data,
+    page_number=page_number,
+    region_y_start=region_y_start,
+    region_y_end=region_y_end,
+    end_page_number=end_page_number,
+    end_region_y=end_region_y)
 
 
 def get_problem_image_data(problem, submission_repo: SubmissionRepository = None) -> str:
@@ -718,7 +596,6 @@ async def rescan_qr_for_single_problem(problem_id: int, dpi: int = 600):
     """
   # Import required modules
   from ..services.qr_scanner import QRScanner
-  from ..services.exam_processor import ExamProcessor
 
   log.info(f"Re-scanning QR code for problem ID {problem_id} at {dpi} DPI")
 
@@ -759,9 +636,8 @@ async def rescan_qr_for_single_problem(problem_id: int, dpi: int = 600):
   end_page = problem.region_coords.get("end_page_number", start_page)
   end_y = problem.region_coords["region_y_end"]
 
-  # Use ExamProcessor to extract the region at higher DPI
-  exam_processor = ExamProcessor()
-  problem_image_base64, _ = exam_processor._extract_cross_page_region(
+  # Use ProblemService to extract the region at higher DPI
+  problem_image_base64, _ = _problem_service.extract_image_from_document(
     pdf_document, start_page, start_y, end_page, end_y, dpi=dpi)
 
   # Scan for QR code

@@ -239,7 +239,8 @@ async def get_submission_problems(session_id: int, submission_id: int):
   problems_list = problem_repo.get_by_submission(submission_id)
 
   problems = []
-  exam_processor = ExamProcessor()
+  from ..services.problem_service import ProblemService
+  problem_service = ProblemService()
 
   for problem in problems_list:
     # Extract image from PDF using region coords
@@ -250,10 +251,11 @@ async def get_submission_problems(session_id: int, submission_id: int):
     end_y = region_coords["region_y_end"]
 
     try:
-      problem_image_base64, _ = exam_processor._extract_cross_page_region(
-        fitz.open(stream=base64.b64decode(pdf_base64), filetype="pdf"),
+      problem_image_base64 = problem_service.extract_image_from_pdf_data(
+        pdf_base64,
         start_page,
         start_y,
+        end_y,
         end_page,
         end_y,
         dpi=150)
@@ -798,9 +800,10 @@ async def rescan_qr_codes(session_id: int, dpi: int = 600):
       end_page = region_coords.get("end_page_number", start_page)
       end_y = region_coords["region_y_end"]
 
-      # Use ExamProcessor to extract the region at higher DPI
-      exam_processor = ExamProcessor()
-      problem_image_base64, _ = exam_processor._extract_cross_page_region(
+      # Use ProblemService to extract the region at higher DPI
+      from ..services.problem_service import ProblemService
+      problem_service = ProblemService()
+      problem_image_base64, _ = problem_service.extract_image_from_document(
         pdf_document, start_page, start_y, end_page, end_y, dpi=dpi)
 
       total_problems_scanned += 1
