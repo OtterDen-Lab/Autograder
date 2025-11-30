@@ -6,15 +6,13 @@ build-backend = "hatchling.build"
 name = "Otter-Autograder"
 version = "0.1.0"
 description = "A collection of tools for grading homework automatically"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {file = "LICENSE"}
 authors = [
     {name = "Sam Ogden", email = "samuel.s.ogden@gmail.com"},
 ]
-requires-python = ">=3.12"
-readme = "README.md"
-license = {file = "LICENSE"}
-
 keywords = ["education", "quiz", "canvas", "lms", "assessment", "teaching", "exam", "testing"]
-
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Education",
@@ -23,8 +21,6 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
 ]
-
-
 dependencies = [
     "python-dotenv==1.0.1",
     "PyYAML==6.0.1",
