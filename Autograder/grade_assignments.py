@@ -14,7 +14,7 @@ from typing import Optional, Dict, List
 
 import yaml
 
-from lms_interface.canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment, CanvasQuiz
+from Autograder.lms_interface.canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment, CanvasQuiz
 from Autograder.assignment import AssignmentRegistry
 from Autograder.grader import GraderRegistry
 from Autograder.registry import TypeRegistry
@@ -346,7 +346,7 @@ def collect_assignments_to_grade(config: Dict,
     log.info("Using new configuration format with assignment_types")
 
   # Create the LMS interface
-  lms_interface = CanvasInterface(prod=use_prod)
+  Autograder.lms_interface = CanvasInterface(prod=use_prod)
 
   assignments_to_grade = []
 
@@ -361,7 +361,7 @@ def collect_assignments_to_grade(config: Dict,
       raise SystemExit(1)
 
     # Create course object if found
-    course = lms_interface.get_course(course_id)
+    course = Autograder.lms_interface.get_course(course_id)
     log.info(f"Preparing to grade Course \"{course.name}\"")
 
     # Check if using new format (assignment_groups) or legacy format (assignments)
