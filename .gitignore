@@ -12,3 +12,4 @@ debug.tex
 .claude
 *.log
 records/
+dist/
