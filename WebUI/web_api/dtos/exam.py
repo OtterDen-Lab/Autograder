@@ -6,6 +6,10 @@ the data is persisted to the database.
 """
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict
+import base64
+import io
+from PIL import Image
+import numpy as np
 
 
 class ProblemDTO(BaseModel):
@@ -56,11 +60,91 @@ class ProblemDTO(BaseModel):
     """Set maximum points for this problem"""
     self.max_points = points
 
+  def get_image(self) -> Image.Image:
+    """
+    Get the problem image as a PIL Image object.
+
+    Returns:
+        PIL Image object in RGB mode
+
+    Example:
+        >>> problem = ProblemDTO(...)
+        >>> img = problem.get_image()
+        >>> pixels = np.array(img)
+        >>>  s = np.sum(pixels < 200)
+    """
+    img_bytes = base64.b64decode(self.image_base64)
+    img = Image.open(io.BytesIO(img_bytes))
+    # Ensure consistent format
+    if img.mode != 'RGB':
+      img = img.convert('RGB')
+    return img
+
+  def get_grayscale_image(self) -> Image.Image:
+    """
+    Get the problem image as a grayscale PIL Image.
+
+    Returns:
+        PIL Image object in 'L' (grayscale) mode
+
+    Example:
+        >>> problem = ProblemDTO(...)
+        >>> gray_img = problem.get_grayscale_image()
+        >>> pixels = np.array(gray_img)
+        >>> mean_intensity = pixels.mean()
+    """
+    img_bytes = base64.b64decode(self.image_base64)
+    img = Image.open(io.BytesIO(img_bytes))
+    return img.convert('L')
+
+  def get_image_array(self, grayscale: bool = False) -> np.ndarray:
+    """
+    Get the problem image as a numpy array.
+
+    Args:
+        grayscale: If True, return grayscale array (2D). If False, return RGB array (3D).
+
+    Returns:
+        Numpy array of pixel values
+
+    Example:
+        >>> problem = ProblemDTO(...)
+        >>> pixels = problem.get_image_array(grayscale=True)
+        >>> black_ratio = (pixels < 200).sum() / pixels.size
+    """
+    if grayscale:
+      return np.array(self.get_grayscale_image())
+    else:
+      return np.array(self.get_image())
+
+  def calculate_black_pixel_ratio(self, threshold: int = 200) -> float:
+    """
+    Calculate the ratio of "black" (dark) pixels in the image.
+
+    Args:
+        threshold: Pixel values below this are considered "black" (0-255, default 200)
+
+    Returns:
+        Ratio of black pixels (0.0 to 1.0)
+
+    Example:
+        >>> problem = ProblemDTO(...)
+        >>> ratio = problem.calculate_black_pixel_ratio()
+        >>> if ratio < 0.01:
+        ...     problem.mark_blank(0.95, "heuristic", f"Only {ratio:.4f} black pixels")
+    """
+    pixels = self.get_image_array(grayscale=True)
+    black_pixels = np.sum(pixels < threshold)
+    total_pixels = pixels.size
+    return black_pixels / total_pixels if total_pixels > 0 else 0.0
+
   class Config:
     # Allow mutation for in-place modifications during processing
     validate_assignment = True
     # Keep dict keys when dumping to JSON
     use_enum_values = True
+    # Allow arbitrary types (for caching PIL Images if needed)
+    arbitrary_types_allowed = True
 
 
 class SubmissionDTO(BaseModel):

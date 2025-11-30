@@ -15,6 +15,8 @@ import random
 import base64
 import collections
 import sys
+
+import PIL.ImageFilter
 import fitz  # PyMuPDF
 import fuzzywuzzy.fuzz
 import numpy as np
@@ -178,11 +180,81 @@ class ExamProcessor:
       else:
         unmatched_submissions.append(submission)
     
+    self.post_process_submissions(
+      matched_submissions + unmatched_submissions,
+      [self.identify_blanks]
+    )
     
     log.info(
       f"Matched: {len(matched_submissions)}, Unmatched: {len(unmatched_submissions)}"
     )
     return matched_submissions, unmatched_submissions
+  
+  @staticmethod
+  def identify_blanks(problem_number: int, problems: List[ProblemDTO]):
+    for p in problems:
+      hist = p.get_grayscale_image().convert("1").filter(PIL.ImageFilter.ModeFilter).histogram()
+      
+  
+  
+  def post_process_submissions(
+      self, submissions: List[SubmissionDTO],
+      operations: Optional[List[callable]] = None) -> None:
+    """
+    Apply post-processing operations to problems across all submissions.
+
+    This groups problems by problem_number and applies operations to each group.
+    Operations can analyze/modify problems across all submissions for statistical
+    analysis (e.g., population-based blank detection).
+
+    Args:
+        submissions: List of SubmissionDTO objects to process
+        operations: List of functions to apply. Each function receives:
+                   - problem_number: int
+                   - problems: List[ProblemDTO] (all instances of this problem)
+                   Example: lambda num, probs: apply_blank_detection(probs)
+
+    Example:
+        >>> def detect_blanks(problem_number: int, problems: List[ProblemDTO]):
+        ...     ratios = [p.calculate_black_pixel_ratio() for p in problems]
+        ...     threshold = np.percentile(ratios, 5)
+        ...     for i, problem in enumerate(problems):
+        ...         if ratios[i] < threshold:
+        ...             problem.mark_blank(0.95, "population", f"Ratio: {ratios[i]}")
+        >>>
+        >>> processor.post_process_submissions(submissions, [detect_blanks])
+    """
+    if not operations:
+      log.info("No post-processing operations specified")
+      return
+
+    # Group problems by problem number
+    problems_by_number: Dict[int, List[ProblemDTO]] = {}
+    for submission in submissions:
+      for problem in submission.problems:
+        if problem.problem_number not in problems_by_number:
+          problems_by_number[problem.problem_number] = []
+        problems_by_number[problem.problem_number].append(problem)
+
+    log.info(
+      f"Post-processing {len(problems_by_number)} unique problems across {len(submissions)} submissions"
+    )
+
+    # Apply each operation to each problem number
+    for problem_number in sorted(problems_by_number.keys()):
+      problem_list = problems_by_number[problem_number]
+      log.info(
+        f"Processing problem {problem_number}: {len(problem_list)} instances")
+
+      for operation in operations:
+        try:
+          operation(problem_number, problem_list)
+        except Exception as e:
+          log.error(
+            f"Error in post-processing operation for problem {problem_number}: {e}",
+            exc_info=True)
+
+    log.info("Post-processing complete")
   
   def _report_progress(
       self,
