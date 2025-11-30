@@ -51,7 +51,7 @@ grade-assignments = "Autograder.grade_assignments:main"
 
 
 [tool.hatch.build.targets.wheel]
-packages = ["Autograder", "WebUI"]
+packages = ["Autograder"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
