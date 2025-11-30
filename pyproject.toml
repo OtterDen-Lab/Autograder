@@ -3,13 +3,26 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "Autograder"
+name = "Otter-Autograder"
 version = "0.1.0"
-description = "A collection of tools for teaching and grading"
+description = "A collection of tools for grading homework automatically"
 authors = [
     {name = "Sam Ogden", email = "samuel.s.ogden@gmail.com"},
 ]
 requires-python = ">=3.12"
+readme = "README.md"
+license = {file = "LICENSE"}
+
+keywords = ["education", "quiz", "canvas", "lms", "assessment", "teaching", "exam", "testing"]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Education",
+    "Topic :: Education :: Testing",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
 
 
 dependencies = [
@@ -43,8 +56,10 @@ dev = [
 ]
 
 [project.urls]
-homepage = "https://github.com/OtterDen-Lab/Autograder"
-repository = "https://github.com/OtterDen-Lab/Autograder"
+Homepage = "https://github.com/OtterDen-Lab/Autograder"
+Documentation = "https://github.com/OtterDen-Lab/Autograder/tree/main/documentation"
+Repository = "https://github.com/OtterDen-Lab/Autograder"
+"Bug Tracker" = "https://github.com/OtterDen-Lab/Autograder/issues"
 
 [project.scripts]
 grade-assignments = "Autograder.grade_assignments:main"
