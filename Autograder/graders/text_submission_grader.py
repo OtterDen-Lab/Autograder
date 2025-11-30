@@ -17,7 +17,7 @@ from datetime import datetime
 from Autograder.grader import Grader
 from Autograder.registry import GraderRegistry
 from Autograder.assignment import Assignment
-from lms_interface.classes import Feedback, Submission, TextSubmission
+from Autograder.lms_interface.classes import Feedback, Submission, TextSubmission
 
 log = logging.getLogger(__name__)
 

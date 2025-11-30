@@ -3,58 +3,63 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "Autograder"
+name = "Otter-Autograder"
 version = "0.1.0"
-description = "A collection of tools for teaching and grading"
+description = "A collection of tools for grading homework automatically"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {file = "LICENSE"}
 authors = [
     {name = "Sam Ogden", email = "samuel.s.ogden@gmail.com"},
 ]
-requires-python = ">=3.12"
-
-
+keywords = ["education", "quiz", "canvas", "lms", "assessment", "teaching", "exam", "testing"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Education",
+    "Topic :: Education :: Testing",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
-    "Jinja2==3.1.3",
     "python-dotenv==1.0.1",
     "PyYAML==6.0.1",
     "requests==2.32.2",
     "pandas",
-    "pypandoc~=1.6.3",
-    "pytablewriter~=1.2.0",
-    "openai",
     "fuzzywuzzy",
     "python-Levenshtein>=0.21.0",
     "colorama",
-    "anthropic",
-    "pylatex>=1.4.2",
     "docker>=6.1.3",
     "pymupdf",
-    "lms-interface",
     "slack-sdk>=3.36.0",
     "scikit-learn",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.0.0",
-    "python-multipart>=0.0.6",
     "pillow>=10.0.0",
     "pyzbar>=0.1.9",
-    "cryptography>=41.0.0",
-    "aiosqlite>=0.19.0",
     "opencv-python>=4.8.0",
+    "openai",
+    "anthropic",
     "ollama>=0.6.0",
+    "canvasapi>=3.2.0",
 ]
-
-[tool.uv.sources]
-lms-interface = { path = "../LMSInterface" }
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.3",
-    "pytest-asyncio>=0.21.1",
     "httpx>=0.25.2",
-    "black>=23.12.0",
-    "flake8>=6.1.0",
-    "mypy>=1.7.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/OtterDen-Lab/Autograder"
+Documentation = "https://github.com/OtterDen-Lab/Autograder/tree/main/documentation"
+Repository = "https://github.com/OtterDen-Lab/Autograder"
+"Bug Tracker" = "https://github.com/OtterDen-Lab/Autograder/issues"
+
+[project.scripts]
+grade-assignments = "Autograder.grade_assignments:main"
+
 
 [tool.hatch.build.targets.wheel]
 packages = ["Autograder"]

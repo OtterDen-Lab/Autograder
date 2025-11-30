@@ -23,8 +23,8 @@ import pandas as pd
 import Autograder.ai_helper as ai_helper
 import Autograder.exceptions
 from Autograder.registry import AssignmentRegistry
-from lms_interface.canvas_interface import CanvasCourse, CanvasAssignment
-from lms_interface.classes import Student, Submission, Feedback
+from Autograder.lms_interface.canvas_interface import CanvasCourse, CanvasAssignment
+from Autograder.lms_interface.classes import Student, Submission, Feedback
 
 import logging
 import colorama

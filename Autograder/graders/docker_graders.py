@@ -18,7 +18,7 @@ from collections import defaultdict
 from typing import Tuple, Optional, List
 
 from Autograder.registry import GraderRegistry
-from lms_interface.classes import Feedback
+from Autograder.lms_interface.classes import Feedback
 from Autograder.docker_utils import DockerClient, DockerContainer, DockerError, DockerContainerManager
 import Autograder.exceptions
 from Autograder.grader import FileBasedGrader
