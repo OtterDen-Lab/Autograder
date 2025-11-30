@@ -623,7 +623,7 @@ class Grader__template_grader(Grader__docker):
         "RUN rm -rf uv.lock .venv",
         "RUN uv lock",
         "RUN uv sync",
-        "RUN chown -R dockeruser /repo",
+        # "RUN chown -fR dockeruser /repo",
         # "USER dockeruser",
       ])
 
