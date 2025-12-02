@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -55,68 +55,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/2e/00/0f6e8fcdb23ea632c
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/ed/e97229a566617f2ae958a6b13e7cc0f585470eac730a73e9e82c32a3cdd2/arrow-1.3.0-py3-none-any.whl", hash = "sha256:c728b120ebc00eb84e01882a6f5e7927a53960aa990ce7dd2b10f39005a67f80", size = 66419, upload-time = "2023-09-30T22:11:16.072Z" },
 ]
-
-[[package]]
-name = "autograder"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "anthropic" },
-    { name = "canvasapi" },
-    { name = "colorama" },
-    { name = "docker" },
-    { name = "fastapi" },
-    { name = "fuzzywuzzy" },
-    { name = "ollama" },
-    { name = "openai" },
-    { name = "opencv-python" },
-    { name = "pandas" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pymupdf" },
-    { name = "python-dotenv" },
-    { name = "python-levenshtein" },
-    { name = "pyyaml" },
-    { name = "pyzbar" },
-    { name = "requests" },
-    { name = "scikit-learn" },
-    { name = "slack-sdk" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "httpx" },
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic" },
-    { name = "canvasapi", specifier = ">=3.2.0" },
-    { name = "colorama" },
-    { name = "docker", specifier = ">=6.1.3" },
-    { name = "fastapi", specifier = ">=0.104.0" },
-    { name = "fuzzywuzzy" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.25.2" },
-    { name = "ollama", specifier = ">=0.6.0" },
-    { name = "openai" },
-    { name = "opencv-python", specifier = ">=4.8.0" },
-    { name = "pandas" },
-    { name = "pillow", specifier = ">=10.0.0" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pymupdf" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.3" },
-    { name = "python-dotenv", specifier = "==1.0.1" },
-    { name = "python-levenshtein", specifier = ">=0.21.0" },
-    { name = "pyyaml", specifier = "==6.0.1" },
-    { name = "pyzbar", specifier = ">=0.1.9" },
-    { name = "requests", specifier = "==2.32.2" },
-    { name = "scikit-learn" },
-    { name = "slack-sdk", specifier = ">=3.36.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "canvasapi"
@@ -508,6 +446,68 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/02/96/213fea371d3cb2f1d537612a105792aa0a6659fb2665b22cad709a75bd94/opencv_python-4.12.0.88-cp37-abi3-win32.whl", hash = "sha256:ff554d3f725b39878ac6a2e1fa232ec509c36130927afc18a1719ebf4fbf4357", size = 30284131, upload-time = "2025-07-07T09:14:08.819Z" },
     { url = "https://files.pythonhosted.org/packages/fa/80/eb88edc2e2b11cd2dd2e56f1c80b5784d11d6e6b7f04a1145df64df40065/opencv_python-4.12.0.88-cp37-abi3-win_amd64.whl", hash = "sha256:d98edb20aa932fd8ebd276a72627dad9dc097695b3d435a4257557bbb49a79d2", size = 39000307, upload-time = "2025-07-07T09:14:16.641Z" },
 ]
+
+[[package]]
+name = "otter-autograder"
+version = "0.1.1"
+source = { editable = "." }
+dependencies = [
+    { name = "anthropic" },
+    { name = "canvasapi" },
+    { name = "colorama" },
+    { name = "docker" },
+    { name = "fastapi" },
+    { name = "fuzzywuzzy" },
+    { name = "ollama" },
+    { name = "openai" },
+    { name = "opencv-python" },
+    { name = "pandas" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "pymupdf" },
+    { name = "python-dotenv" },
+    { name = "python-levenshtein" },
+    { name = "pyyaml" },
+    { name = "pyzbar" },
+    { name = "requests" },
+    { name = "scikit-learn" },
+    { name = "slack-sdk" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anthropic" },
+    { name = "canvasapi", specifier = ">=3.2.0" },
+    { name = "colorama" },
+    { name = "docker", specifier = ">=6.1.3" },
+    { name = "fastapi", specifier = ">=0.104.0" },
+    { name = "fuzzywuzzy" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.25.2" },
+    { name = "ollama", specifier = ">=0.6.0" },
+    { name = "openai" },
+    { name = "opencv-python", specifier = ">=4.8.0" },
+    { name = "pandas" },
+    { name = "pillow", specifier = ">=10.0.0" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pymupdf" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.3" },
+    { name = "python-dotenv", specifier = "==1.0.1" },
+    { name = "python-levenshtein", specifier = ">=0.21.0" },
+    { name = "pyyaml", specifier = "==6.0.1" },
+    { name = "pyzbar", specifier = ">=0.1.9" },
+    { name = "requests", specifier = "==2.32.2" },
+    { name = "scikit-learn" },
+    { name = "slack-sdk", specifier = ">=3.36.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "packaging"
