@@ -621,7 +621,7 @@ class Grader__template_grader(Grader__docker):
         "WORKDIR /repo",
         "RUN rm -rf .venv",
         "RUN rm -rf uv.lock .venv",
-        "RUN uv lock",
+        # "RUN uv lock",
         "RUN uv sync",
         # "RUN chown -fR dockeruser /repo",
         # "USER dockeruser",
@@ -631,6 +631,8 @@ class Grader__template_grader(Grader__docker):
       with open(os.path.join(temp_build_dir, "Dockerfile"),
                 "w") as dockerfile_fid:
         dockerfile_fid.write('\n'.join(dockerfile_lines) + "\n")
+        
+      # input(f"Waiting at {temp_build_dir}")
 
       image = self.docker_client.build_image_from_context(
         context_path=temp_build_dir,

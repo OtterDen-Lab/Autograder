@@ -223,15 +223,9 @@ class Assignment__ProgrammingAssignment(Assignment):
   Assignment for programming assignment grading, where prepare will download files and finalize will upload feedback.
   Will hopefully be run automatically.
   """
-
-  allowed_filenames = ["student_code"]
-
+  
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
-    # Allow overriding the default allowed filenames
-    self.allowed_filenames = kwargs.get("allowed_filenames",
-                                        self.__class__.allowed_filenames)
-    log.debug(f"Using allowed_filenames: {self.allowed_filenames}")
 
   def prepare(self,
               *args,
@@ -262,21 +256,21 @@ class Assignment__ProgrammingAssignment(Assignment):
       log.info("Regrade mode: processing all submissions regardless of status")
 
     # If a student changed the filename, try to fix it automatically.
-    for submission in self.submissions:
-      for f in submission.files:
-        if f.name not in self.allowed_filenames:
-          # Then we'll need to try to match it.
-          new_name = max(self.allowed_filenames,
-                         key=(lambda s: fuzzywuzzy.fuzz.ratio(s, f.name)))
-
-          # If we have a suffix, use it to rename -- otherwise take the original final name
-          if pathlib.Path(new_name).suffix == "":
-            new_name = f"{new_name}{pathlib.Path(f.name).suffix}"
-          else:
-            new_name = f"{new_name}"
-
-          log.info(f"Renaming {f.name} to {new_name}")
-          f.name = new_name
+    # for submission in self.submissions:
+    #   for f in submission.files:
+    #     if f.name not in self.allowed_filenames:
+    #       # Then we'll need to try to match it.
+    #       new_name = max(self.allowed_filenames,
+    #                      key=(lambda s: fuzzywuzzy.fuzz.ratio(s, f.name)))
+    #
+    #       # If we have a suffix, use it to rename -- otherwise take the original final name
+    #       if pathlib.Path(new_name).suffix == "":
+    #         new_name = f"{new_name}{pathlib.Path(f.name).suffix}"
+    #       else:
+    #         new_name = f"{new_name}"
+    #
+    #       log.info(f"Renaming {f.name} to {new_name}")
+    #       f.name = new_name
 
     log.info(f"Total students to grade: {len(self.submissions)}")
     if limit is not None:
