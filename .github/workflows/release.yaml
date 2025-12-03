@@ -1,63 +1,154 @@
-name: Release
+name: Release on version bump
 
 on:
   push:
-    tags:
-      # Publish on any tag starting with a `v`, e.g., v1.2.3
-      - v*
+    branches:
+      - main    # change this if your default branch is not "main"
 
 jobs:
-  build-and-publish:
-    name: Build and publish to PyPI
+  release:
     runs-on: ubuntu-latest
     environment:
-      name: pypi
+      name: pypi     # same environment you use for trusted publishing
     permissions:
-      id-token: write
-      contents: read
+      contents: write   # create tags & releases
+      id-token: write   # PyPI trusted publishing
+      actions: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # need history to read previous version
+
+      - name: Set up Python for tooling
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Get previous version (from parent commit)
+        id: prev_version
+        run: |
+          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            echo "version=" >> $GITHUB_OUTPUT
+          else
+            # Write previous pyproject.toml to a temp file
+            git show ${{ github.event.before }}:pyproject.toml > pyproject_prev.toml
+
+            python - << 'PY'
+            import tomllib, pathlib, os
+            prev = tomllib.loads(pathlib.Path("pyproject_prev.toml").read_text())
+            version = prev["project"]["version"]
+            print("previous version:", version)
+            with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                f.write(f"version={version}\n")
+            PY
+          fi
+
+      - name: Get current version
+        id: curr_version
+        run: |
+          python - << 'PY'
+          import tomllib, pathlib, os
+          curr = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          version = curr["project"]["version"]
+          print("current version:", version)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"version={version}\n")
+          PY
+
+      - name: Decide whether this is a release commit
+        id: decision
+        run: |
+          PREV="${{ steps.prev_version.outputs.version }}"
+          CURR="${{ steps.curr_version.outputs.version }}"
+          MSG="${{ github.event.head_commit.message }}"
+
+          echo "Previous version: '${PREV}'"
+          echo "Current version:  '${CURR}'"
+          echo "Commit message:   '${MSG}'"
+
+          SHOULD_RELEASE=false
+
+          # Require version change
+          if [ -n "$CURR" ] && [ "$CURR" != "$PREV" ]; then
+            # Require that the commit message looks like a release
+            if echo "$MSG" | grep -i "release" >/dev/null 2>&1; then
+              SHOULD_RELEASE=true
+            else
+              echo "Version changed but commit message does not contain 'release'; not releasing."
+            fi
+          else
+            echo "Version did not change; not releasing."
+          fi
+
+          echo "release=$SHOULD_RELEASE" >> $GITHUB_OUTPUT
+
+      # Everything below only runs if we decided this is a release
+      - name: Stop if not a release
+        if: steps.decision.outputs.release != 'true'
+        run: |
+          echo "Not a release commit; skipping release job."
+          exit 0
+
+      - name: Ensure tag does not already exist
+        if: steps.decision.outputs.release == 'true'
+        run: |
+          VERSION="${{ steps.curr_version.outputs.version }}"
+          TAG="v${VERSION}"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists. Aborting."
+            exit 1
+          fi
+
+      - name: Create and push tag
+        if: steps.decision.outputs.release == 'true'
+        run: |
+          VERSION="${{ steps.curr_version.outputs.version }}"
+          TAG="v${VERSION}"
+
+          echo "Creating tag $TAG at $GITHUB_SHA"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
 
       - name: Install uv
+        if: steps.decision.outputs.release == 'true'
         uses: astral-sh/setup-uv@v6
 
-      - name: Install Python 3.13
+      - name: Install Python 3.13 for build
+        if: steps.decision.outputs.release == 'true'
         run: uv python install 3.13
 
       - name: Build
+        if: steps.decision.outputs.release == 'true'
         run: uv build
 
       - name: Upload dist artifacts
+        if: steps.decision.outputs.release == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
 
       - name: Publish to PyPI
+        if: steps.decision.outputs.release == 'true'
         run: uv publish
 
-  github-release:
-    name: Create GitHub Release
-    needs: build-and-publish
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write   # needed to create a release & upload assets
-    steps:
-      - name: Download dist artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
       - name: Create GitHub Release
+        if: steps.decision.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}    # e.g. v1.2.3
-          name: ${{ github.ref_name }}
+          tag_name: v${{ steps.curr_version.outputs.version }}
+          name: v${{ steps.curr_version.outputs.version }}
           body: |
-            Release ${{ github.ref_name }}
+            Release v${{ steps.curr_version.outputs.version }}
 
-            - Built and published to PyPI.
+            - Version bumped in pyproject.toml
+            - Built with uv and published to PyPI.
             - Artifacts attached below.
           files: dist/*
