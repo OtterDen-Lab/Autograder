@@ -3,7 +3,13 @@ name: Release on version bump
 on:
   push:
     branches:
-      - main    # change this if your default branch is not "main"
+      - main    # change if your default branch is different
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force release of current version (skip version-change check)"
+        required: false
+        default: "false"
 
 jobs:
   release:
@@ -13,7 +19,6 @@ jobs:
     permissions:
       contents: write   # create tags & releases
       id-token: write   # PyPI trusted publishing
-      actions: read
 
     steps:
       - name: Checkout
@@ -24,33 +29,43 @@ jobs:
       - name: Set up Python for tooling
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
-      # 🔧 CHANGED: no here-doc, just python -c
       - name: Get previous version (from parent commit)
         id: prev_version
         run: |
-          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+          # For workflow_dispatch there may be no "before", so just leave empty
+          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ] || [ -z "${{ github.event.before }}" ]; then
             echo "version=" >> "$GITHUB_OUTPUT"
           else
-            git show ${{ github.event.before }}:pyproject.toml > pyproject_prev.toml
-
-            python -c "import tomllib, pathlib, os; \
-data = tomllib.loads(pathlib.Path('pyproject_prev.toml').read_text()); \
-version = data['project']['version']; \
-print('previous version:', version); \
-open(os.environ['GITHUB_OUTPUT'], 'a').write(f'version={version}\n')"
+            if git show ${{ github.event.before }}:pyproject.toml > pyproject_prev.toml 2>/dev/null; then
+              VERSION=$(python - << 'PY'
+import tomllib
+from pathlib import Path
+data = tomllib.loads(Path("pyproject_prev.toml").read_text())
+print(data["project"]["version"])
+PY
+)
+              echo "previous version: $VERSION"
+              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            else
+              echo "No previous pyproject.toml found; treating as first version."
+              echo "version=" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
-      # 🔧 CHANGED: no here-doc, just python -c
       - name: Get current version
         id: curr_version
         run: |
-          python -c "import tomllib, pathlib, os; \
-data = tomllib.loads(pathlib.Path('pyproject.toml').read_text()); \
-version = data['project']['version']; \
-print('current version:', version); \
-open(os.environ['GITHUB_OUTPUT'], 'a').write(f'version={version}\n')"
+          VERSION=$(python - << 'PY'
+import tomllib
+from pathlib import Path
+data = tomllib.loads(Path("pyproject.toml").read_text())
+print(data["project"]["version"])
+PY
+)
+          echo "current version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether this is a release commit
         id: decision
@@ -58,23 +73,36 @@ open(os.environ['GITHUB_OUTPUT'], 'a').write(f'version={version}\n')"
           PREV="${{ steps.prev_version.outputs.version }}"
           CURR="${{ steps.curr_version.outputs.version }}"
           MSG="${{ github.event.head_commit.message }}"
+          EVENT="${{ github.event_name }}"
+          FORCE_INPUT="${{ github.event.inputs.force }}"
 
-          echo "Previous version: '${PREV}'"
-          echo "Current version:  '${CURR}'"
-          echo "Commit message:   '${MSG}'"
+          echo "Event:            '$EVENT'"
+          echo "Previous version: '$PREV'"
+          echo "Current version:  '$CURR'"
+          echo "Commit message:   '$MSG'"
+          echo "Force input:      '$FORCE_INPUT'"
 
           SHOULD_RELEASE=false
 
-          # Require version change
-          if [ -n "$CURR" ] && [ "$CURR" != "$PREV" ]; then
-            # Require that the commit message looks like a release
-            if echo "$MSG" | grep -i "release" >/dev/null 2>&1; then
-              SHOULD_RELEASE=true
+          # 1) Manual force via workflow_dispatch
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$FORCE_INPUT" = "true" ]; then
+            echo "Manual workflow_dispatch with force=true; forcing release."
+            SHOULD_RELEASE=true
+
+          # 2) Normal path: push to main, version changed, and commit message contains 'release'
+          elif [ "$EVENT" = "push" ]; then
+            if [ -n "$CURR" ] && [ "$CURR" != "$PREV" ]; then
+              if echo "$MSG" | grep -qi "release"; then
+                echo "Version changed and commit message indicates release."
+                SHOULD_RELEASE=true
+              else
+                echo "Version changed but commit message does not contain 'release'; not releasing."
+              fi
             else
-              echo "Version changed but commit message does not contain 'release'; not releasing."
+              echo "Version did not change; not releasing."
             fi
           else
-            echo "Version did not change; not releasing."
+            echo "No release conditions met."
           fi
 
           echo "release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
@@ -82,7 +110,7 @@ open(os.environ['GITHUB_OUTPUT'], 'a').write(f'version={version}\n')"
       - name: Stop if not a release
         if: steps.decision.outputs.release != 'true'
         run: |
-          echo "Not a release commit; skipping release job."
+          echo "Not a release run; skipping remaining steps."
           exit 0
 
       - name: Ensure tag does not already exist
@@ -91,6 +119,7 @@ open(os.environ['GITHUB_OUTPUT'], 'a').write(f'version={version}\n')"
           VERSION="${{ steps.curr_version.outputs.version }}"
           TAG="v${VERSION}"
 
+          echo "Checking for existing tag $TAG"
           if git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "Tag $TAG already exists. Aborting."
             exit 1
