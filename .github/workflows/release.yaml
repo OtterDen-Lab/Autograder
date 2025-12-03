@@ -58,12 +58,12 @@ PY
         id: curr_version
         run: |
           VERSION=$(python - << 'PY'
-import tomllib
-from pathlib import Path
-data = tomllib.loads(Path("pyproject.toml").read_text())
-print(data["project"]["version"])
-PY
-)
+          import tomllib
+          from pathlib import Path
+          data = tomllib.loads(Path("pyproject.toml").read_text())
+          print(data["project"]["version"])
+          PY
+          )
           echo "current version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
