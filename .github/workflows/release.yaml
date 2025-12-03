@@ -9,7 +9,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     environment:
-      name: pypi     # same environment you use for trusted publishing
+      name: pypi
     permissions:
       contents: write   # create tags & releases
       id-token: write   # PyPI trusted publishing
@@ -26,36 +26,31 @@ jobs:
         with:
           python-version: '3.12'
 
+      # 🔧 CHANGED: no here-doc, just python -c
       - name: Get previous version (from parent commit)
         id: prev_version
         run: |
           if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-            echo "version=" >> $GITHUB_OUTPUT
+            echo "version=" >> "$GITHUB_OUTPUT"
           else
-            # Write previous pyproject.toml to a temp file
             git show ${{ github.event.before }}:pyproject.toml > pyproject_prev.toml
 
-            python - << 'PY'
-            import tomllib, pathlib, os
-            prev = tomllib.loads(pathlib.Path("pyproject_prev.toml").read_text())
-            version = prev["project"]["version"]
-            print("previous version:", version)
-            with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-                f.write(f"version={version}\n")
-            PY
+            python -c "import tomllib, pathlib, os; \
+data = tomllib.loads(pathlib.Path('pyproject_prev.toml').read_text()); \
+version = data['project']['version']; \
+print('previous version:', version); \
+open(os.environ['GITHUB_OUTPUT'], 'a').write(f'version={version}\n')"
           fi
 
+      # 🔧 CHANGED: no here-doc, just python -c
       - name: Get current version
         id: curr_version
         run: |
-          python - << 'PY'
-          import tomllib, pathlib, os
-          curr = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
-          version = curr["project"]["version"]
-          print("current version:", version)
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"version={version}\n")
-          PY
+          python -c "import tomllib, pathlib, os; \
+data = tomllib.loads(pathlib.Path('pyproject.toml').read_text()); \
+version = data['project']['version']; \
+print('current version:', version); \
+open(os.environ['GITHUB_OUTPUT'], 'a').write(f'version={version}\n')"
 
       - name: Decide whether this is a release commit
         id: decision
@@ -82,9 +77,8 @@ jobs:
             echo "Version did not change; not releasing."
           fi
 
-          echo "release=$SHOULD_RELEASE" >> $GITHUB_OUTPUT
+          echo "release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
 
-      # Everything below only runs if we decided this is a release
       - name: Stop if not a release
         if: steps.decision.outputs.release != 'true'
         run: |
