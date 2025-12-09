@@ -403,6 +403,7 @@ class Grader__docker(FileBasedGrader):
     with self:
       if files_to_copy is not None:
         self.add_files_to_docker(files_to_copy)
+      # input(f"Waiting on container {self.container}")
       return super().grade_submission(submission, *args, **kwargs)
 
 
@@ -549,7 +550,7 @@ class Grader__template_grader(Grader__docker):
 
             # We need to provide a target file path, not just directory
             # The Docker copy will handle creating directories
-            target_file_path = target_directory  #os.path.join(target_directory, target_name)
+            target_file_path = os.path.join(target_directory, target_name)
 
             files_to_copy.append((file_obj, target_file_path))
             matched_this_file = True
