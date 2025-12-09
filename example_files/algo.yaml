@@ -18,29 +18,25 @@ courses:
         type: programming
         settings:
           base_image_name: "samogden/cst334"
-          source_repo: "https://github.com/ImagineWagons8487/CST370_AutoGrader"
+          source_repo: "/Users/ssogden/scratch/autograder/CST370_AutoGrader"
 
         extra_dockerfile_lines:
-          - "ENV DEBIAN_FRONTEND=noninteractive"
-          - "RUN apt update -y"
-          - "RUN apt install -y clang"
-          - "RUN apt install -y openjdk-21-jdk"
-          - "RUN apt install -y make"
-
+          - "RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y clang openjdk-21-jdk make && rm -rf /var/lib/apt/lists/*"
+          
         student_code_path: "src"
 
         file_paths:
           '.*_1.*\.java':
-            path: "" # subdir within assignment folder
+            path: "hw3_1_grading/src" # subdir within assignment folder
             name: "hw3_1.java" # target filename, will force to change into this
           '.*_2.*\.java':
-            path: ""
+            path: "hw3_2_grading/src"
             name: "hw3_2.java"
           '.*_1.*\.cpp':
-            path: ""
+            path: "hw3_1_grading/src"
             name: "hw3_1.cpp"
           '.*_2.*\.cpp':
-            path: ""
+            path: "hw3_2_grading/src"
             name: "hw3_2.cpp"
 
         assignments:
