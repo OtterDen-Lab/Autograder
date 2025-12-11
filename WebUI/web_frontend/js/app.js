@@ -510,6 +510,60 @@ function setupEventListeners() {
             btn.textContent = originalText;
         }
     };
+
+    // Re-scan QR codes button
+    document.getElementById('rescan-qr-btn').onclick = async () => {
+        if (!currentSession) return;
+
+        if (!confirm(`Re-scan QR codes for all problems in this session?\n\nThis will:\n• Use progressive DPI (150→300→600→900) for optimal speed/quality\n• Extract QR codes from problem images\n• Update max_points from QR data\n• Enable "Show Answer" and explanation features\n\nThis may take several minutes for large sessions.`)) {
+            return;
+        }
+
+        const btn = document.getElementById('rescan-qr-btn');
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '⏳ Scanning...';
+
+        try {
+            const response = await fetch(`${API_BASE}/sessions/${currentSession.id}/rescan-qr`, {
+                method: 'POST'
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Failed to rescan QR codes');
+            }
+
+            const result = await response.json();
+
+            btn.disabled = false;
+            btn.textContent = originalText;
+
+            // Format DPI stats
+            const dpiStats = result.dpi_stats || {};
+            const dpiBreakdown = `DPI breakdown:\n` +
+                `  150 DPI: ${dpiStats[150] || 0} QR codes\n` +
+                `  300 DPI: ${dpiStats[300] || 0} QR codes\n` +
+                `  600 DPI: ${dpiStats[600] || 0} QR codes\n` +
+                `  900 DPI: ${dpiStats[900] || 0} QR codes`;
+
+            alert(`QR code rescan complete!\n\n` +
+                  `Submissions scanned: ${result.total_submissions}\n` +
+                  `Problems scanned: ${result.total_problems_scanned}\n` +
+                  `QR codes found: ${result.qr_codes_found}\n` +
+                  `Problems updated: ${result.problems_updated}\n\n` +
+                  dpiBreakdown);
+
+            // Refresh stats display
+            showStatistics();
+
+        } catch (error) {
+            console.error('Error rescanning QR codes:', error);
+            alert(`Failed to rescan QR codes: ${error.message}`);
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    };
 }
 
 // Load courses from Canvas

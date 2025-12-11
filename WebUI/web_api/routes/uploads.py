@@ -634,7 +634,7 @@ async def process_exam_files(
             blank_reasoning=prob_dto.blank_reasoning,
             max_points=max_points,
             region_coords=region_coords,
-            qr_encrypted_data=None  # Not stored in DTO currently
+            qr_encrypted_data=prob_dto.qr_encrypted_data  # Include QR data from DTO
           )
           all_problems.append(problem)
 

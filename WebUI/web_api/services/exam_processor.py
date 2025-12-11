@@ -818,13 +818,14 @@ class ExamProcessor:
       # Check if we have pre-scanned QR data for this problem
       qr_data = qr_data_by_problem.get(problem_number)
       max_points = None
+      qr_encrypted_data = None
 
       if qr_data:
         log.info(
           f"Problem {problem_number}: Using pre-scanned QR code data with max_points={qr_data['max_points']}"
         )
         max_points = qr_data["max_points"]
-        # Note: qr_encrypted_data not included in DTO - will be handled separately if needed
+        qr_encrypted_data = qr_data.get("encrypted_data")
 
       # Create ProblemDTO
       problem = ProblemDTO(
@@ -833,7 +834,8 @@ class ExamProcessor:
         region_coords=region_coords,
         is_blank=False,
         blank_confidence=0.0,
-        max_points=max_points
+        max_points=max_points,
+        qr_encrypted_data=qr_encrypted_data
       )
 
       problems.append(problem)

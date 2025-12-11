@@ -32,6 +32,9 @@ class ProblemDTO(BaseModel):
   # Max points (may be extracted from QR code or set manually)
   max_points: Optional[float] = Field(default=None, description="Maximum points for this problem")
 
+  # QR code data (for answer regeneration)
+  qr_encrypted_data: Optional[str] = Field(default=None, description="Encrypted QR code data for answer regeneration")
+
   # Validation
   @validator('blank_confidence')
   def validate_blank_confidence(cls, v, values):

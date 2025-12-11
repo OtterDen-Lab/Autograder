@@ -515,14 +515,14 @@ async def regenerate_answer(problem_id: int):
     raise HTTPException(status_code=400,
                         detail="QR code data not available for this problem")
 
-  # Import QuizGeneration regeneration function
+  # Import QuizGenerator regeneration function
   try:
-    from grade_from_qr import regenerate_from_encrypted
+    from QuizGenerator.regenerate import regenerate_from_encrypted
   except ImportError:
     raise HTTPException(
       status_code=500,
       detail=
-      "QuizGeneration module not available. Please install it to use answer regeneration."
+      "QuizGenerator module not available. Please install it (pip install QuizGenerator>=0.4.0) to use answer regeneration."
     )
 
   try:
@@ -530,7 +530,7 @@ async def regenerate_answer(problem_id: int):
     result = regenerate_from_encrypted(encrypted_data=problem.qr_encrypted_data,
                                        points=problem.max_points or 0.0)
 
-    # Extract metadata from result (returned by regenerate_from_encrypted)
+    # Extract metadata from result (returned by regenerate)
     question_type = result.get('question_type')
     seed = result.get('seed')
     version = result.get('version')
@@ -550,11 +550,11 @@ async def regenerate_answer(problem_id: int):
     # Prepare response
     response = {
       "problem_id": problem_id,
-      "problem_number": row["problem_number"],
+      "problem_number": problem.problem_number,
       "question_type": question_type,
       "seed": seed,
       "version": version,
-      "max_points": row["max_points"],
+      "max_points": problem.max_points,
       "answers": answers
     }
 
