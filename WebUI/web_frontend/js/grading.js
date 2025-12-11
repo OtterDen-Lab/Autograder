@@ -2304,8 +2304,15 @@ async function loadExplanation() {
 
     // Check cache first
     if (explanationCache[currentProblem.id]) {
-        content.innerHTML = explanationCache[currentProblem.id];
+        // Parse cached markdown to HTML
+        const htmlContent = marked.parse(explanationCache[currentProblem.id]);
+        content.innerHTML = htmlContent;
         container.style.display = 'block';
+
+        // Render MathJax if available
+        if (typeof MathJax !== 'undefined') {
+            MathJax.typesetPromise([content]).catch((err) => console.error('MathJax typesetting failed:', err));
+        }
         return;
     }
 
@@ -2325,11 +2332,14 @@ async function loadExplanation() {
         const data = await response.json();
 
         if (data.explanation_markdown) {
-            // Cache and display explanation
+            // Cache explanation
             explanationCache[currentProblem.id] = data.explanation_markdown;
-            content.innerHTML = data.explanation_markdown;
 
-            // Render MathJax if available
+            // Convert markdown to HTML using marked.js
+            const htmlContent = marked.parse(data.explanation_markdown);
+            content.innerHTML = htmlContent;
+
+            // Render MathJax if available (after markdown conversion)
             if (typeof MathJax !== 'undefined') {
                 MathJax.typesetPromise([content]).catch((err) => console.error('MathJax typesetting failed:', err));
             }
