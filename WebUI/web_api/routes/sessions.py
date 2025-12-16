@@ -81,7 +81,7 @@ async def get_session(session_id: int):
 async def update_session_status(session_id: int,
                                 status_update: SessionStatusChange):
   """Update session status (e.g., from name_matching_needed to ready)"""
-  from ..repositories import SessionRepository
+  from ..repositories import SessionRepository, ProblemRepository, FeedbackTagRepository
   from ..domain.common import SessionStatus as DomainSessionStatus
 
   repo = SessionRepository()
@@ -94,6 +94,29 @@ async def update_session_status(session_id: int,
   # Convert API enum to domain enum
   domain_status = DomainSessionStatus(status_update.status.value)
   repo.update_status(session_id, domain_status)
+
+  # If transitioning to 'ready', create default feedback tags for all problems
+  if domain_status == DomainSessionStatus.READY:
+    problem_repo = ProblemRepository()
+    tag_repo = FeedbackTagRepository()
+
+    # Get all distinct problem numbers in this session
+    problem_numbers = problem_repo.get_distinct_problem_numbers(session_id)
+
+    # Create default "Show work" tag for each problem
+    for problem_num in problem_numbers:
+      try:
+        tag_repo.create(
+          session_id=session_id,
+          problem_number=problem_num,
+          short_name="Show work",
+          comment_text="Please show your work, it helps me find partial credit."
+        )
+      except Exception as e:
+        # Tag might already exist (e.g., if re-importing session) - that's okay, skip it
+        import logging
+        log = logging.getLogger(__name__)
+        log.debug(f"Skipped creating default tag for problem {problem_num}: {e}")
 
   return {
     "status": "updated",
