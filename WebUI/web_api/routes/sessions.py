@@ -81,7 +81,7 @@ async def get_session(session_id: int):
 async def update_session_status(session_id: int,
                                 status_update: SessionStatusChange):
   """Update session status (e.g., from name_matching_needed to ready)"""
-  from ..repositories import SessionRepository
+  from ..repositories import SessionRepository, ProblemRepository, FeedbackTagRepository
   from ..domain.common import SessionStatus as DomainSessionStatus
 
   repo = SessionRepository()
@@ -94,6 +94,29 @@ async def update_session_status(session_id: int,
   # Convert API enum to domain enum
   domain_status = DomainSessionStatus(status_update.status.value)
   repo.update_status(session_id, domain_status)
+
+  # If transitioning to 'ready', create default feedback tags for all problems
+  if domain_status == DomainSessionStatus.READY:
+    problem_repo = ProblemRepository()
+    tag_repo = FeedbackTagRepository()
+
+    # Get all distinct problem numbers in this session
+    problem_numbers = problem_repo.get_distinct_problem_numbers(session_id)
+
+    # Create default "Show work" tag for each problem
+    for problem_num in problem_numbers:
+      try:
+        tag_repo.create(
+          session_id=session_id,
+          problem_number=problem_num,
+          short_name="Show work",
+          comment_text="Please show your work, it helps me find partial credit."
+        )
+      except Exception as e:
+        # Tag might already exist (e.g., if re-importing session) - that's okay, skip it
+        import logging
+        log = logging.getLogger(__name__)
+        log.debug(f"Skipped creating default tag for problem {problem_num}: {e}")
 
   return {
     "status": "updated",
@@ -239,7 +262,8 @@ async def get_submission_problems(session_id: int, submission_id: int):
   problems_list = problem_repo.get_by_submission(submission_id)
 
   problems = []
-  exam_processor = ExamProcessor()
+  from ..services.problem_service import ProblemService
+  problem_service = ProblemService()
 
   for problem in problems_list:
     # Extract image from PDF using region coords
@@ -250,10 +274,11 @@ async def get_submission_problems(session_id: int, submission_id: int):
     end_y = region_coords["region_y_end"]
 
     try:
-      problem_image_base64, _ = exam_processor._extract_cross_page_region(
-        fitz.open(stream=base64.b64decode(pdf_base64), filetype="pdf"),
+      problem_image_base64 = problem_service.extract_image_from_pdf_data(
+        pdf_base64,
         start_page,
         start_y,
+        end_y,
         end_page,
         end_y,
         dpi=150)
@@ -728,20 +753,23 @@ async def set_encryption_key(encryption_key: str):
 
 
 @router.post("/{session_id}/rescan-qr")
-async def rescan_qr_codes(session_id: int, dpi: int = 600):
+async def rescan_qr_codes(session_id: int):
   """
-    Re-scan QR codes for all problems in a session at a specified DPI.
+    Re-scan QR codes for all problems in a session using progressive DPI.
     This is useful when the initial scan fails to detect QR codes.
+
+    Uses progressive DPI escalation (150, 300, 600, 900) - tries low DPI first
+    for speed, then increases only if needed for complex QR codes.
+    This matches the logic used during initial exam upload.
 
     Args:
         session_id: The session ID to re-scan
-        dpi: DPI to use for rendering (default 600, higher = better for complex QR codes)
 
     Returns:
         Statistics about QR codes found and updated
     """
   log = logging.getLogger(__name__)
-  log.info(f"Re-scanning QR codes for session {session_id} at {dpi} DPI")
+  log.info(f"Re-scanning QR codes for session {session_id} with progressive DPI")
 
   # Initialize QR scanner
   qr_scanner = QRScanner()
@@ -773,6 +801,7 @@ async def rescan_qr_codes(session_id: int, dpi: int = 600):
   total_problems_scanned = 0
   total_qr_codes_found = 0
   problems_updated = 0
+  dpi_stats = {150: 0, 300: 0, 600: 0, 900: 0}  # Track which DPI found QR codes
 
   for submission in submissions_with_pdf:
     pdf_base64 = submission.exam_pdf_data
@@ -798,20 +827,33 @@ async def rescan_qr_codes(session_id: int, dpi: int = 600):
       end_page = region_coords.get("end_page_number", start_page)
       end_y = region_coords["region_y_end"]
 
-      # Use ExamProcessor to extract the region at higher DPI
-      exam_processor = ExamProcessor()
-      problem_image_base64, _ = exam_processor._extract_cross_page_region(
-        pdf_document, start_page, start_y, end_page, end_y, dpi=dpi)
-
       total_problems_scanned += 1
 
-      # Scan for QR code
-      qr_data = qr_scanner.scan_qr_from_image(problem_image_base64)
+      # Use progressive DPI: start low (fast), increase only if needed
+      # This matches the logic in exam_processor.py
+      from ..services.problem_service import ProblemService
+      problem_service = ProblemService()
+
+      qr_data = None
+      for dpi in [150, 300, 600, 900]:
+        problem_image_base64, _ = problem_service.extract_image_from_document(
+          pdf_document, start_page, start_y, end_page, end_y, dpi=dpi)
+
+        # Try scanning at this resolution
+        qr_data = qr_scanner.scan_qr_from_image(problem_image_base64)
+        if qr_data:
+          if dpi > 150:
+            log.info(
+              f"Problem {problem.problem_number} (ID {problem.id}): Found QR code at {dpi} DPI (after trying lower resolutions)"
+            )
+          else:
+            log.info(
+              f"Problem {problem.problem_number} (ID {problem.id}): Found QR code at {dpi} DPI"
+            )
+          dpi_stats[dpi] += 1
+          break  # Found it, no need to try higher DPI
 
       if qr_data:
-        log.info(
-          f"Problem {problem.problem_number} (ID {problem.id}): Found QR code with max_points={qr_data['max_points']}"
-        )
         total_qr_codes_found += 1
 
         # Update problem with QR data
@@ -825,13 +867,14 @@ async def rescan_qr_codes(session_id: int, dpi: int = 600):
         problems_updated += 1
       else:
         log.debug(
-          f"Problem {problem.problem_number} (ID {problem.id}): No QR code found")
+          f"Problem {problem.problem_number} (ID {problem.id}): No QR code found at any DPI")
 
     pdf_document.close()
 
   log.info(
     f"QR re-scan complete: {total_qr_codes_found} codes found in {total_problems_scanned} problems across {total_submissions} submissions"
   )
+  log.info(f"DPI breakdown: 150={dpi_stats[150]}, 300={dpi_stats[300]}, 600={dpi_stats[600]}, 900={dpi_stats[900]}")
 
   return {
       "status":
@@ -844,8 +887,8 @@ async def rescan_qr_codes(session_id: int, dpi: int = 600):
       total_qr_codes_found,
       "problems_updated":
       problems_updated,
-      "dpi_used":
-      dpi,
+      "dpi_stats":
+      dpi_stats,
       "message":
-      f"Re-scanned {total_problems_scanned} problems at {dpi} DPI. Found {total_qr_codes_found} QR codes and updated {problems_updated} problems."
+      f"Re-scanned {total_problems_scanned} problems with progressive DPI. Found {total_qr_codes_found} QR codes and updated {problems_updated} problems."
     }

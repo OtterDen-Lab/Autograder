@@ -6,6 +6,7 @@ This service handles:
 - Student name extraction
 - Page shuffling and redaction
 """
+import pprint
 from typing import List, Tuple, Optional, Dict
 from pathlib import Path
 import logging
@@ -14,6 +15,8 @@ import random
 import base64
 import collections
 import sys
+
+import PIL.ImageFilter
 import fitz  # PyMuPDF
 import fuzzywuzzy.fuzz
 import numpy as np
@@ -26,6 +29,9 @@ import Autograder.ai_helper as ai_helper
 # Import QR scanner service
 from .qr_scanner import QRScanner
 
+# Import DTOs
+from ..dtos import SubmissionDTO, ProblemDTO
+
 log = logging.getLogger(__name__)
 
 NAME_SIMILARITY_THRESHOLD = 97  # Percentage threshold for fuzzy matching (exact match required)
@@ -37,9 +43,11 @@ class ExamProcessor:
     Can be used by both the web API and the original CLI.
     """
 
-  def __init__(self,
-               name_rect: Optional[dict] = None,
-               ai_provider: str = "anthropic"):
+  def __init__(
+      self,
+      name_rect: Optional[dict] = None,
+      ai_provider: str = "anthropic"
+  ):
     """
         Initialize exam processor.
 
@@ -52,7 +60,7 @@ class ExamProcessor:
       "x": 350,
       "y": 0,
       "width": 250,
-      "height": 150
+      "height": 100
     }
     self.fitz_name_rect = fitz.Rect([
       self.name_rect["x"],
@@ -74,281 +82,295 @@ class ExamProcessor:
       log.warning(
         f"Unknown AI provider '{ai_provider}', defaulting to Anthropic")
       self.ai_helper_class = ai_helper.AI_Helper__Anthropic
-
+  
   def process_exams(
       self,
       input_files: List[Path],
       canvas_students: List[dict],
-      page_ranges: Optional[List[Tuple[int, int]]] = None,
-      use_ai: bool = True,
-      detect_blank: bool = False,
-      blank_confidence_threshold: float = 0.8,
-      use_ai_for_borderline: bool = False,
       progress_callback: Optional[callable] = None,
       document_id_offset: int = 0,
       file_metadata: Optional[Dict[Path, Dict]] = None,
-      problem_max_points: Optional[Dict[int, float]] = None,
-      extract_max_points_enabled: bool = False,
       manual_split_points: Optional[Dict[int, List[int]]] = None,
       skip_first_region: bool = True,
-      last_page_blank: bool = False) -> Tuple[List[Dict], List[Dict]]:
+      last_page_blank: bool = False
+  ) -> Tuple[List[SubmissionDTO], List[SubmissionDTO]]:
     """
         Process exam PDFs.
 
         Args:
             input_files: List of PDF file paths
             canvas_students: List of student dicts with name and user_id
-            page_ranges: Optional list of (start, end) page ranges to merge
-            use_ai: bool Whether to use AI for name extraction
-            detect_blank: Whether to detect blank/unanswered problems
-            blank_confidence_threshold: Confidence threshold for using AI verification on blanks
-            use_ai_for_borderline: Whether to use AI for low-confidence blank detections
             progress_callback: Optional callback function(processed, matched, message) for progress updates
             document_id_offset: Starting document_id (useful when adding more exams to existing session)
             file_metadata: Optional dict mapping file_path -> {hash, original_filename}
-            problem_max_points: Optional dict mapping problem_number -> max_points
-            extract_max_points_enabled: Whether to extract max points from images
             manual_split_points: Optional dict mapping page_number -> list of y-positions for manual splits
             skip_first_region: Whether to skip the first region (header/title area) when splitting (default True)
             last_page_blank: Whether to skip the last page (common with odd-numbered page counts, default False)
 
         Returns:
             Tuple of (matched_submissions, unmatched_submissions)
-            Each submission dict contains: document_id, student_name, canvas_user_id,
-            page_mappings, problems (list of {problem_number, image_base64, is_blank, blank_confidence}),
-            file_hash, original_filename
+            Each submission is a SubmissionDTO containing:
+            - document_id, student_name, canvas_user_id
+            - problems: List[ProblemDTO] with problem_number, image_base64, region_coords, is_blank, etc.
+            - file_hash, original_filename, pdf_data
         """
     log.info(f"Processing {len(input_files)} exams")
-
-    # Shuffle PDFs
-    random.shuffle(input_files)
-
-    # Determine page ranges from first PDF
+    
+    # Early return if no files
     if not input_files:
       return [], []
-
-    first_pdf = fitz.open(str(input_files[0]))
-    num_pages = first_pdf.page_count
-    first_pdf.close()
-
-    # Handle page ranges and shuffling
-    use_auto_detection = (page_ranges is None)
-
-    if not use_auto_detection:
-      log.info(f"Using manual page ranges: {page_ranges}")
-
-      # Create shuffled page mappings
-      num_submissions = len(input_files)
-      num_problems = len(page_ranges)
-      page_mappings_by_submission = collections.defaultdict(list)
-
-      for problem_num in range(num_problems):
-        shuffled_order = random.sample(range(num_submissions),
-                                       k=num_submissions)
-        for submission_id, random_id in enumerate(shuffled_order):
-          page_mappings_by_submission[submission_id].append(random_id)
-    else:
-      log.info("Using manual split points for problem detection")
-      # No shuffling for manual split detection (all students get same order)
-      page_mappings_by_submission = None
-
-      # Manual split points are now required
-      if manual_split_points is None:
-        raise ValueError(
-          "Manual split points are required. Please use the alignment interface to specify split points."
-        )
-
-      log.info(
-        f"Using manual split points for {len(manual_split_points)} pages")
-      consensus_break_points = manual_split_points
-
-      total_consensus_breaks = sum(
-        len(breaks) for breaks in consensus_break_points.values())
-      log.info(
-        f"Using {total_consensus_breaks} manual split points across {len(consensus_break_points)} pages"
-      )
-
+    
+    # Set up page mappings and split points
+    page_mappings_by_submission = None
+    consensus_break_points = manual_split_points
+    
     # Process each PDF
     matched_submissions = []
     unmatched_submissions = []
     unmatched_students = canvas_students.copy()
-
+    
     for index, pdf_path in enumerate(input_files):
       document_id = index + document_id_offset
       log.info(
         f"Processing exam {index + 1}/{len(input_files)} (document_id={document_id}): {pdf_path.name}"
       )
-
+      
       # Report progress: starting exam
-      if progress_callback:
-        progress_callback(
-          processed=index,
-          matched=len(matched_submissions),
-          message=
-          f"Processing exam {index + 1}/{len(input_files)}: {pdf_path.name}")
-
+      self._report_progress(
+        progress_callback,
+        index,
+        len(matched_submissions),
+        f"Processing exam {index + 1}/{len(input_files)}: {pdf_path.name}"
+      )
+      
       # Extract name
       approximate_name, name_image = self.extract_name(
         pdf_path,
-        use_ai=use_ai,
-        student_names=[s["name"] for s in unmatched_students])
+        student_names=[s["name"] for s in unmatched_students]
+      )
       log.info(f"  Extracted name: {approximate_name}")
-
-      # Report progress: extracted name
-      if progress_callback:
-        progress_callback(
-          processed=index,
-          matched=len(matched_submissions),
-          message=
-          f"Processing exam {index + 1}/{len(input_files)}: Extracted name: {approximate_name}"
-        )
-
-      # Find best match to Canvas student (but always require manual confirmation)
-      suggested_match = None
-      match_confidence = 0
-      if approximate_name and unmatched_students:
-        best_score = 0
-        best_match = None
-
-        for student in unmatched_students:
-          score = fuzzywuzzy.fuzz.ratio(student["name"], approximate_name)
-          if score > best_score:
-            best_score = score
-            best_match = student
-
-        # Store suggestion for user confirmation (never auto-match)
-        if best_match and best_score >= NAME_SIMILARITY_THRESHOLD:
-          suggested_match = best_match
-          match_confidence = best_score
-          log.info(
-            f"  Suggested match: {suggested_match['name']} ({match_confidence}%) - requires confirmation"
-          )
-        elif best_match:
-          log.warning(
-            f"  Weak match suggestion: {best_match['name']} at {best_score}%")
-        else:
-          log.warning(f"  No match found for: {approximate_name}")
-
-      # Report progress: suggested match
-      if progress_callback:
-        match_msg = f"Suggested: {suggested_match['name']} ({match_confidence}%)" if suggested_match else "No match found"
-        progress_callback(
-          processed=index,
-          matched=len(
-            matched_submissions),  # No auto-matching, so this stays same
-          message=f"Processing exam {index + 1}/{len(input_files)}: {match_msg}"
-        )
-
-      # Report progress: splitting into problems
-      if progress_callback:
-        progress_callback(
-          processed=index,
-          matched=len(
-            matched_submissions),  # No auto-matching, so this stays same
-          message=
-          f"Processing exam {index + 1}/{len(input_files)}: Splitting into problems..."
-        )
-
-      # Redact and split into problems (use auto-detection if no page_ranges specified)
-      if page_ranges is None:
-        # Initialize problem_max_points dict if not provided (shared across all exams)
-        if problem_max_points is None:
-          problem_max_points = {}
-
-        # Use manual split points to extract problem regions
-        # Returns (pdf_base64, problems_list) where problems contain region metadata
-        pdf_data, problems = self.redact_and_extract_regions(
-          pdf_path,
-          split_points=consensus_break_points,
-          detect_blank=detect_blank,
-          blank_confidence_threshold=blank_confidence_threshold,
-          use_ai_for_borderline=use_ai_for_borderline,
-          problem_max_points=problem_max_points,
-          extract_max_points_enabled=extract_max_points_enabled,
-          skip_first_region=skip_first_region,
-          last_page_blank=last_page_blank)
-      else:
-        # Use manual page ranges (old path - still stores individual PNGs for backwards compatibility)
-        pdf_data = None  # For backwards compatibility with manual page ranges
-        problem_images = self.redact_and_split(pdf_path, page_ranges)
-
-        # Convert problem images to base64
-        problems = []
-        for problem_num, problem_doc in enumerate(problem_images):
-          # Convert PDF page to PNG
-          page = problem_doc[0]  # First (and only) page
-          pix = page.get_pixmap(dpi=150)
-          img_bytes = pix.tobytes("png")
-          img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-          problems.append({
-            "problem_number": problem_num + 1,
-            "image_base64": img_base64
-          })
-
-          problem_doc.close()
-
-      # Create submission dict (no auto-matching - always goes to unmatched for manual confirmation)
-      # But store the suggested match for pre-filling the dropdown
-      submission = {
-        "document_id":
+      
+      # Find suggested match
+      suggested_match, match_confidence = self._find_suggested_match(approximate_name, unmatched_students)
+      
+      # Extract problems from PDF
+      pdf_data, problems = self.redact_and_extract_regions(
+        pdf_path,
+        consensus_break_points,
+        skip_first_region,
+        last_page_blank
+      )
+      
+      # Build submission dict
+      submission = self._build_submission_dict(
         document_id,
-        "approximate_name":
         approximate_name,
-        "name_image_data":
         name_image,
-        "student_name":
-        None,  # No auto-matching - requires manual confirmation
-        "canvas_user_id":
-        None,  # No auto-matching - requires manual confirmation
-        "suggested_canvas_user_id":
-        suggested_match["user_id"]
-        if suggested_match else None,  # Pre-fill suggestion
-        "page_mappings":
-        page_mappings_by_submission[document_id]
-        if page_mappings_by_submission else [],
-        "problems":
+        suggested_match,
+        page_mappings_by_submission,
         problems,
-        "pdf_data":
-        pdf_data,  # Base64 PDF (None for manual page ranges)
-        "file_hash":
-        file_metadata[pdf_path]["hash"]
-        if file_metadata and pdf_path in file_metadata else None,
-        "original_filename":
-        file_metadata[pdf_path]["original_filename"]
-        if file_metadata and pdf_path in file_metadata else pdf_path.name
-      }
-
-      # Always add to unmatched (no auto-matching, requires manual confirmation)
-      unmatched_submissions.append(submission)
-
-      # Report progress: completed exam
-      if progress_callback:
-        progress_callback(
-          processed=index + 1,
-          matched=len(matched_submissions),
-          message=
-          f"Completed exam {index + 1}/{len(input_files)} ({len(matched_submissions)} matched, {len(unmatched_submissions)} need matching)"
-        )
-
+        pdf_data,
+        pdf_path,
+        file_metadata
+      )
+      
+      # If above threshold, add to matched list
+      if match_confidence > NAME_SIMILARITY_THRESHOLD:
+        matched_submissions.append(submission)
+      else:
+        unmatched_submissions.append(submission)
+    
+    self.post_process_submissions(
+      matched_submissions + unmatched_submissions,
+      [self.identify_blanks]
+    )
+    
     log.info(
       f"Matched: {len(matched_submissions)}, Unmatched: {len(unmatched_submissions)}"
     )
     return matched_submissions, unmatched_submissions
+  
+  @staticmethod
+  def identify_blanks(problem_number: int, problems: List[ProblemDTO]):
+    for p in problems:
+      hist = p.get_grayscale_image().convert("1").filter(PIL.ImageFilter.ModeFilter).histogram()
+      
+  
+  
+  def post_process_submissions(
+      self, submissions: List[SubmissionDTO],
+      operations: Optional[List[callable]] = None) -> None:
+    """
+    Apply post-processing operations to problems across all submissions.
 
+    This groups problems by problem_number and applies operations to each group.
+    Operations can analyze/modify problems across all submissions for statistical
+    analysis (e.g., population-based blank detection).
+
+    Args:
+        submissions: List of SubmissionDTO objects to process
+        operations: List of functions to apply. Each function receives:
+                   - problem_number: int
+                   - problems: List[ProblemDTO] (all instances of this problem)
+                   Example: lambda num, probs: apply_blank_detection(probs)
+
+    Example:
+        >>> def detect_blanks(problem_number: int, problems: List[ProblemDTO]):
+        ...     ratios = [p.calculate_black_pixel_ratio() for p in problems]
+        ...     threshold = np.percentile(ratios, 5)
+        ...     for i, problem in enumerate(problems):
+        ...         if ratios[i] < threshold:
+        ...             problem.mark_blank(0.95, "population", f"Ratio: {ratios[i]}")
+        >>>
+        >>> processor.post_process_submissions(submissions, [detect_blanks])
+    """
+    if not operations:
+      log.info("No post-processing operations specified")
+      return
+
+    # Group problems by problem number
+    problems_by_number: Dict[int, List[ProblemDTO]] = {}
+    for submission in submissions:
+      for problem in submission.problems:
+        if problem.problem_number not in problems_by_number:
+          problems_by_number[problem.problem_number] = []
+        problems_by_number[problem.problem_number].append(problem)
+
+    log.info(
+      f"Post-processing {len(problems_by_number)} unique problems across {len(submissions)} submissions"
+    )
+
+    # Apply each operation to each problem number
+    for problem_number in sorted(problems_by_number.keys()):
+      problem_list = problems_by_number[problem_number]
+      log.info(
+        f"Processing problem {problem_number}: {len(problem_list)} instances")
+
+      for operation in operations:
+        try:
+          operation(problem_number, problem_list)
+        except Exception as e:
+          log.error(
+            f"Error in post-processing operation for problem {problem_number}: {e}",
+            exc_info=True)
+
+    log.info("Post-processing complete")
+  
+  def _report_progress(
+      self,
+      progress_callback: Optional[callable],
+      processed: int,
+      matched: int,
+      message: str
+  ):
+    """
+    Report progress via callback if provided.
+
+    Args:
+        progress_callback: Optional callback function
+        processed: Number of submissions processed
+        matched: Number of submissions matched
+        message: Progress message to display
+    """
+    if progress_callback:
+      progress_callback(processed=processed, matched=matched, message=message)
+
+  def _find_suggested_match(
+      self,
+      approximate_name: str,
+      unmatched_students: List[dict]
+  ) -> Tuple[Optional[dict], int]:
+    """
+    Find best fuzzy match for a name among unmatched students.
+
+    Args:
+        approximate_name: The extracted student name
+        unmatched_students: List of student dicts with name and user_id
+
+    Returns:
+        Tuple of (suggested_match, match_confidence)
+        suggested_match is None if no good match found
+    """
+    if not approximate_name or not unmatched_students:
+      return None, 0
+
+    best_score = 0
+    best_match = None
+
+    for student in unmatched_students:
+      score = fuzzywuzzy.fuzz.ratio(student["name"], approximate_name)
+      if score > best_score:
+        best_score = score
+        best_match = student
+
+    # Return suggestion only if meets threshold
+    if best_match and best_score >= NAME_SIMILARITY_THRESHOLD:
+      log.info(
+        f"  Suggested match: {best_match['name']} ({best_score}%) - requires confirmation"
+      )
+      return best_match, best_score
+    elif best_match:
+      log.warning(f"  Weak match suggestion: {best_match['name']} at {best_score}%")
+    else:
+      log.warning(f"  No match found for: {approximate_name}")
+
+    return None, 0
+ 
+  def _build_submission_dict(
+      self, document_id: int,
+      approximate_name: str,
+      name_image: str,
+      suggested_match: Optional[dict],
+      page_mappings_by_submission: Optional[dict],
+      problems: List[ProblemDTO],
+      pdf_data: Optional[str],
+      pdf_path: Path,
+      file_metadata: Optional[Dict[Path, Dict]]
+  ) -> SubmissionDTO:
+    """
+    Build submission DTO from extracted data.
+
+    Args:
+        document_id: Unique document ID
+        approximate_name: Extracted student name
+        name_image: Base64 image of name region
+        suggested_match: Suggested student match (if any)
+        page_mappings_by_submission: Page mappings for shuffled problems
+        problems: List of problem DTOs
+        pdf_data: Base64 encoded PDF (None for manual page ranges)
+        pdf_path: Path to original PDF
+        file_metadata: Optional metadata about uploaded files
+
+    Returns:
+        SubmissionDTO
+    """
+    return SubmissionDTO(
+      document_id=document_id,
+      approximate_name=approximate_name,
+      name_image_data=name_image,
+      student_name=None,  # No auto-matching - requires manual confirmation
+      canvas_user_id=None,  # No auto-matching - requires manual confirmation
+      suggested_canvas_user_id=suggested_match["user_id"] if suggested_match else None,
+      page_mappings=page_mappings_by_submission[document_id]
+      if page_mappings_by_submission else [],
+      problems=problems,
+      pdf_data=pdf_data,  # Base64 PDF (None for manual page ranges)
+      file_hash=file_metadata[pdf_path]["hash"]
+      if file_metadata and pdf_path in file_metadata else None,
+      original_filename=file_metadata[pdf_path]["original_filename"]
+      if file_metadata and pdf_path in file_metadata else pdf_path.name
+    )
+  
   def extract_name(
       self,
       pdf_path: Path,
-      use_ai: bool = True,
-      student_names: Optional[List[str]] = None) -> tuple[str, str]:
+      student_names: Optional[List[str]] = None
+  ) -> tuple[str, str]:
     """Extract student name from PDF using AI.
 
         Returns:
             Tuple of (extracted_name, name_image_base64)
         """
-    if not use_ai:
-      return "", ""
-
     # First extract the name image (always do this)
     name_image_base64 = ""
     try:
@@ -381,36 +403,15 @@ class ExamProcessor:
       # Return empty name but still include the image so user can manually match
       return "", name_image_base64
 
-  def redact_and_split(
-      self, pdf_path: Path,
-      page_ranges: List[Tuple[int, int]]) -> List[fitz.Document]:
-    """Redact names and split PDF into problems."""
-    pdf_document = fitz.open(str(pdf_path))
-
-    # Redact first page name area
-    pdf_document[0].draw_rect(self.fitz_name_rect,
-                              color=(0, 0, 0),
-                              fill=(0, 0, 0))
-
-    # Split into problems based on page ranges
-    problem_pdfs = []
-    for start_page, end_page in page_ranges:
-      problem_pdf = fitz.open()
-      problem_pdf.insert_pdf(pdf_document,
-                             from_page=start_page,
-                             to_page=end_page)
-      problem_pdfs.append(problem_pdf)
-
-    pdf_document.close()
-    return problem_pdfs
-
-  def _extract_cross_page_region(self,
-                                 pdf_document: fitz.Document,
-                                 start_page: int,
-                                 start_y: float,
-                                 end_page: int,
-                                 end_y: float,
-                                 dpi: int = 150) -> Tuple[str, int]:
+  def _extract_cross_page_region(
+      self,
+      pdf_document: fitz.Document,
+      start_page: int,
+      start_y: float,
+      end_page: int,
+      end_y: float,
+      dpi: int = 150
+  ) -> Tuple[str, int]:
     """
         Extract a region that may span multiple pages and return as merged image.
 
@@ -575,97 +576,12 @@ class ExamProcessor:
 
       return merged_base64, total_height
 
-  def split_page_by_lines(self,
-                          page: fitz.Page,
-                          line_positions: List[int],
-                          include_top_margin: bool = True,
-                          min_region_height: int = 100) -> List[fitz.Rect]:
-    """
-        Split a page into regions based on horizontal line positions.
-        Lines are treated as TOP borders of questions (line is above the question).
-
-        Args:
-            page: PyMuPDF page object
-            line_positions: Y-coordinates of horizontal divider lines (sorted)
-            include_top_margin: Whether to include the region above the first line
-            min_region_height: Minimum height in points for a region to be included (default 100)
-
-        Returns:
-            List of fitz.Rect objects defining each problem region
-        """
-    regions = []
-    page_height = page.rect.height
-    page_width = page.rect.width
-
-    if not line_positions:
-      # No lines detected, return full page
-      return [page.rect]
-
-    # Add top region if requested (e.g., on first page above first question)
-    if include_top_margin and line_positions[0] > min_region_height:
-      regions.append(fitz.Rect(0, 0, page_width, line_positions[0]))
-
-    # Add regions FROM each line DOWN to the next line
-    # (Line is the TOP border of the question)
-    for i in range(len(line_positions) - 1):
-      y_start = line_positions[i]  # Start at the line (include it)
-      y_end = line_positions[i + 1]
-      height = y_end - y_start
-
-      # Only include if region is tall enough
-      if height >= min_region_height:
-        regions.append(fitz.Rect(0, y_start, page_width, y_end))
-      else:
-        log.debug(f"Skipping small region at y={y_start} (height={height})")
-
-    # Add bottom region (from last line to end of page)
-    y_start = line_positions[-1]
-    height = page_height - y_start
-    if height >= min_region_height:
-      regions.append(fitz.Rect(0, y_start, page_width, page_height))
-
-    log.info(
-      f"Split page into {len(regions)} regions (filtered by min height {min_region_height})"
-    )
-    return regions
-
-  def redact_and_get_pdf_data(self, pdf_path: Path) -> str:
-    """
-        Redact name area and return PDF as base64 string.
-
-        Args:
-            pdf_path: Path to PDF file
-
-        Returns:
-            Base64 encoded PDF data
-        """
-    pdf_document = fitz.open(str(pdf_path))
-
-    # Redact name area on first page
-    if pdf_document.page_count > 0:
-      pdf_document[0].draw_rect(self.fitz_name_rect,
-                                color=(0, 0, 0),
-                                fill=(0, 0, 0))
-
-    # Save to bytes and encode
-    pdf_bytes = pdf_document.tobytes()
-    pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
-
-    pdf_document.close()
-
-    return pdf_base64
-
   def redact_and_extract_regions(
       self,
       pdf_path: Path,
       split_points: Dict[int, List[int]],
-      detect_blank: bool = False,
-      blank_confidence_threshold: float = 0.8,
-      use_ai_for_borderline: bool = False,
-      problem_max_points: Dict[int, float] = None,
-      extract_max_points_enabled: bool = False,
       skip_first_region: bool = True,
-      last_page_blank: bool = False) -> Tuple[str, List[Dict]]:
+      last_page_blank: bool = False) -> Tuple[str, List[ProblemDTO]]:
     """
         Redact names and extract problem regions using manual split points.
         Returns PDF data once and region metadata for each problem.
@@ -882,113 +798,59 @@ class ExamProcessor:
       problem_image_base64, region_height = self._extract_cross_page_region(
         pdf_document, start_page, start_y, end_page, end_y)
 
-      # Initialize problem dict with region coordinates
-      problem_dict = {
-        "problem_number":
-        problem_number,
-        "page_number":
-        start_page,  # Start page for backwards compatibility
-        "region_y_start":
-        int(start_y),
-        "region_y_end":
-        int(end_y) if start_page == end_page else int(
+      # Build region coordinates dict
+      region_coords = {
+        "page_number": start_page,
+        "region_y_start": int(start_y),
+        "region_y_end": int(end_y) if start_page == end_page else int(
           pdf_document[start_page].rect.height),
-        "region_height":
-        region_height,
-        "is_blank":
-        False,
-        "blank_confidence":
-        0.0
+        "region_height": region_height,
       }
 
       # For cross-page problems, add end page info
       if end_page != start_page:
-        problem_dict["end_page_number"] = end_page
-        problem_dict["end_region_y"] = int(end_y)
+        region_coords["end_page_number"] = end_page
+        region_coords["end_region_y"] = int(end_y)
         log.info(
           f"Problem {problem_number} spans multiple pages: {start_page} to {end_page}"
         )
 
       # Check if we have pre-scanned QR data for this problem
       qr_data = qr_data_by_problem.get(problem_number)
+      max_points = None
+      qr_encrypted_data = None
 
       if qr_data:
         log.info(
           f"Problem {problem_number}: Using pre-scanned QR code data with max_points={qr_data['max_points']}"
         )
-        problem_dict["max_points"] = qr_data["max_points"]
-        problem_dict["qr_encrypted_data"] = qr_data.get(
-          "encrypted_data")  # Store encrypted string for answer regeneration
+        max_points = qr_data["max_points"]
+        qr_encrypted_data = qr_data.get("encrypted_data")
 
-        # Cache the max points for this problem number (for future exams)
-        if problem_max_points is not None:
-          problem_max_points[problem_number] = qr_data["max_points"]
+      # Create ProblemDTO
+      problem = ProblemDTO(
+        problem_number=problem_number,
+        image_base64=problem_image_base64,
+        region_coords=region_coords,
+        is_blank=False,
+        blank_confidence=0.0,
+        max_points=max_points,
+        qr_encrypted_data=qr_encrypted_data
+      )
 
-      # Extract max points from score box
-      if problem_max_points and problem_number in problem_max_points:
-        problem_dict["max_points"] = problem_max_points[problem_number]
-      elif extract_max_points_enabled:
-        max_points = self.extract_max_points(problem_image_base64)
-        if max_points is not None:
-          problem_dict["max_points"] = max_points
-          if problem_max_points is not None:
-            problem_max_points[problem_number] = max_points
-
-      problems.append(problem_dict)
+      problems.append(problem)
       problem_number += 1
 
     pdf_document.close()
 
-    # Filter out blank trailing page if present
-    if problems and detect_blank:
-      last_problem = problems[-1]
-      # For last problem, need to extract and check
-      pdf_doc = fitz.open("pdf", base64.b64decode(pdf_base64))
-      page = pdf_doc[last_problem["page_number"]]
-      region = fitz.Rect(0, last_problem["region_y_start"], page.rect.width,
-                         last_problem["region_y_end"])
-
-      problem_pdf = fitz.open()
-      problem_page = problem_pdf.new_page(width=region.width,
-                                          height=region.height)
-      problem_page.show_pdf_page(problem_page.rect,
-                                 pdf_doc,
-                                 last_problem["page_number"],
-                                 clip=region)
-
-      pix = problem_page.get_pixmap(dpi=150)
-      img_bytes = pix.tobytes("png")
-      img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-      full_page_check = self.is_blank_heuristic(img_base64,
-                                                crop_to_answer_area=False,
-                                                threshold=0.015)
-
-      if full_page_check["is_blank"] and full_page_check["confidence"] > 0.85:
-        log.info(
-          f"Removing blank trailing page (problem {last_problem['problem_number']}) - "
-          f"confidence={full_page_check['confidence']:.2f}, "
-          f"blank_ratio={full_page_check.get('blank_bands', 0)}/{full_page_check.get('answer_bands', 0)} bands"
-        )
-        problems.pop()
-
-      problem_pdf.close()
-      pdf_doc.close()
-
-    if detect_blank:
-      blank_count = sum(1 for p in problems if p["is_blank"])
-      log.info(
-        f"Split PDF into {len(problems)} problems ({blank_count} detected as blank) using manual split points"
-      )
-    else:
-      log.info(
-        f"Split PDF into {len(problems)} problems using manual split points")
 
     return pdf_base64, problems
 
-  def is_blank_heuristic_population(self,
-                                    images_base64: list,
-                                    percentile_threshold: float = 5.0) -> list:
+  def is_blank_heuristic_population(
+      self,
+      images_base64: list,
+      percentile_threshold: float = 5.0
+  ) -> list:
     """
         Population-based blank detection using black pixel ratio clustering.
 
@@ -1131,337 +993,3 @@ class ExamProcessor:
     )
 
     return results
-
-  def is_blank_heuristic(self,
-                         image_base64: str,
-                         num_bands: int = 20,
-                         blank_threshold: float = 0.8,
-                         clustering_method: str = "auto",
-                         **kwargs) -> Dict:
-    """
-        Use band-based heuristics to determine if a problem image appears blank/unanswered.
-
-        This method divides the image into horizontal bands and analyzes the darkness
-        of each band to distinguish between:
-        - Printed question text (consistently dark bands at top)
-        - Handwritten answers (medium darkness in middle/bottom)
-        - Blank answer areas (light bands in middle/bottom)
-
-        Args:
-            image_base64: Base64 encoded image
-            num_bands: Number of horizontal bands to divide image into (default: 20)
-            blank_threshold: Fraction of answer bands that must be blank (default: 0.8 = 80%)
-            clustering_method: "2-group", "3-group", or "auto" (default: auto tries both)
-
-        Returns:
-            Dict with {is_blank: bool, confidence: float, band_count: int, ...}
-        """
-    import io
-    from PIL import Image
-    from sklearn.cluster import KMeans
-    from sklearn.metrics import silhouette_score, davies_bouldin_score
-
-    # Decode image
-    img_bytes = base64.b64decode(image_base64)
-    img = Image.open(io.BytesIO(img_bytes))
-
-    # Convert to grayscale
-    if img.mode != 'L':
-      img = img.convert('L')
-
-    # Apply minimal margins to avoid edge artifacts only
-    width, height = img.size
-    margin = 10  # Minimal margin
-    img = img.crop((margin, margin, width - margin, height - margin))
-
-    # Convert to numpy array
-    img_array = np.array(img)
-    height, width = img_array.shape
-
-    # Step 1: Divide into horizontal bands and analyze each
-    band_height = height // num_bands
-    band_stats = []
-
-    for i in range(num_bands):
-      start_y = i * band_height
-      end_y = start_y + band_height if i < num_bands - 1 else height
-      band = img_array[start_y:end_y, :]
-
-      # Calculate statistics for this band
-      median_darkness = np.median(band)
-      max_darkness = 255 - np.max(band)  # Invert: higher = darker
-      min_darkness = 255 - np.min(band)
-      darkness_range = max_darkness - (255 - median_darkness)
-
-      band_stats.append({
-        'index': i,
-        'median': median_darkness,
-        'max_darkness': max_darkness,
-        'darkness_range': darkness_range
-      })
-
-    # Step 2: Cluster bands by maximum darkness
-    max_darkness_values = np.array([b['max_darkness']
-                                    for b in band_stats]).reshape(-1, 1)
-
-    best_clustering = None
-    best_score = -np.inf
-    best_n_clusters = 2
-
-    # Try both 2 and 3 group clustering if auto mode
-    n_clusters_to_try = [2, 3] if clustering_method == "auto" else [
-      int(clustering_method.split('-')[0])
-    ]
-
-    for n_clusters in n_clusters_to_try:
-      if len(max_darkness_values) < n_clusters:
-        continue
-
-      try:
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        labels = kmeans.fit_predict(max_darkness_values)
-
-        # Evaluate clustering quality using silhouette score (higher is better)
-        # Need at least 2 distinct clusters for silhouette score
-        num_distinct_clusters = len(set(labels))
-        if num_distinct_clusters > 1:
-          score = silhouette_score(max_darkness_values, labels)
-          log.debug(
-            f"{n_clusters}-group clustering: silhouette score = {score:.3f}, distinct clusters = {num_distinct_clusters}"
-          )
-
-          if score > best_score:
-            best_score = score
-            best_clustering = labels
-            best_n_clusters = n_clusters
-        elif best_clustering is None:
-          # If we haven't found any valid clustering yet, use this one even with only 1 cluster
-          log.debug(
-            f"{n_clusters}-group clustering: only {num_distinct_clusters} distinct cluster(s) found, using as fallback"
-          )
-          best_clustering = labels
-          best_n_clusters = num_distinct_clusters
-      except Exception as e:
-        log.warning(f"Clustering with {n_clusters} groups failed: {e}")
-        continue
-
-    # Handle case where clustering completely failed
-    if best_clustering is None:
-      log.warning(
-        "All clustering attempts failed, treating all bands as single group (assuming blank)"
-      )
-      best_clustering = np.zeros(len(band_stats), dtype=int)
-      best_n_clusters = 1
-
-    # Assign cluster labels to bands
-    for i, label in enumerate(best_clustering):
-      band_stats[i]['cluster'] = label
-
-    # Log band clustering for debugging
-    log.debug(f"Band clustering results ({best_n_clusters} clusters):")
-    for i, band in enumerate(band_stats):
-      log.debug(
-        f"  Band {i}: max_darkness={band['max_darkness']:.1f}, cluster={band['cluster']}"
-      )
-
-    # Step 3: Identify question vs answer bands
-    # Question bands are in the darkest cluster and typically at the top
-    cluster_darkness = {}
-    for cluster_id in range(best_n_clusters):
-      cluster_bands = [b for b in band_stats if b['cluster'] == cluster_id]
-      if cluster_bands:
-        avg_darkness = np.mean([b['max_darkness'] for b in cluster_bands])
-        cluster_darkness[cluster_id] = avg_darkness
-
-    # Darkest cluster = question text
-    question_cluster = max(cluster_darkness.keys(),
-                           key=lambda k: cluster_darkness[k])
-
-    # Find where question area ends (last band in question cluster)
-    question_bands_indices = [
-      b['index'] for b in band_stats if b['cluster'] == question_cluster
-    ]
-    if question_bands_indices:
-      question_end = max(question_bands_indices)
-    else:
-      question_end = 0
-
-    # Answer bands are everything after the question area
-    answer_bands = [b for b in band_stats if b['index'] > question_end]
-
-    # Step 4: Classify answer bands as handwritten or blank
-    if not answer_bands:
-      # No answer area detected - consider blank
-      log.debug("No answer bands detected - marking as blank")
-      return {
-        "is_blank": True,
-        "confidence": 0.5,
-        "band_count": num_bands,
-        "question_bands": len(question_bands_indices),
-        "answer_bands": 0,
-        "blank_bands": 0,
-        "handwritten_bands": 0,
-        "cluster_method": f"{best_n_clusters}-group"
-      }
-
-    # Determine blank vs handwritten in answer area
-    if best_n_clusters == 3:
-      # With 3 clusters, we can potentially identify: dark (question), medium (handwriting), light (blank)
-      sorted_clusters = sorted(cluster_darkness.keys(),
-                               key=lambda k: cluster_darkness[k],
-                               reverse=True)
-      medium_cluster = sorted_clusters[1] if len(sorted_clusters) > 1 else None
-      light_cluster = sorted_clusters[2] if len(
-        sorted_clusters) > 2 else sorted_clusters[-1]
-
-      blank_bands = [b for b in answer_bands if b['cluster'] == light_cluster]
-      handwritten_bands = [
-        b for b in answer_bands if b['cluster'] == medium_cluster
-      ] if medium_cluster else []
-    else:
-      # With 2 clusters, non-question bands need further analysis
-      # Use intra-band analysis for borderline cases
-      blank_bands = []
-      handwritten_bands = []
-
-      for band in answer_bands:
-        # Apply intra-band analysis
-        is_blank_band = self._analyze_band_for_handwriting(
-          img_array, band['index'], band_height, height)
-        if is_blank_band:
-          blank_bands.append(band)
-        else:
-          handwritten_bands.append(band)
-
-    # Step 5: Final decision
-    blank_ratio = len(blank_bands) / len(answer_bands) if answer_bands else 1.0
-    is_blank = blank_ratio >= blank_threshold
-
-    # Confidence based on how clear the distinction is
-    confidence = abs(blank_ratio -
-                     0.5) * 2  # 0.5 = uncertain, 0 or 1 = certain
-    confidence = max(0.0, min(1.0, confidence))
-
-    log.info(
-      f"Band-based blank detection: is_blank={is_blank}, "
-      f"blank_ratio={blank_ratio:.2f}, confidence={confidence:.2f}, "
-      f"question_bands={len(question_bands_indices)}, answer_bands={len(answer_bands)}, "
-      f"blank_bands={len(blank_bands)}, handwritten_bands={len(handwritten_bands)}, "
-      f"cluster_method={best_n_clusters}-group, question_end={question_end}")
-
-    return {
-      "is_blank": is_blank,
-      "confidence": confidence,
-      "band_count": num_bands,
-      "question_bands": len(question_bands_indices),
-      "answer_bands": len(answer_bands),
-      "blank_bands": len(blank_bands),
-      "handwritten_bands": len(handwritten_bands),
-      "cluster_method": f"{best_n_clusters}-group"
-    }
-
-  def _analyze_band_for_handwriting(self, img_array: np.ndarray,
-                                    band_index: int, band_height: int,
-                                    total_height: int) -> bool:
-    """
-        Analyze a single band for handwriting by looking at spatial variation.
-
-        Args:
-            img_array: Full image as numpy array
-            band_index: Index of the band to analyze
-            band_height: Height of each band in pixels
-            total_height: Total image height
-
-        Returns:
-            True if band appears blank, False if it has handwriting
-        """
-    start_y = band_index * band_height
-    end_y = min(start_y + band_height, total_height)
-    band = img_array[start_y:end_y, :]
-
-    # Divide band into horizontal sub-regions
-    num_segments = 10
-    band_width = band.shape[1]
-    segment_width = band_width // num_segments
-
-    segment_max_darkness = []
-    for i in range(num_segments):
-      start_x = i * segment_width
-      end_x = start_x + segment_width if i < num_segments - 1 else band_width
-      segment = band[:, start_x:end_x]
-
-      # Maximum darkness in this segment
-      max_dark = 255 - np.min(segment)  # Invert: higher = darker
-      segment_max_darkness.append(max_dark)
-
-    # If segments show high variation in darkness, it's likely handwriting
-    # Blank areas have uniform (low) darkness across segments
-    darkness_variance = np.var(segment_max_darkness)
-    mean_darkness = np.mean(segment_max_darkness)
-
-    # Thresholds: low variance + low mean = blank
-    is_blank = (darkness_variance < 100 and mean_darkness < 50)
-
-    return is_blank
-
-  def is_blank_with_fallback(self, image_base64: str) -> Dict:
-    """
-        Detect blank pages with fallback priority: Ollama -> Heuristic -> Paid AI
-
-        For Ollama, downscales images to 50 DPI for faster processing.
-
-        Args:
-            image_base64: Base64 encoded image (at normal 150 DPI)
-
-        Returns:
-            Dict with {is_blank: bool, confidence: float, method: str, reasoning: str (optional)}
-        """
-    # First, try heuristic method
-    try:
-      log.info("Using heuristic blank detection...")
-      result = self.is_blank_heuristic(image_base64)
-      result["method"] = "heuristic"
-      log.info(f"Heuristic blank detection: {result}")
-      return result
-    except Exception as e:
-      log.error(f"Heuristic blank detection failed: {e}")
-
-  def _downscale_image(self,
-                       image_base64: str,
-                       target_dpi: int = 50,
-                       original_dpi: int = 150) -> str:
-    """
-        Downscale an image to reduce size for faster AI processing.
-
-        Args:
-            image_base64: Original base64 encoded image
-            target_dpi: Target DPI (default 50)
-            original_dpi: Original DPI (default 150)
-
-        Returns:
-            Downscaled image as base64 string
-        """
-    import io
-    from PIL import Image
-
-    # Decode image
-    img_bytes = base64.b64decode(image_base64)
-    img = Image.open(io.BytesIO(img_bytes))
-
-    # Calculate scale factor
-    scale = target_dpi / original_dpi
-    new_size = (int(img.width * scale), int(img.height * scale))
-
-    # Resize image
-    img_resized = img.resize(new_size, Image.Resampling.LANCZOS)
-
-    # Encode back to base64
-    buffer = io.BytesIO()
-    img_resized.save(buffer, format='PNG')
-    downscaled_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-
-    log.debug(
-      f"Downscaled image from {img.size} to {new_size} ({original_dpi} DPI -> {target_dpi} DPI)"
-    )
-
-    return downscaled_b64

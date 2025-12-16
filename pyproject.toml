@@ -42,7 +42,7 @@ dependencies = [
     "openai",
     "anthropic",
     "ollama>=0.6.0",
-    "canvasapi>=3.2.0",
+    "QuizGenerator>=0.4.2",
 ]
 
 [project.optional-dependencies]

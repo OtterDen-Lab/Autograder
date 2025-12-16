@@ -74,7 +74,7 @@ services:
       # Override database path to use Docker volume
       - GRADING_DB_PATH=/data/grading.db
       - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/app/web_grading:/app/QuizGeneration
+      - PYTHONPATH=/app/web_grading
       # Ollama configuration
       # Use host.docker.internal:11434 to connect to Ollama on host machine
       # Or ollama:11434 to use the containerized Ollama service
@@ -87,7 +87,7 @@ services:
       # Mount code for live development (no rebuild needed for code changes)
       - ../../Autograder:/app/Autograder
       - ../../../LMSInterface:/app/LMSInterface
-      - ../../../QuizGeneration:/app/QuizGeneration
+      # QuizGenerator is now installed from PyPI (no local mount needed)
       # Optional: Mount config files (uncomment if needed)
       # - ./config:/app/config:ro
     restart: unless-stopped

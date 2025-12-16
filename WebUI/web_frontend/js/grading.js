@@ -777,13 +777,42 @@ async function loadStatistics() {
             const canvasAvg = rawAvg; // Canvas grade is the raw score (out of 100)
             const canvasPercentage = canvasAvg; // Since it's out of 100, the score IS the percentage
 
+            // Calculate blank percentage statistics per student
+            const blankPercentages = studentsWithGrades.map(student => {
+                // Find all graded problems for this student
+                const studentProblems = stats.problem_stats.filter(ps => ps.num_graded > 0);
+                if (studentProblems.length === 0) return 0;
+
+                // Count how many problems this student left blank
+                // We don't have per-student blank data easily accessible, so we'll calculate from problem_stats
+                // For now, use the overall blank percentage as an approximation
+                // A better approach would require additional API endpoint for per-student blank counts
+                const totalBlankProblems = stats.problem_stats.reduce((sum, ps) => sum + (ps.num_blank || 0), 0);
+                const totalGradedProblems = stats.problem_stats.reduce((sum, ps) => sum + ps.num_graded, 0);
+
+                return totalGradedProblems > 0 ? (totalBlankProblems / totalGradedProblems) * 100 : 0;
+            });
+
+            // Calculate average blank percentage across all graded problems
+            const totalBlankProblems = stats.problem_stats.reduce((sum, ps) => sum + (ps.num_blank || 0), 0);
+            const totalGradedProblems = stats.problem_stats.reduce((sum, ps) => sum + ps.num_graded, 0);
+            const avgBlankPct = totalGradedProblems > 0 ? (totalBlankProblems / totalGradedProblems) * 100 : 0;
+
+            // Calculate stddev of blank percentages per problem
+            const problemBlankPcts = stats.problem_stats
+                .filter(ps => ps.num_graded > 0)
+                .map(ps => ((ps.num_blank || 0) / ps.num_graded) * 100);
+            const blankPctStddev = problemBlankPcts.length > 1
+                ? Math.sqrt(problemBlankPcts.reduce((sum, pct) => sum + Math.pow(pct - avgBlankPct, 2), 0) / problemBlankPcts.length)
+                : 0;
+
             examStatsHtml = `
                 <h3>Overall Progress Statistics <small style="font-size: 14px; font-weight: normal; color: var(--gray-600);">(${studentsWithGrades.length} students with grades, based on problems graded so far)</small></h3>
                 <div class="overall-stats" style="margin-bottom: 30px;">
                     <div class="stat-card">
                         <h3>Average Score</h3>
                         <div class="value">${rawAvg.toFixed(2)} pts</div>
-                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">(of graded problems)</div>
+                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">±${rawStddev.toFixed(2)} pts</div>
                     </div>
                     <div class="stat-card">
                         <h3>Canvas Grade</h3>
@@ -801,9 +830,9 @@ async function loadStatistics() {
                         <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">Min to Max</div>
                     </div>
                     <div class="stat-card">
-                        <h3>Std Deviation</h3>
-                        <div class="value">±${rawStddev.toFixed(2)} pts</div>
-                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">(raw scores)</div>
+                        <h3>Blank Rate</h3>
+                        <div class="value">${avgBlankPct.toFixed(1)}%</div>
+                        <div style="font-size: 14px; color: var(--gray-600); margin-top: 5px;">±${blankPctStddev.toFixed(1)}%</div>
                     </div>
                 </div>
             `;
@@ -2304,8 +2333,15 @@ async function loadExplanation() {
 
     // Check cache first
     if (explanationCache[currentProblem.id]) {
-        content.innerHTML = explanationCache[currentProblem.id];
+        // Parse cached markdown to HTML
+        const htmlContent = marked.parse(explanationCache[currentProblem.id]);
+        content.innerHTML = htmlContent;
         container.style.display = 'block';
+
+        // Render MathJax if available
+        if (typeof MathJax !== 'undefined') {
+            MathJax.typesetPromise([content]).catch((err) => console.error('MathJax typesetting failed:', err));
+        }
         return;
     }
 
@@ -2325,11 +2361,14 @@ async function loadExplanation() {
         const data = await response.json();
 
         if (data.explanation_markdown) {
-            // Cache and display explanation
+            // Cache explanation
             explanationCache[currentProblem.id] = data.explanation_markdown;
-            content.innerHTML = data.explanation_markdown;
 
-            // Render MathJax if available
+            // Convert markdown to HTML using marked.js
+            const htmlContent = marked.parse(data.explanation_markdown);
+            content.innerHTML = htmlContent;
+
+            // Render MathJax if available (after markdown conversion)
             if (typeof MathJax !== 'undefined') {
                 MathJax.typesetPromise([content]).catch((err) => console.error('MathJax typesetting failed:', err));
             }
