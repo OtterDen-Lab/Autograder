@@ -1,7 +1,7 @@
 """
 AI grading endpoints for AI-assisted grading.
 """
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import logging
@@ -10,6 +10,7 @@ import asyncio
 from ..repositories import SessionRepository, ProblemRepository, SubmissionRepository, ProblemMetadataRepository
 from ..services.ai_grader import AIGraderService
 from .. import sse
+from ..auth import require_instructor
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -63,8 +64,11 @@ class SaveRubricRequest(BaseModel):
 
 
 @router.get("/{session_id}/autograde-stream")
-async def autograde_progress_stream(session_id: int):
-  """SSE stream for autograding progress"""
+async def autograde_progress_stream(
+  session_id: int,
+  current_user: dict = Depends(require_instructor)
+):
+  """SSE stream for autograding progress (instructor only)"""
   stream_id = sse.make_stream_id("autograde", session_id)
 
   # Create stream if it doesn't exist
@@ -81,8 +85,12 @@ async def autograde_progress_stream(session_id: int):
 
 @router.post("/{session_id}/extract-question",
              response_model=ExtractQuestionResponse)
-async def extract_question(session_id: int, request: ExtractQuestionRequest):
-  """Extract question text from a problem image"""
+async def extract_question(
+  session_id: int,
+  request: ExtractQuestionRequest,
+  current_user: dict = Depends(require_instructor)
+):
+  """Extract question text from a problem image (instructor only)"""
 
   session_repo = SessionRepository()
   problem_repo = ProblemRepository()
@@ -168,9 +176,13 @@ async def extract_question(session_id: int, request: ExtractQuestionRequest):
 
 
 @router.post("/{session_id}/autograde", response_model=AutogradeResponse)
-async def start_autograde(session_id: int, request: AutogradeRequest,
-                          background_tasks: BackgroundTasks):
-  """Start autograding process for a problem"""
+async def start_autograde(
+  session_id: int,
+  request: AutogradeRequest,
+  background_tasks: BackgroundTasks,
+  current_user: dict = Depends(require_instructor)
+):
+  """Start autograding process for a problem (instructor only)"""
 
   session_repo = SessionRepository()
   problem_repo = ProblemRepository()
@@ -282,8 +294,12 @@ async def run_autograding(session_id: int, problem_number: int,
 
 @router.post("/{session_id}/generate-rubric",
              response_model=GenerateRubricResponse)
-async def generate_rubric(session_id: int, request: GenerateRubricRequest):
-  """Generate a grading rubric using AI and representative examples"""
+async def generate_rubric(
+  session_id: int,
+  request: GenerateRubricRequest,
+  current_user: dict = Depends(require_instructor)
+):
+  """Generate a grading rubric using AI and representative examples (instructor only)"""
 
   session_repo = SessionRepository()
 
@@ -324,8 +340,12 @@ async def generate_rubric(session_id: int, request: GenerateRubricRequest):
 
 
 @router.post("/{session_id}/save-rubric")
-async def save_rubric(session_id: int, request: SaveRubricRequest):
-  """Save or update a grading rubric"""
+async def save_rubric(
+  session_id: int,
+  request: SaveRubricRequest,
+  current_user: dict = Depends(require_instructor)
+):
+  """Save or update a grading rubric (instructor only)"""
 
   session_repo = SessionRepository()
   metadata_repo = ProblemMetadataRepository()
@@ -342,8 +362,12 @@ async def save_rubric(session_id: int, request: SaveRubricRequest):
 
 
 @router.get("/{session_id}/rubric/{problem_number}")
-async def get_rubric(session_id: int, problem_number: int):
-  """Get the current rubric for a problem"""
+async def get_rubric(
+  session_id: int,
+  problem_number: int,
+  current_user: dict = Depends(require_instructor)
+):
+  """Get the current rubric for a problem (instructor only)"""
 
   session_repo = SessionRepository()
   metadata_repo = ProblemMetadataRepository()

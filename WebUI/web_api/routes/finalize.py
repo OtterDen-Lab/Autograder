@@ -1,7 +1,7 @@
 """
 Finalization endpoints for completing grading and uploading to Canvas.
 """
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
 from pathlib import Path
 import tempfile
@@ -14,14 +14,18 @@ from ..repositories import SessionRepository, ProblemRepository
 from ..domain.common import SessionStatus
 from ..services.finalizer import FinalizationService
 from .. import sse
+from ..auth import require_instructor
 
 router = APIRouter()
 log = logging.getLogger(__name__)
 
 
 @router.get("/{session_id}/finalize-stream")
-async def finalize_progress_stream(session_id: int):
-  """SSE stream for finalization progress"""
+async def finalize_progress_stream(
+  session_id: int,
+  current_user: dict = Depends(require_instructor)
+):
+  """SSE stream for finalization progress (instructor only)"""
   stream_id = sse.make_stream_id("finalize", session_id)
 
   # Create stream if it doesn't exist
@@ -37,8 +41,12 @@ async def finalize_progress_stream(session_id: int):
 
 
 @router.post("/{session_id}/finalize")
-async def finalize_session(session_id: int, background_tasks: BackgroundTasks):
-  """Start finalization process for a session"""
+async def finalize_session(
+  session_id: int,
+  background_tasks: BackgroundTasks,
+  current_user: dict = Depends(require_instructor)
+):
+  """Start finalization process for a session (instructor only)"""
   session_repo = SessionRepository()
   problem_repo = ProblemRepository()
 
@@ -72,8 +80,11 @@ async def finalize_session(session_id: int, background_tasks: BackgroundTasks):
 
 
 @router.get("/{session_id}/finalization-status")
-async def get_finalization_status(session_id: int):
-  """Get status of finalization process"""
+async def get_finalization_status(
+  session_id: int,
+  current_user: dict = Depends(require_instructor)
+):
+  """Get status of finalization process (instructor only)"""
   session_repo = SessionRepository()
 
   session = session_repo.get_by_id(session_id)
