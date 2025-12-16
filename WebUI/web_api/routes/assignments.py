@@ -129,20 +129,21 @@ async def get_session_assignments(
   assignment_repo = SessionAssignmentRepository()
   user_repo = UserRepository()
 
-  # Get all user IDs assigned to this session
-  user_ids = assignment_repo.get_assigned_users(session_id)
+  # Get all assignments for this session
+  session_assignments = assignment_repo.get_assignments_for_session(session_id)
 
-  # Get user details for each ID
+  # Get user details for each assignment
   assignments = []
-  for uid in user_ids:
-    user = user_repo.get_by_id(uid)
+  for sa in session_assignments:
+    user = user_repo.get_by_id(sa.user_id)
     if user:
       assignments.append(
         AssignmentResponse(
-          session_id=session_id,
+          session_id=sa.session_id,
           user_id=user.id,
           username=user.username,
-          full_name=user.full_name
+          full_name=user.full_name,
+          assigned_at=sa.assigned_at.isoformat()
         )
       )
 

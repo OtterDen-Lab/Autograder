@@ -196,7 +196,7 @@ class LoginResponse(BaseModel):
 class CreateUserRequest(BaseModel):
   """Request model for creating a new user"""
   username: str = Field(..., min_length=3, max_length=50)
-  email: str = Field(..., pattern=r'^[\w\.-]+@[\w\.-]+\.\w+$')
+  email: Optional[str] = Field(None, pattern=r'^[\w\.-]+@[\w\.-]+\.\w+$')
   password: str = Field(..., min_length=8)
   full_name: Optional[str] = None
   role: str = Field(..., pattern='^(instructor|ta)$')
@@ -206,7 +206,7 @@ class UserResponse(BaseModel):
   """Response model for user details"""
   id: int
   username: str
-  email: str
+  email: Optional[str]
   full_name: Optional[str]
   role: str
   is_active: bool
@@ -227,3 +227,4 @@ class AssignmentResponse(BaseModel):
   user_id: int
   username: str
   full_name: Optional[str]
+  assigned_at: str

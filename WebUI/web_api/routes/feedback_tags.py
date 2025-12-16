@@ -1,13 +1,14 @@
 """
 Feedback tags endpoints for reusable grading comments.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 import sqlite3
 
 from ..repositories import FeedbackTagRepository
+from ..auth import require_session_access, get_current_user
 
 router = APIRouter()
 
@@ -30,10 +31,13 @@ class CreateTagRequest(BaseModel):
 
 
 @router.get("/{session_id}/{problem_number}")
-async def get_feedback_tags(session_id: int,
-                            problem_number: int) -> List[FeedbackTag]:
+async def get_feedback_tags(
+  session_id: int,
+  problem_number: int,
+  current_user: dict = Depends(require_session_access())
+) -> List[FeedbackTag]:
   """
-    Get all feedback tags for a specific session and problem number.
+    Get all feedback tags for a specific session and problem number (requires session access).
     Returns tags sorted by use_count (most used first), then by short_name.
     """
   repo = FeedbackTagRepository()
@@ -54,11 +58,21 @@ async def get_feedback_tags(session_id: int,
 
 
 @router.post("")
-async def create_feedback_tag(tag: CreateTagRequest) -> FeedbackTag:
+async def create_feedback_tag(
+  tag: CreateTagRequest,
+  current_user: dict = Depends(get_current_user)
+) -> FeedbackTag:
   """
-    Create a new feedback tag.
+    Create a new feedback tag (requires authentication and session access).
     Returns the created tag with its ID.
     """
+  # Check if user has access to this session
+  if current_user["role"] != "instructor":
+    from ..repositories.session_assignment_repository import SessionAssignmentRepository
+    assignment_repo = SessionAssignmentRepository()
+    if not assignment_repo.is_user_assigned(tag.session_id, current_user["user_id"]):
+      raise HTTPException(status_code=403, detail="You do not have access to this grading session")
+
   # Validate inputs
   if not tag.short_name or len(tag.short_name) > 30:
     raise HTTPException(
@@ -95,11 +109,26 @@ async def create_feedback_tag(tag: CreateTagRequest) -> FeedbackTag:
 
 
 @router.delete("/{tag_id}")
-async def delete_feedback_tag(tag_id: int):
+async def delete_feedback_tag(
+  tag_id: int,
+  current_user: dict = Depends(get_current_user)
+):
   """
-    Delete a feedback tag.
+    Delete a feedback tag (requires authentication and session access).
     """
   repo = FeedbackTagRepository()
+
+  # Get tag to check session access
+  tag = repo.get_by_id(tag_id)
+  if not tag:
+    raise HTTPException(status_code=404, detail="Tag not found")
+
+  # Check if user has access to this session
+  if current_user["role"] != "instructor":
+    from ..repositories.session_assignment_repository import SessionAssignmentRepository
+    assignment_repo = SessionAssignmentRepository()
+    if not assignment_repo.is_user_assigned(tag.session_id, current_user["user_id"]):
+      raise HTTPException(status_code=403, detail="You do not have access to this grading session")
 
   if not repo.delete(tag_id):
     raise HTTPException(status_code=404, detail="Tag not found")
@@ -108,12 +137,27 @@ async def delete_feedback_tag(tag_id: int):
 
 
 @router.post("/{tag_id}/use")
-async def increment_tag_usage(tag_id: int):
+async def increment_tag_usage(
+  tag_id: int,
+  current_user: dict = Depends(get_current_user)
+):
   """
-    Increment the use_count for a tag.
+    Increment the use_count for a tag (requires authentication and session access).
     Called when a tag is applied to a grade.
     """
   repo = FeedbackTagRepository()
+
+  # Get tag to check session access
+  tag = repo.get_by_id(tag_id)
+  if not tag:
+    raise HTTPException(status_code=404, detail="Tag not found")
+
+  # Check if user has access to this session
+  if current_user["role"] != "instructor":
+    from ..repositories.session_assignment_repository import SessionAssignmentRepository
+    assignment_repo = SessionAssignmentRepository()
+    if not assignment_repo.is_user_assigned(tag.session_id, current_user["user_id"]):
+      raise HTTPException(status_code=403, detail="You do not have access to this grading session")
 
   if not repo.increment_use_count(tag_id):
     raise HTTPException(status_code=404, detail="Tag not found")

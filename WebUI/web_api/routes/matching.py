@@ -1,7 +1,7 @@
 """
 Name matching endpoints for unmatched submissions.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from typing import List
 import json
 
@@ -9,13 +9,17 @@ from ..models import NameMatchRequest
 from ..database import get_db_connection
 from ..repositories import SessionRepository, SubmissionRepository
 from Autograder.lms_interface.canvas_interface import CanvasInterface
+from ..auth import require_session_access
 
 router = APIRouter()
 
 
 @router.get("/{session_id}/submissions")
-async def get_all_submissions(session_id: int):
-  """Get all submissions for a session (unmatched first, then matched)"""
+async def get_all_submissions(
+  session_id: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """Get all submissions for a session (requires session access)"""
   submission_repo = SubmissionRepository()
 
   # Get all submissions, ordered by match status
@@ -40,8 +44,11 @@ async def get_all_submissions(session_id: int):
 
 
 @router.get("/{session_id}/students")
-async def get_all_students(session_id: int):
-  """Get all Canvas students with match status (unmatched first, then matched)"""
+async def get_all_students(
+  session_id: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """Get all Canvas students with match status (requires session access)"""
   session_repo = SessionRepository()
   submission_repo = SubmissionRepository()
 
@@ -73,8 +80,12 @@ async def get_all_students(session_id: int):
 
 
 @router.post("/{session_id}/match")
-async def match_submission(session_id: int, match: NameMatchRequest):
-  """Manually match a submission to a Canvas student (allows reassignment)"""
+async def match_submission(
+  session_id: int,
+  match: NameMatchRequest,
+  current_user: dict = Depends(require_session_access())
+):
+  """Manually match a submission to a Canvas student (requires session access)"""
   session_repo = SessionRepository()
   submission_repo = SubmissionRepository()
 

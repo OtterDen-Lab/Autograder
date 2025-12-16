@@ -107,6 +107,23 @@ class SessionAssignmentRepository(BaseRepository[SessionAssignment]):
       )
       return [row[0] for row in cursor.fetchall()]
 
+  def get_assignments_for_session(self, session_id: int) -> List[SessionAssignment]:
+    """
+    Get full assignment details for a session.
+
+    Args:
+      session_id: Grading session ID
+
+    Returns:
+      List of SessionAssignment objects
+    """
+    with self._get_connection() as conn:
+      return self._execute_and_fetch_all(
+        conn,
+        "SELECT * FROM session_assignments WHERE session_id = ? ORDER BY assigned_at DESC",
+        (session_id,)
+      )
+
   def is_user_assigned(self, session_id: int, user_id: int) -> bool:
     """
     Check if user is assigned to session.

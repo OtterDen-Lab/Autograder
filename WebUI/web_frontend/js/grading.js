@@ -1018,6 +1018,11 @@ async function loadStatistics() {
             `;
             container.innerHTML += studentScoresHtml;
         }
+
+        // Load TA assignments for instructors
+        if (typeof loadSessionAssignments === 'function') {
+            await loadSessionAssignments();
+        }
     } catch (error) {
         console.error('Failed to load statistics:', error);
     }

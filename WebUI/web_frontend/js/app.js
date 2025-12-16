@@ -2,6 +2,7 @@
 
 const API_BASE = '/api';
 let currentSession = null;
+let currentUser = null;
 
 // Helper function to recursively get all files from dropped items (including directories)
 async function getAllFilesFromDataTransfer(dataTransferItems) {
@@ -58,8 +59,75 @@ async function readDirectory(directoryEntry) {
     return files;
 }
 
+// Check authentication status
+async function checkAuth() {
+    try {
+        const response = await fetch(`${API_BASE}/auth/me`, {
+            credentials: 'include'
+        });
+
+        if (response.ok) {
+            currentUser = await response.json();
+            console.log('Authenticated as:', currentUser.username, `(${currentUser.role})`);
+
+            // Update UI with user info
+            updateUserDisplay();
+
+            // Hide instructor-only features for TAs
+            if (currentUser.role === 'ta') {
+                hideInstructorUI();
+            }
+        } else {
+            // Not authenticated - redirect to login
+            window.location.href = '/login.html';
+        }
+    } catch (error) {
+        console.error('Auth check failed:', error);
+        // On error, redirect to login
+        window.location.href = '/login.html';
+    }
+}
+
+// Update user display in header
+function updateUserDisplay() {
+    const userDisplay = document.getElementById('user-display');
+    if (userDisplay && currentUser) {
+        const roleLabel = currentUser.role === 'instructor' ? 'Instructor' : 'TA';
+        userDisplay.innerHTML = `
+            <span style="margin-right: 10px;">
+                Logged in as <strong>${currentUser.username}</strong> (${roleLabel})
+            </span>
+            <button id="logout-btn" class="btn btn-secondary">Logout</button>
+        `;
+
+        // Add logout handler
+        document.getElementById('logout-btn').onclick = handleLogout;
+    }
+}
+
+// Handle logout
+async function handleLogout() {
+    try {
+        await fetch(`${API_BASE}/auth/logout`, {
+            method: 'POST',
+            credentials: 'include'
+        });
+    } catch (error) {
+        console.error('Logout error:', error);
+    }
+
+    // Always redirect to login, even if logout request failed
+    window.location.href = '/login.html';
+}
+
+// Hide instructor-only UI elements for TAs
+function hideInstructorUI() {
+    document.body.classList.add('role-ta');
+}
+
 // Initialize app
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    await checkAuth();
     loadSessions();
     setupEventListeners();
     initializeAIProvider();
