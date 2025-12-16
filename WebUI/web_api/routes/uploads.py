@@ -24,7 +24,7 @@ from ..domain.problem import Problem
 import logging
 import asyncio
 from ..services.exam_processor import ExamProcessor
-from lms_interface.canvas_interface import CanvasInterface
+from Autograder.lms_interface.canvas_interface import CanvasInterface
 from ..repositories import SessionRepository, SubmissionRepository, ProblemMetadataRepository
 from ..domain.common import SessionStatus
 

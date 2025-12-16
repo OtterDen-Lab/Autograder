@@ -8,7 +8,7 @@ import json
 from ..models import NameMatchRequest
 from ..database import get_db_connection
 from ..repositories import SessionRepository, SubmissionRepository
-from lms_interface.canvas_interface import CanvasInterface
+from Autograder.lms_interface.canvas_interface import CanvasInterface
 
 router = APIRouter()
 

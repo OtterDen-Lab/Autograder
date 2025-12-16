@@ -62,8 +62,8 @@ services:
 
   web:
     build:
-      context: ../../../  # Build from teaching directory to access both Autograder and LMSInterface
-      dockerfile: Autograder/docker/web-grading/Dockerfile
+      context: ../../  # Build from Autograder directory
+      dockerfile: docker/web-grading/Dockerfile
     image: autograder-web-grading:latest
     container_name: autograder-web-grading
     ports:
@@ -86,8 +86,7 @@ services:
       - grading-data:/data
       # Mount code for live development (no rebuild needed for code changes)
       - ../../Autograder:/app/Autograder
-      - ../../../LMSInterface:/app/LMSInterface
-      # QuizGenerator is now installed from PyPI (no local mount needed)
+      - ../../WebUI:/app/web_grading
       # Optional: Mount config files (uncomment if needed)
       # - ./config:/app/config:ro
     restart: unless-stopped

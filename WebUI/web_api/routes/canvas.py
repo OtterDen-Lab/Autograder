@@ -116,7 +116,7 @@ def get_canvas_interface(use_prod: bool = False):
     Args:
         use_prod: If True, use production Canvas; otherwise use dev/beta
     """
-  from lms_interface.canvas_interface import CanvasInterface
+  from Autograder.lms_interface.canvas_interface import CanvasInterface
 
   # Use existing CanvasInterface which handles ~/.env loading
   canvas_interface = CanvasInterface(prod=use_prod)

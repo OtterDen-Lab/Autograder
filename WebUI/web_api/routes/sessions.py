@@ -27,7 +27,7 @@ from ..database import get_db_connection  # Still needed for unrefactored endpoi
 from ..repositories import SessionRepository, SubmissionRepository, ProblemRepository, ProblemMetadataRepository
 from ..domain.common import SessionStatus as DomainSessionStatus
 from ..domain.session import GradingSession
-from lms_interface.canvas_interface import CanvasInterface
+from Autograder.lms_interface.canvas_interface import CanvasInterface
 from ..services.qr_scanner import QRScanner
 import os
 

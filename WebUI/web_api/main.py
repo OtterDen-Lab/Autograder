@@ -12,8 +12,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from . import __version__
-from .database import init_database
-from .routes import sessions, problems, uploads, canvas, matching, finalize, ai_grader, alignment, feedback_tags, debug
+from .database import init_database, get_db_connection
+from .routes import sessions, problems, uploads, canvas, matching, finalize, ai_grader, alignment, feedback_tags, debug, auth, assignments
 
 
 @asynccontextmanager
@@ -21,6 +21,12 @@ async def lifespan(app: FastAPI):
   """Lifespan event handler for startup/shutdown"""
   # Startup: Initialize database
   init_database()
+
+  # Cleanup expired authentication sessions
+  from .services.auth_service import AuthService
+  auth_service = AuthService()
+  with get_db_connection() as conn:
+    auth_service.cleanup_expired_sessions(conn)
 
   yield
 
@@ -56,7 +62,9 @@ async def health_check():
 
 
 # Include routers
+app.include_router(auth.router,           prefix="/api/auth",           tags=["auth"])
 app.include_router(sessions.router,       prefix="/api/sessions",       tags=["sessions"])
+app.include_router(assignments.router,    prefix="/api/sessions",       tags=["assignments"])
 app.include_router(problems.router,       prefix="/api/problems",       tags=["problems"])
 app.include_router(uploads.router,        prefix="/api/uploads",        tags=["uploads"])
 app.include_router(canvas.router,         prefix="/api/canvas",         tags=["canvas"])

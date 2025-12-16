@@ -18,15 +18,16 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /app
 
-# Copy LMSInterface dependency (local path dependency)
-COPY LMSInterface /app/LMSInterface
+# Copy Autograder package (includes vendorized lms_interface)
+COPY Autograder /app/Autograder
 
-# Copy Autograder source
-COPY Autograder/WebUI /app/web_grading
-COPY Autograder/pyproject.toml /app/
+# Copy WebUI source
+COPY WebUI /app/web_grading
 
-# Update pyproject.toml to use local LMSInterface path
-RUN sed -i 's|path = "../LMSInterface"|path = "./LMSInterface"|g' /app/pyproject.toml
+# Copy pyproject.toml, LICENSE, and README
+COPY pyproject.toml /app/
+COPY LICENSE /app/
+COPY README.md /app/
 
 # Install uv for fast package management
 RUN pip install --no-cache-dir uv
