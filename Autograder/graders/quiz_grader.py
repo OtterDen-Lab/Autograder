@@ -9,7 +9,7 @@ import json
 
 from Autograder.grader import Grader
 from Autograder.registry import GraderRegistry
-from lms_interface.classes import Feedback, Submission, QuizSubmission
+from Autograder.lms_interface.classes import Feedback, Submission, QuizSubmission
 
 import logging
 

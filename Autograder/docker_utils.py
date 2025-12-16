@@ -270,22 +270,41 @@ class DockerContainer:
   def copy_files(self, files_to_copy: List[Tuple[io.IOBase, str]]) -> None:
     """
     Copy files to the container.
-    
+
     Args:
-        files_to_copy: List of (file_object, target_directory) tuples
+        files_to_copy: List of (file_object, target_path) tuples where target_path
+                       can be either a directory path or a full file path (dir/filename)
     """
     if not self.container:
       raise Autograder.exceptions.ContainerError(
         "Cannot copy files - no running container")
 
-    for src_file, target_dir in files_to_copy:
-      self._copy_single_file(src_file, target_dir)
+    for src_file, target_path in files_to_copy:
+      self._copy_single_file(src_file, target_path)
 
-  def _copy_single_file(self, src_file: io.IOBase, target_dir: str) -> None:
-    """Copy a single file to the container."""
-    # Create a TarInfo object
-    tar_info = tarfile.TarInfo(
-      name=src_file.name if hasattr(src_file, 'name') else 'file')
+  def _copy_single_file(self, src_file: io.IOBase, target_path: str) -> None:
+    """
+    Copy a single file to the container.
+
+    Args:
+        src_file: File object to copy
+        target_path: Full path including filename (e.g., /repo/dir/newname.txt)
+                     The directory portion will be the extraction target,
+                     and the filename will be used in the tarball.
+    """
+    import os
+
+    # Split target_path into directory and filename
+    target_dir = os.path.dirname(target_path)
+    target_filename = os.path.basename(target_path)
+
+    # If target_path ends with /, treat it as a directory and use original filename
+    if target_path.endswith('/'):
+      target_dir = target_path.rstrip('/')
+      target_filename = os.path.basename(src_file.name if hasattr(src_file, 'name') else 'file')
+
+    # Create a TarInfo object with the target filename
+    tar_info = tarfile.TarInfo(name=target_filename)
 
     # Get file size
     src_file.seek(0, io.SEEK_END)
@@ -301,7 +320,7 @@ class DockerContainer:
       tarhandle.addfile(tar_info, src_file)
     tarstream.seek(0)
 
-    # Push to container
+    # Push to container - extract to the directory
     self.container.put_archive(target_dir, tarstream)
 
   def execute_command(
@@ -329,7 +348,7 @@ class DockerContainer:
       extra_args["workdir"] = workdir
 
     rc, (stdout,
-         stderr) = self.container.exec_run(cmd=f"bash -c \"{command}\"",
+         stderr) = self.container.exec_run(cmd=f"bash -c \"timeout 60 {command}\"",
                                            demux=True,
                                            tty=True,
                                            **extra_args)

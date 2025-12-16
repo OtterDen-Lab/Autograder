@@ -18,7 +18,7 @@ from collections import defaultdict
 from typing import Tuple, Optional, List
 
 from Autograder.registry import GraderRegistry
-from lms_interface.classes import Feedback
+from Autograder.lms_interface.classes import Feedback
 from Autograder.docker_utils import DockerClient, DockerContainer, DockerError, DockerContainerManager
 import Autograder.exceptions
 from Autograder.grader import FileBasedGrader
@@ -403,6 +403,7 @@ class Grader__docker(FileBasedGrader):
     with self:
       if files_to_copy is not None:
         self.add_files_to_docker(files_to_copy)
+      # input(f"Waiting on container {self.container}")
       return super().grade_submission(submission, *args, **kwargs)
 
 
@@ -549,7 +550,7 @@ class Grader__template_grader(Grader__docker):
 
             # We need to provide a target file path, not just directory
             # The Docker copy will handle creating directories
-            target_file_path = target_directory  #os.path.join(target_directory, target_name)
+            target_file_path = os.path.join(target_directory, target_name)
 
             files_to_copy.append((file_obj, target_file_path))
             matched_this_file = True
@@ -621,9 +622,9 @@ class Grader__template_grader(Grader__docker):
         "WORKDIR /repo",
         "RUN rm -rf .venv",
         "RUN rm -rf uv.lock .venv",
-        "RUN uv lock",
+        # "RUN uv lock",
         "RUN uv sync",
-        "RUN chown -R dockeruser /repo",
+        # "RUN chown -fR dockeruser /repo",
         # "USER dockeruser",
       ])
 
@@ -631,6 +632,8 @@ class Grader__template_grader(Grader__docker):
       with open(os.path.join(temp_build_dir, "Dockerfile"),
                 "w") as dockerfile_fid:
         dockerfile_fid.write('\n'.join(dockerfile_lines) + "\n")
+        
+      # input(f"Waiting at {temp_build_dir}")
 
       image = self.docker_client.build_image_from_context(
         context_path=temp_build_dir,

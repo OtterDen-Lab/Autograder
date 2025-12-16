@@ -1,0 +1,149 @@
+name: Release on version bump
+
+on:
+  push:
+    branches:
+      - main    # change if your default branch is different
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    permissions:
+      contents: write   # create tags & releases
+      id-token: write   # PyPI trusted publishing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # need history to read previous version
+
+      - name: Set up Python for tooling
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Get previous version (from parent commit)
+        id: prev_version
+        run: |
+          BEFORE="${{ github.event.before }}"
+
+          # First commit / no parent? treat as "no previous version"
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || [ -z "$BEFORE" ]; then
+            echo "No previous commit; setting previous version empty."
+            echo "version=" >> "$GITHUB_OUTPUT"
+          else
+            if git show "$BEFORE":pyproject.toml > pyproject_prev.toml 2>/dev/null; then
+              VERSION=$(python -c "import tomllib, pathlib; d = tomllib.loads(pathlib.Path('pyproject_prev.toml').read_text()); print(d['project']['version'])")
+              echo "previous version: $VERSION"
+              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            else
+              echo "No previous pyproject.toml found; setting previous version empty."
+              echo "version=" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Get current version
+        id: curr_version
+        run: |
+          VERSION=$(python -c "import tomllib, pathlib; d = tomllib.loads(pathlib.Path('pyproject.toml').read_text()); print(d['project']['version'])")
+          echo "current version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether this is a release commit
+        id: decision
+        run: |
+          PREV="${{ steps.prev_version.outputs.version }}"
+          CURR="${{ steps.curr_version.outputs.version }}"
+          MSG="${{ github.event.head_commit.message }}"
+
+          echo "Previous version: '$PREV'"
+          echo "Current version:  '$CURR'"
+          echo "Commit message:   '$MSG'"
+
+          SHOULD_RELEASE=false
+
+          # Require version change AND 'release' in the commit message
+          if [ -n "$CURR" ] && [ "$CURR" != "$PREV" ]; then
+            if echo "$MSG" | grep -qi "release"; then
+              echo "Version changed and commit message indicates release."
+              SHOULD_RELEASE=true
+            else
+              echo "Version changed but commit message does not contain 'release'; not releasing."
+            fi
+          else
+            echo "Version did not change; not releasing."
+          fi
+
+          echo "release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+
+      - name: Stop if not a release
+        if: steps.decision.outputs.release != 'true'
+        run: |
+          echo "Not a release commit; skipping remaining steps."
+          exit 0
+
+      - name: Ensure tag does not already exist
+        if: steps.decision.outputs.release == 'true'
+        run: |
+          VERSION="${{ steps.curr_version.outputs.version }}"
+          TAG="v${VERSION}"
+
+          echo "Checking for existing tag $TAG"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists. Aborting."
+            exit 1
+          fi
+
+      - name: Create and push tag
+        if: steps.decision.outputs.release == 'true'
+        run: |
+          VERSION="${{ steps.curr_version.outputs.version }}"
+          TAG="v${VERSION}"
+
+          echo "Creating tag $TAG at $GITHUB_SHA"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+
+      - name: Install uv
+        if: steps.decision.outputs.release == 'true'
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Python 3.13 for build
+        if: steps.decision.outputs.release == 'true'
+        run: uv python install 3.13
+
+      - name: Build
+        if: steps.decision.outputs.release == 'true'
+        run: uv build
+
+      - name: Upload dist artifacts
+        if: steps.decision.outputs.release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        if: steps.decision.outputs.release == 'true'
+        run: uv publish
+
+      - name: Create GitHub Release
+        if: steps.decision.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.curr_version.outputs.version }}
+          name: v${{ steps.curr_version.outputs.version }}
+          body: |
+            Release v${{ steps.curr_version.outputs.version }}
+
+            - Version bumped in pyproject.toml
+            - Built with uv and published to PyPI.
+            - Artifacts attached below.
+          files: dist/*

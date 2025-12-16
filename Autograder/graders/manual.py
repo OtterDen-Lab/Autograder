@@ -14,7 +14,7 @@ from Autograder.assignment import Assignment
 from Autograder.grader import FileBasedGrader
 from Autograder.registry import GraderRegistry
 import Autograder.exceptions
-from lms_interface.classes import Feedback, Submission
+from Autograder.lms_interface.classes import Feedback, Submission
 
 import logging
 

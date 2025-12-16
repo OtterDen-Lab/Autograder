@@ -1,19 +1,121 @@
-# Teaching Tools
+# Otter-Autograder
 
-A set of tools that are used to help make writing and grading assignments easier, currently with a focus on Canvas-based grading.
+An autograding system for teaching, primarily focused on Canvas LMS integration. Supports automated grading of programming assignments (via Docker), text submissions (like learning logs), quizzes, and manual exam grading with AI assistance.
 
-## Pieces
+## Installation
 
-### Interface Scripts
+```bash
+pip install Otter-Autograder
+```
 
-There are two direct scripts currently enabled:
-1. [`generate_quiz.py`](generate_quiz.py): Generates quiz PDFs and canvas variations based on a range of input types and pre-defined problems
-2. [`grader.py`](grade_assignments.py): Helps to streamline the grading flow.  Currently only for exams but I'll be migrating code over shortly
+## Quick Start
 
-### Code Libraries
+### 1. Set up Canvas API credentials
 
-There are three main modules currently available in `TeachingTools`:
-1. [QuizGeneration](TeachingTools/quiz_generation): Helps generate quizzes both for canvas and paper and generate variations.
-2. [GradingAssistant](TeachingTools/grading_assistant): Helps streamline grading, currently just for exams but with more code transfer coming soon.
-3. [LMSInterface](TeachingTools/lms_interface): Interfaces with LMSes (currently only canvas since it's what we use at CSUMB), and has some helpers for marking assignments missing.
+Create a `.env` file in your working directory:
 
+```bash
+CANVAS_API_KEY=your_canvas_api_key_here
+CANVAS_API_URL=https://your-institution.instructure.com
+```
+
+### 2. Create a grading configuration
+
+Create a YAML file (e.g., `assignments.yaml`) defining your courses and assignments:
+
+```yaml
+assignment_types:
+  programming:
+    kind: ProgrammingAssignment
+    grader: template-grader
+    settings:
+      base_image_name: "your-docker-image"
+
+courses:
+  - name: "Your Course"
+    id: 12345
+    assignment_groups:
+      - type: programming
+        assignments:
+          - id: 67890
+            repo_path: "PA1"
+```
+
+### 3. Run the grader
+
+```bash
+grade-assignments --yaml assignments.yaml
+```
+
+## Features
+
+### Supported Assignment Types
+
+- **Programming Assignments**: Docker-based grading with template matching and test execution
+- **Text Submissions**: AI-powered grading with rubric generation and clustering analysis
+- **Quizzes**: Canvas quiz grading support
+- **Exams**: Manual grading with AI-assisted name extraction and handwriting recognition
+- **Web-based Grading UI**: Modern interface for problem-first exam grading
+
+### Key Capabilities
+
+- Parallel execution with configurable worker threads
+- Automatic score scaling to Canvas points
+- Slack notifications for grading errors
+- Record retention for audit trails
+- Regrade support for existing submissions
+- Test mode for validation before full grading runs
+
+## Usage Examples
+
+### Grade with limited submissions (testing)
+
+```bash
+grade-assignments --yaml config.yaml --limit 5
+```
+
+### Regrade existing submissions
+
+```bash
+grade-assignments --yaml config.yaml --regrade
+```
+
+### Test submissions without pushing grades
+
+```bash
+grade-assignments --yaml config.yaml --test
+```
+
+### Control parallelism
+
+```bash
+grade-assignments --yaml config.yaml --max_workers 2
+```
+
+## Configuration
+
+See the `example_files/` directory for complete configuration examples:
+
+- `example-programming_assignments.yaml`: Docker-based grading
+- `journal_assignments.yaml`: Text submission grading
+- `example-exams.yaml`: Exam grading setup
+- `example-template.yaml`: All available options
+
+## Requirements
+
+- Python >= 3.12
+- Docker (for programming assignment grading)
+- Canvas API access
+- Optional: OpenAI or Anthropic API keys for AI-powered features
+
+## Documentation
+
+For detailed documentation, see [the documentation directory](https://github.com/OtterDen-Lab/Autograder/tree/main/documentation).
+
+## License
+
+This project is licensed under the GPL-3.0-or-later license. See the LICENSE file for details.
+
+## Contributing
+
+Contributions are welcome! Please open an issue or pull request on [GitHub](https://github.com/OtterDen-Lab/Autograder).

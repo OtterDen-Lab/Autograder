@@ -14,7 +14,7 @@ from typing import Optional, Dict, List
 
 import yaml
 
-from lms_interface.canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment, CanvasQuiz
+from Autograder.lms_interface.canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment, CanvasQuiz
 from Autograder.assignment import AssignmentRegistry
 from Autograder.grader import GraderRegistry
 from Autograder.registry import TypeRegistry
@@ -147,7 +147,8 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     repo_path = merged_assignment.get('repo_path')
 
     # Create grader with assignment identifier for better logging
-    assignment_name = lms_assignment.name.split()[0]
+    assignment_name = settings.get("assignment_name", lms_assignment.name.split()[0])
+    del settings["assignment_name"]
     grader = GraderRegistry.create(grader_name,
                                    assignment_path=repo_path,
                                    assignment_name=assignment_name,
