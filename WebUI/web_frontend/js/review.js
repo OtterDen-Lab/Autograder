@@ -133,7 +133,15 @@ async function loadReviewProblem(index) {
     nameElement.dataset.studentName = problemMeta.student_name || 'Unknown';
     nameElement.textContent = '████████';
     nameElement.classList.remove('revealed');
-    nameElement.title = 'Click to reveal student name';
+
+    // TAs see anonymous grading message
+    if (currentUser && currentUser.role === 'ta') {
+        nameElement.title = 'Anonymous grading (name hidden for TAs)';
+        nameElement.style.cursor = 'default';
+    } else {
+        nameElement.title = 'Click to reveal student name';
+        nameElement.style.cursor = 'pointer';
+    }
 
     // Display score with max points (fallback to global problemMaxPoints)
     const maxPoints = problemMeta.max_points || problemMaxPoints[reviewProblemNumber] || 8;
@@ -307,6 +315,11 @@ document.addEventListener('keydown', (e) => {
 
 // Student name spoiler click handler
 document.getElementById('review-student-name').addEventListener('click', function() {
+    // TAs cannot reveal student names (anonymous grading)
+    if (currentUser && currentUser.role === 'ta') {
+        return;
+    }
+
     if (this.classList.contains('revealed')) {
         // Hide the name again
         this.textContent = '████████';
