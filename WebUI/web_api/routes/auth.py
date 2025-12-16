@@ -15,7 +15,8 @@ from ..models import (
   LoginRequest,
   LoginResponse,
   CreateUserRequest,
-  UserResponse
+  UserResponse,
+  ChangePasswordRequest
 )
 
 router = APIRouter()
@@ -249,3 +250,46 @@ async def deactivate_user(
     f"User {user.username} deactivated by {current_user['username']}")
 
   return {"success": True, "message": "User deactivated"}
+
+
+@router.post("/change-password")
+async def change_password(
+  request: ChangePasswordRequest,
+  current_user: dict = Depends(get_current_user)
+):
+  """
+  Change current user's password.
+
+  Requires current password for verification.
+
+  Args:
+    request: Current and new password
+    current_user: Current authenticated user
+
+  Returns:
+    Success message
+
+  Raises:
+    HTTPException: 401 if current password is incorrect
+  """
+  user_repo = UserRepository()
+  auth_service = AuthService()
+
+  # Get user
+  user = user_repo.get_by_id(current_user["user_id"])
+  if not user:
+    raise HTTPException(status_code=404, detail="User not found")
+
+  # Verify current password
+  if not auth_service.verify_password(request.current_password,
+                                      user.password_hash):
+    raise HTTPException(status_code=401,
+                        detail="Current password is incorrect")
+
+  # Update password
+  new_password_hash = auth_service.hash_password(request.new_password)
+  user_repo.update_password(user.id, new_password_hash)
+
+  log.info(f"User {user.username} changed their password")
+
+  return {"success": True, "message": "Password changed successfully"}

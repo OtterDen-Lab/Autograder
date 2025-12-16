@@ -228,3 +228,9 @@ class AssignmentResponse(BaseModel):
   username: str
   full_name: Optional[str]
   assigned_at: str
+
+
+class ChangePasswordRequest(BaseModel):
+  """Request model for changing password"""
+  current_password: str = Field(..., min_length=1)
+  new_password: str = Field(..., min_length=8)
