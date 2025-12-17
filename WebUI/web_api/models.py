@@ -176,3 +176,61 @@ class UploadResponse(BaseModel):
   composites: Optional[dict] = None  # page_num -> base64 image
   page_dimensions: Optional[dict] = None  # page_num -> {width, height}
   num_exams: Optional[int] = None
+
+
+# Authentication Models
+
+class LoginRequest(BaseModel):
+  """Request model for user login"""
+  username: str
+  password: str
+
+
+class LoginResponse(BaseModel):
+  """Response model for login"""
+  success: bool
+  user: Optional[dict] = None
+  message: str
+
+
+class CreateUserRequest(BaseModel):
+  """Request model for creating a new user"""
+  username: str = Field(..., min_length=3, max_length=50)
+  email: Optional[str] = Field(None, pattern=r'^[\w\.-]+@[\w\.-]+\.\w+$')
+  password: str = Field(..., min_length=8)
+  full_name: Optional[str] = None
+  role: str = Field(..., pattern='^(instructor|ta)$')
+
+
+class UserResponse(BaseModel):
+  """Response model for user details"""
+  id: int
+  username: str
+  email: Optional[str]
+  full_name: Optional[str]
+  role: str
+  is_active: bool
+  created_at: datetime
+
+  class Config:
+    from_attributes = True
+
+
+class AssignUserRequest(BaseModel):
+  """Request model for assigning TA to session"""
+  user_id: int
+
+
+class AssignmentResponse(BaseModel):
+  """Response model for session assignment"""
+  session_id: int
+  user_id: int
+  username: str
+  full_name: Optional[str]
+  assigned_at: str
+
+
+class ChangePasswordRequest(BaseModel):
+  """Request model for changing password"""
+  current_password: str = Field(..., min_length=1)
+  new_password: str = Field(..., min_length=8)

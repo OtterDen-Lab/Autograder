@@ -37,8 +37,46 @@
         </div>
     </div>
 
+    <!-- Change Password Modal -->
+    <div id="change-password-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; align-items: center; justify-content: center;">
+        <div style="background: white; border-radius: 8px; padding: 30px; max-width: 500px; width: 90%;">
+            <h2 style="margin-top: 0;">Change Password</h2>
+
+            <form id="change-password-form">
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 500;">
+                        Current Password: *
+                    </label>
+                    <input type="password" id="current-password" required style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid var(--gray-300);">
+                </div>
+
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 500;">
+                        New Password: *
+                    </label>
+                    <input type="password" id="new-password" required minlength="8" style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid var(--gray-300);">
+                    <small style="color: var(--gray-700);">Minimum 8 characters</small>
+                </div>
+
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 500;">
+                        Confirm New Password: *
+                    </label>
+                    <input type="password" id="confirm-new-password" required minlength="8" style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid var(--gray-300);">
+                </div>
+
+                <div id="change-password-error" class="error-message" style="display: none; margin-bottom: 15px;"></div>
+
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button type="button" id="cancel-password-change" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Change Password</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Autograding Modal -->
-    <div id="autograding-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+    <div id="autograding-modal" class="instructor-only" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
         <div style="background: white; border-radius: 8px; padding: 30px; max-width: 800px; width: 90%; max-height: 90vh; overflow-y: auto;">
             <h2 style="margin-top: 0;">Autograding Setup</h2>
 
@@ -128,7 +166,10 @@
         <header>
             <div class="header-content" style="align-items: center;">
                 <h1 style="margin: 0;">Web Grading Interface <span id="session-info" style="font-size: 0.6em; color: var(--gray-600); font-weight: normal;"></span></h1>
-                <button id="home-btn" class="btn btn-secondary" style="display: none;">← Home</button>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <div id="user-display"></div>
+                    <button id="home-btn" class="btn btn-secondary" style="display: none;">← Home</button>
+                </div>
             </div>
         </header>
 
@@ -159,7 +200,7 @@
                 </div>
 
                 <!-- New Session Form -->
-                <div id="new-session-form" style="display: none;">
+                <div id="new-session-form" class="instructor-only" style="display: none;">
                     <h3>Create New Session</h3>
                     <form id="session-form">
                         <label>
@@ -199,14 +240,72 @@
                 </div>
 
                 <div style="display: flex; gap: 10px; margin-top: 20px;">
-                    <button id="new-session-btn" class="btn btn-primary">+ Create New Session</button>
-                    <button id="import-session-btn" class="btn btn-secondary">Import Session</button>
+                    <button id="new-session-btn" class="btn btn-primary instructor-only">+ Create New Session</button>
+                    <button id="import-session-btn" class="btn btn-secondary instructor-only">Import Session</button>
+                    <button id="manage-users-btn" class="btn btn-secondary instructor-only">Manage Users</button>
                 </div>
                 <input type="file" id="import-file-input" accept=".json" style="display: none;">
             </section>
 
+            <!-- User Management Section -->
+            <section id="user-management-section" class="section instructor-only">
+                <h2>User Management</h2>
+                <p style="color: var(--gray-700); margin-bottom: 20px;">
+                    Create and manage instructor and TA accounts. TAs can only access grading sessions that are explicitly assigned to them.
+                </p>
+
+                <!-- Create User Form -->
+                <div id="create-user-form" style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                    <h3 style="margin-top: 0;">Create New User</h3>
+                    <p style="color: var(--gray-700); margin-bottom: 15px;">
+                        A random password will be generated for the new user. Make sure to copy it and share it with them securely.
+                    </p>
+                    <form id="user-form">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <label>
+                                Username: *
+                                <input type="text" id="user-username" required placeholder="e.g., jsmith">
+                            </label>
+
+                            <label>
+                                Role: *
+                                <select id="user-role" required>
+                                    <option value="ta">TA</option>
+                                    <option value="instructor">Instructor</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        <div id="user-form-error" class="error-message" style="display: none; margin-top: 15px;"></div>
+
+                        <!-- Success message with password -->
+                        <div id="user-created-success" style="display: none; margin-top: 15px; padding: 15px; background: #d1fae5; border: 1px solid #6ee7b7; border-radius: 6px;">
+                            <p style="margin: 0 0 10px 0; color: #065f46; font-weight: 600;">User created successfully!</p>
+                            <p style="margin: 0 0 10px 0; color: #065f46;">
+                                Generated password: <strong id="generated-password" style="font-family: monospace; font-size: 16px;"></strong>
+                            </p>
+                            <button type="button" id="copy-password-btn" class="btn btn-small btn-success">Copy Password</button>
+                            <p style="margin: 10px 0 0 0; color: #065f46; font-size: 13px;">
+                                <strong>Important:</strong> Copy this password now. It cannot be retrieved later.
+                            </p>
+                        </div>
+
+                        <div style="margin-top: 20px;">
+                            <button type="submit" class="btn btn-primary" id="create-user-submit-btn">Create User</button>
+                            <button type="button" id="cancel-user-btn" class="btn">← Back to Sessions</button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Users List -->
+                <div id="users-list-container" style="background: white; padding: 20px; border-radius: 8px;">
+                    <h3 style="margin-top: 0;">Existing Users</h3>
+                    <div id="users-list"></div>
+                </div>
+            </section>
+
             <!-- Upload Section -->
-            <section id="upload-section" class="section">
+            <section id="upload-section" class="section instructor-only">
                 <h2>Upload Exams</h2>
                 <div id="initial-upload-message" style="margin-bottom: 15px; padding: 10px; background: #eff6ff; border-radius: 6px; display: none;">
                     <strong>Note:</strong> You can upload additional exams later if students submit late.
@@ -281,7 +380,7 @@
                         <span id="overall-progress-label" style="font-size: 13px; color: var(--gray-700);">Overall: 0 / 0 (0%)</span>
                     </div>
                     <button id="view-stats-btn" class="btn btn-secondary btn-small">View Statistics</button>
-                    <button id="upload-more-btn" class="btn btn-secondary btn-small">+ Upload More Exams</button>
+                    <button id="upload-more-btn" class="btn btn-secondary btn-small instructor-only">+ Upload More Exams</button>
                 </div>
 
                 <div class="grading-layout">
@@ -311,7 +410,7 @@
                             <button id="decipher-btn" class="btn btn-secondary">Decipher Handwriting</button>
                             <button id="show-answer-btn" class="btn btn-secondary" style="display: none;">Show Answer</button>
                             <button id="rescan-problem-qr-btn" class="btn btn-secondary" title="Re-scan QR code for this problem at higher DPI">🔄 Re-scan QR</button>
-                            <button id="start-autograde-btn" class="btn btn-success">Start Autograding</button>
+                            <button id="start-autograde-btn" class="btn btn-success instructor-only">Start Autograding</button>
                             <button id="review-grades-btn" class="btn btn-secondary">Review Graded</button>
                         </div>
                         <div style="text-align: center; padding: 5px 0;">
@@ -363,6 +462,25 @@
                 <h2>Grading Statistics</h2>
                 <div id="stats-container"></div>
 
+                <!-- TA Assignment Section (Instructor Only) -->
+                <div id="ta-assignment-container" class="instructor-only" style="display: none; margin-top: 20px; padding: 20px; background: white; border-radius: 8px; border: 1px solid var(--gray-200);">
+                    <h3 style="margin-top: 0;">TA Assignments</h3>
+                    <p style="color: var(--gray-700); margin-bottom: 15px;">
+                        Assign TAs to this grading session. Only assigned TAs will be able to access and grade this session.
+                    </p>
+
+                    <div id="assigned-tas-list" style="margin-bottom: 15px;">
+                        <!-- Assigned TAs will be displayed here -->
+                    </div>
+
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <select id="ta-select" style="flex: 1; padding: 8px; border-radius: 4px; border: 1px solid var(--gray-300);">
+                            <option value="">Select a TA to assign...</option>
+                        </select>
+                        <button id="assign-ta-btn" class="btn btn-primary">Assign TA</button>
+                    </div>
+                </div>
+
                 <div id="finalization-progress" style="display: none; margin-top: 20px; padding: 20px; background: #eff6ff; border-radius: 8px;">
                     <h3 style="margin-top: 0;">Finalization Progress</h3>
                     <div id="finalization-message" style="margin: 10px 0; font-size: 16px; font-weight: 500;"></div>
@@ -374,12 +492,12 @@
                 <div style="display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap;">
                     <button id="continue-grading-btn" class="btn btn-primary">← Continue Grading</button>
                     <button id="review-grades-stats-btn" class="btn btn-secondary">Review Graded Problems</button>
-                    <button id="upload-more-stats-btn" class="btn btn-secondary">+ Upload More Exams</button>
-                    <button id="finalize-btn" class="btn btn-success">Finalize & Upload to Canvas</button>
-                    <button id="export-session-btn" class="btn btn-secondary">Export Session (Checkpoint)</button>
-                    <button id="change-canvas-target-btn" class="btn btn-secondary">Change Canvas Target</button>
-                    <button id="rescan-qr-btn" class="btn btn-secondary" title="Re-scan QR codes at higher DPI">🔄 Re-scan QR Codes</button>
-                    <button id="rerun-blank-detection-btn" class="btn btn-secondary" title="Re-run blank detection on all problems">🔍 Re-run Blank Detection</button>
+                    <button id="upload-more-stats-btn" class="btn btn-secondary instructor-only">+ Upload More Exams</button>
+                    <button id="finalize-btn" class="btn btn-success instructor-only">Finalize & Upload to Canvas</button>
+                    <button id="export-session-btn" class="btn btn-secondary instructor-only">Export Session (Checkpoint)</button>
+                    <button id="change-canvas-target-btn" class="btn btn-secondary instructor-only">Change Canvas Target</button>
+                    <button id="rescan-qr-btn" class="btn btn-secondary instructor-only" title="Re-scan QR codes at higher DPI">🔄 Re-scan QR Codes</button>
+                    <button id="rerun-blank-detection-btn" class="btn btn-secondary instructor-only" title="Re-run blank detection on all problems">🔍 Re-run Blank Detection</button>
                 </div>
             </section>
         </main>
@@ -647,6 +765,8 @@
     </div>
 
     <script src="/js/app.js"></script>
+    <script src="/js/user_management.js"></script>
+    <script src="/js/session_assignments.js"></script>
     <script src="/js/matching.js"></script>
     <script src="/js/grading.js"></script>
     <script src="/js/rubric-table.js"></script>

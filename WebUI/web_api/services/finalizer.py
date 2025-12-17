@@ -12,8 +12,8 @@ import fitz  # PyMuPDF
 from PIL import Image
 
 from ..repositories import SessionRepository, SubmissionRepository, ProblemRepository
-from lms_interface.canvas_interface import CanvasInterface
-from lms_interface.classes import Feedback
+from Autograder.lms_interface.canvas_interface import CanvasInterface
+from Autograder.lms_interface.classes import Feedback
 from .. import sse
 
 log = logging.getLogger(__name__)

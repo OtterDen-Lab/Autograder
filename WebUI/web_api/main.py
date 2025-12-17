@@ -12,8 +12,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from . import __version__
-from .database import init_database
-from .routes import sessions, problems, uploads, canvas, matching, finalize, ai_grader, alignment, feedback_tags, debug
+from .database import init_database, get_db_connection
+from .routes import sessions, problems, uploads, canvas, matching, finalize, ai_grader, alignment, feedback_tags, auth, assignments
+
+# Optional debug routes (may not exist on all deployments)
+try:
+  from .routes import debug
+  has_debug_routes = True
+except ImportError:
+  has_debug_routes = False
 
 
 @asynccontextmanager
@@ -21,6 +28,12 @@ async def lifespan(app: FastAPI):
   """Lifespan event handler for startup/shutdown"""
   # Startup: Initialize database
   init_database()
+
+  # Cleanup expired authentication sessions
+  from .services.auth_service import AuthService
+  auth_service = AuthService()
+  with get_db_connection() as conn:
+    auth_service.cleanup_expired_sessions(conn)
 
   yield
 
@@ -41,7 +54,7 @@ app = FastAPI(
 # CORS middleware for development
 app.add_middleware(
   CORSMiddleware,
-  allow_origins=["http://localhost:3000", "http://localhost:8000"],
+  allow_origins=["http://localhost:3000", "http://localhost:8765"],
   allow_credentials=True,
   allow_methods=["*"],
   allow_headers=["*"],
@@ -56,7 +69,9 @@ async def health_check():
 
 
 # Include routers
+app.include_router(auth.router,           prefix="/api/auth",           tags=["auth"])
 app.include_router(sessions.router,       prefix="/api/sessions",       tags=["sessions"])
+app.include_router(assignments.router,    prefix="/api/sessions",       tags=["assignments"])
 app.include_router(problems.router,       prefix="/api/problems",       tags=["problems"])
 app.include_router(uploads.router,        prefix="/api/uploads",        tags=["uploads"])
 app.include_router(canvas.router,         prefix="/api/canvas",         tags=["canvas"])
@@ -65,7 +80,10 @@ app.include_router(finalize.router,       prefix="/api/finalize",       tags=["f
 app.include_router(ai_grader.router,      prefix="/api/ai-grader",      tags=["ai-grader"])
 app.include_router(alignment.router,      prefix="/api/alignment",      tags=["alignment"])
 app.include_router(feedback_tags.router,  prefix="/api/feedback-tags",  tags=["feedback-tags"])
-app.include_router(debug.router,          prefix="/api",                tags=["debug"])
+
+# Conditionally include debug routes if available
+if has_debug_routes:
+  app.include_router(debug.router,        prefix="/api",                tags=["debug"])
 
 # Mount static files (frontend) - MUST BE LAST as it catches all routes
 frontend_path = Path(__file__).parent.parent / "web_frontend"
@@ -78,4 +96,4 @@ if frontend_path.exists():
 
 if __name__ == "__main__":
   import uvicorn
-  uvicorn.run("web_api.main:app", host="127.0.0.1", port=8000, reload=True)
+  uvicorn.run("web_api.main:app", host="127.0.0.1", port=8765, reload=True)

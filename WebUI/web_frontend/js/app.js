@@ -2,6 +2,7 @@
 
 const API_BASE = '/api';
 let currentSession = null;
+let currentUser = null;
 
 // Helper function to recursively get all files from dropped items (including directories)
 async function getAllFilesFromDataTransfer(dataTransferItems) {
@@ -58,8 +59,154 @@ async function readDirectory(directoryEntry) {
     return files;
 }
 
+// Check authentication status
+async function checkAuth() {
+    try {
+        const response = await fetch(`${API_BASE}/auth/me`, {
+            credentials: 'include'
+        });
+
+        if (response.ok) {
+            currentUser = await response.json();
+            console.log('Authenticated as:', currentUser.username, `(${currentUser.role})`);
+
+            // Update UI with user info
+            updateUserDisplay();
+
+            // Hide instructor-only features for TAs
+            if (currentUser.role === 'ta') {
+                hideInstructorUI();
+            }
+        } else {
+            // Not authenticated - redirect to login
+            window.location.href = '/login.html';
+        }
+    } catch (error) {
+        console.error('Auth check failed:', error);
+        // On error, redirect to login
+        window.location.href = '/login.html';
+    }
+}
+
+// Update user display in header
+function updateUserDisplay() {
+    const userDisplay = document.getElementById('user-display');
+    if (userDisplay && currentUser) {
+        const roleLabel = currentUser.role === 'instructor' ? 'Instructor' : 'TA';
+        userDisplay.innerHTML = `
+            <span style="margin-right: 10px;">
+                Logged in as <strong>${currentUser.username}</strong> (${roleLabel})
+            </span>
+            <button id="change-password-btn" class="btn btn-secondary" style="margin-right: 5px;">Change Password</button>
+            <button id="logout-btn" class="btn btn-secondary">Logout</button>
+        `;
+
+        // Add logout handler
+        document.getElementById('logout-btn').onclick = handleLogout;
+
+        // Add change password handler
+        document.getElementById('change-password-btn').onclick = openChangePasswordModal;
+    }
+}
+
+// Handle logout
+async function handleLogout() {
+    try {
+        await fetch(`${API_BASE}/auth/logout`, {
+            method: 'POST',
+            credentials: 'include'
+        });
+    } catch (error) {
+        console.error('Logout error:', error);
+    }
+
+    // Always redirect to login, even if logout request failed
+    window.location.href = '/login.html';
+}
+
+// Open change password modal
+function openChangePasswordModal() {
+    const modal = document.getElementById('change-password-modal');
+    const form = document.getElementById('change-password-form');
+    const errorDiv = document.getElementById('change-password-error');
+
+    // Reset form and error message
+    form.reset();
+    errorDiv.style.display = 'none';
+
+    // Show modal
+    modal.style.display = 'flex';
+}
+
+// Close change password modal
+function closeChangePasswordModal() {
+    document.getElementById('change-password-modal').style.display = 'none';
+}
+
+// Handle password change form submission
+async function handleChangePasswordSubmit(e) {
+    e.preventDefault();
+
+    const currentPassword = document.getElementById('current-password').value;
+    const newPassword = document.getElementById('new-password').value;
+    const confirmPassword = document.getElementById('confirm-new-password').value;
+    const errorDiv = document.getElementById('change-password-error');
+    const form = document.getElementById('change-password-form');
+
+    // Clear previous errors
+    errorDiv.style.display = 'none';
+
+    // Validate passwords match
+    if (newPassword !== confirmPassword) {
+        errorDiv.textContent = 'New passwords do not match';
+        errorDiv.style.display = 'block';
+        return;
+    }
+
+    // Validate password length
+    if (newPassword.length < 8) {
+        errorDiv.textContent = 'New password must be at least 8 characters';
+        errorDiv.style.display = 'block';
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/auth/change-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+                current_password: currentPassword,
+                new_password: newPassword
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to change password');
+        }
+
+        const result = await response.json();
+
+        // Success - close modal and show success message
+        closeChangePasswordModal();
+        alert('Password changed successfully!');
+
+    } catch (error) {
+        console.error('Password change error:', error);
+        errorDiv.textContent = error.message;
+        errorDiv.style.display = 'block';
+    }
+}
+
+// Hide instructor-only UI elements for TAs
+function hideInstructorUI() {
+    document.body.classList.add('role-ta');
+}
+
 // Initialize app
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    await checkAuth();
     loadSessions();
     setupEventListeners();
     initializeAIProvider();
@@ -562,6 +709,17 @@ function setupEventListeners() {
             alert(`Failed to rescan QR codes: ${error.message}`);
             btn.disabled = false;
             btn.textContent = originalText;
+        }
+    };
+
+    // Password change modal event listeners
+    document.getElementById('change-password-form').onsubmit = handleChangePasswordSubmit;
+    document.getElementById('cancel-password-change').onclick = closeChangePasswordModal;
+
+    // Close modal when clicking outside
+    document.getElementById('change-password-modal').onclick = (e) => {
+        if (e.target.id === 'change-password-modal') {
+            closeChangePasswordModal();
         }
     };
 }

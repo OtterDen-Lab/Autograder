@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 # Default database path (can be overridden via environment variable)
 DEFAULT_DB_PATH = Path.home() / ".autograder" / "grading.db"
-CURRENT_SCHEMA_VERSION = 21
+CURRENT_SCHEMA_VERSION = 23
 
 
 def get_db_path() -> Path:
@@ -226,6 +226,75 @@ def create_schema(cursor):
         ON feedback_tags(session_id, problem_number)
     """)
 
+  # Authentication and RBAC tables (v22, email made optional in v23)
+  cursor.execute("""
+        CREATE TABLE users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE,
+            password_hash TEXT NOT NULL,
+            full_name TEXT,
+            role TEXT NOT NULL CHECK(role IN ('instructor', 'ta')),
+            is_active INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_by INTEGER,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        )
+    """)
+
+  cursor.execute("""
+        CREATE TABLE auth_sessions (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            ip_address TEXT,
+            user_agent TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
+  cursor.execute("""
+        CREATE TABLE session_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            assigned_by INTEGER,
+            FOREIGN KEY (session_id) REFERENCES grading_sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (assigned_by) REFERENCES users(id),
+            UNIQUE(session_id, user_id)
+        )
+    """)
+
+  # Create indexes for auth tables
+  cursor.execute(
+    "CREATE INDEX idx_auth_sessions_user_id ON auth_sessions(user_id)")
+  cursor.execute(
+    "CREATE INDEX idx_auth_sessions_expires ON auth_sessions(expires_at)")
+  cursor.execute(
+    "CREATE INDEX idx_session_assignments_user ON session_assignments(user_id)")
+  cursor.execute(
+    "CREATE INDEX idx_session_assignments_session ON session_assignments(session_id)"
+  )
+
+  # Create default admin user (password: changeme123)
+  import bcrypt
+  password_hash = bcrypt.hashpw("changeme123".encode(),
+                                bcrypt.gensalt()).decode()
+  cursor.execute(
+    """
+        INSERT INTO users (username, email, password_hash, full_name, role)
+        VALUES (?, ?, ?, ?, ?)
+    """,
+    ("admin", "admin@example.com", password_hash, "Administrator",
+     "instructor"))
+
+  log.info(
+    "Created default admin user (username: admin, password: changeme123)")
+
   # Record schema version
   cursor.execute("INSERT INTO _schema_version (version) VALUES (?)",
                  (CURRENT_SCHEMA_VERSION, ))
@@ -318,6 +387,14 @@ def run_migrations(cursor, from_version: int):
   if from_version < 21:
     migrate_to_v21(cursor)
     cursor.execute("INSERT INTO _schema_version (version) VALUES (21)")
+
+  if from_version < 22:
+    migrate_to_v22(cursor)
+    cursor.execute("INSERT INTO _schema_version (version) VALUES (22)")
+
+  if from_version < 23:
+    migrate_to_v23(cursor)
+    cursor.execute("INSERT INTO _schema_version (version) VALUES (23)")
 
 
 def migrate_to_v2(cursor):
@@ -702,6 +779,121 @@ def migrate_to_v21(cursor):
     """)
 
   log.info("Successfully removed image_data column from problems table")
+
+
+def migrate_to_v22(cursor):
+  """Add authentication and RBAC tables for multi-user support"""
+  log.info(
+    "Migrating to schema version 22: adding authentication and RBAC tables")
+
+  # Users table
+  cursor.execute("""
+        CREATE TABLE users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            full_name TEXT,
+            role TEXT NOT NULL CHECK(role IN ('instructor', 'ta')),
+            is_active INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_by INTEGER,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        )
+    """)
+
+  # Authentication sessions table (not grading sessions!)
+  cursor.execute("""
+        CREATE TABLE auth_sessions (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            ip_address TEXT,
+            user_agent TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
+  # Session assignments table (which TAs can access which grading sessions)
+  cursor.execute("""
+        CREATE TABLE session_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            assigned_by INTEGER,
+            FOREIGN KEY (session_id) REFERENCES grading_sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (assigned_by) REFERENCES users(id),
+            UNIQUE(session_id, user_id)
+        )
+    """)
+
+  # Create indexes for performance
+  cursor.execute(
+    "CREATE INDEX idx_auth_sessions_user_id ON auth_sessions(user_id)")
+  cursor.execute(
+    "CREATE INDEX idx_auth_sessions_expires ON auth_sessions(expires_at)")
+  cursor.execute(
+    "CREATE INDEX idx_session_assignments_user ON session_assignments(user_id)")
+  cursor.execute(
+    "CREATE INDEX idx_session_assignments_session ON session_assignments(session_id)"
+  )
+
+  # Create default admin user (password: changeme123)
+  import bcrypt
+  password_hash = bcrypt.hashpw("changeme123".encode(),
+                                bcrypt.gensalt()).decode()
+  cursor.execute(
+    """
+        INSERT INTO users (username, email, password_hash, full_name, role)
+        VALUES (?, ?, ?, ?, ?)
+    """,
+    ("admin", "admin@example.com", password_hash, "Administrator",
+     "instructor"))
+
+  log.info(
+    "Created default admin user (username: admin, password: changeme123)")
+  log.info("Successfully added authentication and RBAC tables")
+
+
+def migrate_to_v23(cursor):
+  """Make email field optional in users table"""
+  log.info("Migrating to schema version 23: making email optional")
+
+  # SQLite doesn't support ALTER COLUMN, so we need to recreate the table
+  # Step 1: Create new users table with email as nullable
+  cursor.execute("""
+        CREATE TABLE users_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE,
+            password_hash TEXT NOT NULL,
+            full_name TEXT,
+            role TEXT NOT NULL CHECK(role IN ('instructor', 'ta')),
+            is_active INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_by INTEGER,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        )
+    """)
+
+  # Step 2: Copy data from old table
+  cursor.execute("""
+        INSERT INTO users_new (id, username, email, password_hash, full_name, role, is_active, created_at, created_by)
+        SELECT id, username, email, password_hash, full_name, role, is_active, created_at, created_by
+        FROM users
+    """)
+
+  # Step 3: Drop old table
+  cursor.execute("DROP TABLE users")
+
+  # Step 4: Rename new table
+  cursor.execute("ALTER TABLE users_new RENAME TO users")
+
+  log.info("Successfully made email optional in users table")
 
 
 def update_problem_stats(session_id: int):

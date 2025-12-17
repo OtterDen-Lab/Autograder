@@ -4,7 +4,7 @@ Problem grading endpoints.
 import textwrap
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 from typing import Optional
 import sys
@@ -16,6 +16,7 @@ from ..models import ProblemResponse, GradeSubmission
 from ..database import get_db_connection, update_problem_stats
 from ..repositories import ProblemRepository, SubmissionRepository
 from ..services.problem_service import ProblemService
+from ..auth import require_session_access, get_current_user
 
 # Add parent to path for AI helper import
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -126,8 +127,12 @@ def get_problem_image_data(problem, submission_repo: SubmissionRepository = None
 
 @router.get("/{session_id}/{problem_number}/next",
             response_model=ProblemResponse)
-async def get_next_problem(session_id: int, problem_number: int):
-  """Get next ungraded problem for a specific problem number"""
+async def get_next_problem(
+  session_id: int,
+  problem_number: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """Get next ungraded problem for a specific problem number (requires session access)"""
   problem_repo = ProblemRepository()
   submission_repo = SubmissionRepository()
 
@@ -173,8 +178,12 @@ async def get_next_problem(session_id: int, problem_number: int):
 
 @router.get("/{session_id}/{problem_number}/previous",
             response_model=ProblemResponse)
-async def get_previous_problem(session_id: int, problem_number: int):
-  """Get most recently graded problem for a specific problem number"""
+async def get_previous_problem(
+  session_id: int,
+  problem_number: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """Get most recently graded problem for a specific problem number (requires session access)"""
   problem_repo = ProblemRepository()
   submission_repo = SubmissionRepository()
 
@@ -219,14 +228,30 @@ async def get_previous_problem(session_id: int, problem_number: int):
 
 
 @router.post("/{problem_id}/grade")
-async def grade_problem(problem_id: int, grade: GradeSubmission):
-  """Submit a grade for a problem
+async def grade_problem(
+  problem_id: int,
+  grade: GradeSubmission,
+  current_user: dict = Depends(get_current_user)
+):
+  """Submit a grade for a problem (requires authentication and session access)
 
     Special handling: If score is exactly "-" (dash), mark the problem as blank
     and set score to 0. This allows manual blank detection alongside AI heuristics.
     Feedback can still be provided normally for context.
     """
   problem_repo = ProblemRepository()
+
+  # Get problem to check session access
+  problem = problem_repo.get_by_id(problem_id)
+  if not problem:
+    raise HTTPException(status_code=404, detail="Problem not found")
+
+  # Check if user has access to this session
+  if current_user["role"] != "instructor":
+    from ..repositories.session_assignment_repository import SessionAssignmentRepository
+    assignment_repo = SessionAssignmentRepository()
+    if not assignment_repo.is_user_assigned(problem.session_id, current_user["user_id"]):
+      raise HTTPException(status_code=403, detail="You do not have access to this grading session")
 
   # Check if score indicates manual blank marking (dash)
   is_manual_blank = isinstance(grade.score, str) and grade.score.strip() == "-"
@@ -246,11 +271,6 @@ async def grade_problem(problem_id: int, grade: GradeSubmission):
 
     problem_repo.update_grade(problem_id, score_value, grade.feedback)
 
-  # Get session_id for stats update
-  problem = problem_repo.get_by_id(problem_id)
-  if not problem:
-    raise HTTPException(status_code=404, detail="Problem not found")
-
   # Update statistics after grading
   update_problem_stats(problem.session_id)
 
@@ -262,14 +282,24 @@ async def grade_problem(problem_id: int, grade: GradeSubmission):
 
 
 @router.get("/{problem_id}", response_model=ProblemResponse)
-async def get_problem(problem_id: int):
-  """Get a specific problem by ID"""
+async def get_problem(
+  problem_id: int,
+  current_user: dict = Depends(get_current_user)
+):
+  """Get a specific problem by ID (requires authentication and session access)"""
   problem_repo = ProblemRepository()
   submission_repo = SubmissionRepository()
 
   problem = problem_repo.get_by_id(problem_id)
   if not problem:
     raise HTTPException(status_code=404, detail="Problem not found")
+
+  # Check if user has access to this session
+  if current_user["role"] != "instructor":
+    from ..repositories.session_assignment_repository import SessionAssignmentRepository
+    assignment_repo = SessionAssignmentRepository()
+    if not assignment_repo.is_user_assigned(problem.session_id, current_user["user_id"]):
+      raise HTTPException(status_code=403, detail="You do not have access to this grading session")
 
   # Get context counts
   counts = problem_repo.get_counts_for_problem_number(problem.session_id, problem.problem_number)
@@ -297,9 +327,12 @@ async def get_problem(problem_id: int):
 
 
 @router.get("/{problem_id}/context")
-async def get_problem_in_context(problem_id: int):
+async def get_problem_in_context(
+  problem_id: int,
+  current_user: dict = Depends(get_current_user)
+):
   """
-    Get the full page containing this problem, with the problem region highlighted.
+    Get the full page containing this problem, with the problem region highlighted (requires auth and session access).
 
     Returns:
         JSON with:
@@ -313,6 +346,13 @@ async def get_problem_in_context(problem_id: int):
   problem = problem_repo.get_by_id(problem_id)
   if not problem:
     raise HTTPException(status_code=404, detail="Problem not found")
+
+  # Check if user has access to this session
+  if current_user["role"] != "instructor":
+    from ..repositories.session_assignment_repository import SessionAssignmentRepository
+    assignment_repo = SessionAssignmentRepository()
+    if not assignment_repo.is_user_assigned(problem.session_id, current_user["user_id"]):
+      raise HTTPException(status_code=403, detail="You do not have access to this grading session")
 
   # Check if PDF-based storage is available
   if not problem.region_coords:
@@ -352,8 +392,12 @@ async def get_problem_in_context(problem_id: int):
 
 
 @router.post("/{problem_id}/decipher")
-async def decipher_handwriting(problem_id: int, model: str = "default"):
-  """Use AI to transcribe handwritten text from a problem image
+async def decipher_handwriting(
+  problem_id: int,
+  model: str = "default",
+  current_user: dict = Depends(get_current_user)
+):
+  """Use AI to transcribe handwritten text from a problem image (requires auth and session access)
 
     Args:
         problem_id: ID of the problem to transcribe
@@ -366,6 +410,13 @@ async def decipher_handwriting(problem_id: int, model: str = "default"):
   problem = problem_repo.get_by_id(problem_id)
   if not problem:
     raise HTTPException(status_code=404, detail="Problem not found")
+
+  # Check if user has access to this session
+  if current_user["role"] != "instructor":
+    from ..repositories.session_assignment_repository import SessionAssignmentRepository
+    assignment_repo = SessionAssignmentRepository()
+    if not assignment_repo.is_user_assigned(problem.session_id, current_user["user_id"]):
+      raise HTTPException(status_code=403, detail="You do not have access to this grading session")
 
   # Get image data (extract from PDF if needed)
   image_base64 = get_problem_image_data(problem, submission_repo)
@@ -442,12 +493,15 @@ async def decipher_handwriting(problem_id: int, model: str = "default"):
 
 
 @router.get("/{session_id}/{problem_number}/graded")
-async def get_graded_problems(session_id: int,
-                              problem_number: int,
-                              offset: int = 0,
-                              limit: int = 20):
+async def get_graded_problems(
+  session_id: int,
+  problem_number: int,
+  offset: int = 0,
+  limit: int = 20,
+  current_user: dict = Depends(require_session_access())
+):
   """
-    Get graded problems for a specific problem number for review.
+    Get graded problems for a specific problem number for review (requires session access).
 
     Args:
         session_id: Grading session ID
@@ -491,9 +545,12 @@ async def get_graded_problems(session_id: int,
 
 
 @router.get("/{problem_id}/regenerate-answer")
-async def regenerate_answer(problem_id: int):
+async def regenerate_answer(
+  problem_id: int,
+  current_user: dict = Depends(get_current_user)
+):
   """
-    Regenerate the correct answer from QR code metadata.
+    Regenerate the correct answer from QR code metadata (requires auth and session access).
 
     This endpoint uses the question_type, seed, and version stored from
     the QR code to regenerate the original correct answer.
@@ -509,6 +566,13 @@ async def regenerate_answer(problem_id: int):
   problem = problem_repo.get_by_id(problem_id)
   if not problem:
     raise HTTPException(status_code=404, detail="Problem not found")
+
+  # Check if user has access to this session
+  if current_user["role"] != "instructor":
+    from ..repositories.session_assignment_repository import SessionAssignmentRepository
+    assignment_repo = SessionAssignmentRepository()
+    if not assignment_repo.is_user_assigned(problem.session_id, current_user["user_id"]):
+      raise HTTPException(status_code=403, detail="You do not have access to this grading session")
 
   # Check if QR encrypted data is available
   if not problem.qr_encrypted_data:
@@ -582,9 +646,13 @@ async def regenerate_answer(problem_id: int):
 
 
 @router.post("/{problem_id}/rescan-qr")
-async def rescan_qr_for_single_problem(problem_id: int, dpi: int = 600):
+async def rescan_qr_for_single_problem(
+  problem_id: int,
+  dpi: int = 600,
+  current_user: dict = Depends(get_current_user)
+):
   """
-    Re-scan QR code for a specific problem instance at a specified DPI.
+    Re-scan QR code for a specific problem instance at a specified DPI (requires auth and session access).
     This is useful when the initial scan fails to detect the QR code.
 
     Args:
@@ -613,9 +681,17 @@ async def rescan_qr_for_single_problem(problem_id: int, dpi: int = 600):
   problem_repo = ProblemRepository()
   submission_repo = SubmissionRepository()
 
+  # Get problem to check session access
   problem = problem_repo.get_by_id(problem_id)
   if not problem:
-    raise HTTPException(status_code=404, detail=f"Problem {problem_id} not found")
+    raise HTTPException(status_code=404, detail="Problem not found")
+
+  # Check if user has access to this session
+  if current_user["role"] != "instructor":
+    from ..repositories.session_assignment_repository import SessionAssignmentRepository
+    assignment_repo = SessionAssignmentRepository()
+    if not assignment_repo.is_user_assigned(problem.session_id, current_user["user_id"]):
+      raise HTTPException(status_code=403, detail="You do not have access to this grading session")
 
   if not problem.region_coords:
     raise HTTPException(status_code=400,

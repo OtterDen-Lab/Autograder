@@ -985,14 +985,19 @@ async function loadStatistics() {
                     <span id="student-scores-toggle">▶</span> Student Scores (${scoresData.students.length})
                 </h3>
             `;
+            // Check if current user is a TA for anonymous grading
+            const isTA = currentUser && currentUser.role === 'ta';
+
             const studentScoresHtml = `
                 <div id="student-scores-container" style="display: none;">
                     <table class="student-scores-table">
                         <thead>
                             <tr>
+                                ${!isTA ? `
                                 <th class="sortable" onclick="sortStudentTable('name')" data-sort="name">
                                     Student Name <span class="sort-indicator"></span>
                                 </th>
+                                ` : ''}
                                 <th class="sortable" onclick="sortStudentTable('progress')" data-sort="progress">
                                     Progress <span class="sort-indicator"></span>
                                 </th>
@@ -1007,7 +1012,7 @@ async function loadStatistics() {
                                     data-name="${s.student_name || 'Unmatched'}"
                                     data-progress="${s.graded_problems / s.total_problems}"
                                     data-score="${s.total_score || 0}">
-                                    <td>${s.student_name || 'Unmatched'}</td>
+                                    ${!isTA ? `<td>${s.student_name || 'Unmatched'}</td>` : ''}
                                     <td>${s.graded_problems} / ${s.total_problems}</td>
                                     <td>${s.total_score ? s.total_score.toFixed(2) : '0.00'}</td>
                                 </tr>
@@ -1017,6 +1022,11 @@ async function loadStatistics() {
                 </div>
             `;
             container.innerHTML += studentScoresHtml;
+        }
+
+        // Load TA assignments for instructors
+        if (typeof loadSessionAssignments === 'function') {
+            await loadSessionAssignments();
         }
     } catch (error) {
         console.error('Failed to load statistics:', error);

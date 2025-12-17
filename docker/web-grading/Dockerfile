@@ -18,15 +18,16 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /app
 
-# Copy LMSInterface dependency (local path dependency)
-COPY LMSInterface /app/LMSInterface
+# Copy Autograder package (includes vendorized lms_interface)
+COPY Autograder /app/Autograder
 
-# Copy Autograder source
-COPY Autograder/WebUI /app/web_grading
-COPY Autograder/pyproject.toml /app/
+# Copy WebUI source
+COPY WebUI /app/web_grading
 
-# Update pyproject.toml to use local LMSInterface path
-RUN sed -i 's|path = "../LMSInterface"|path = "./LMSInterface"|g' /app/pyproject.toml
+# Copy pyproject.toml, LICENSE, and README
+COPY pyproject.toml /app/
+COPY LICENSE /app/
+COPY README.md /app/
 
 # Install uv for fast package management
 RUN pip install --no-cache-dir uv
@@ -40,12 +41,12 @@ RUN mkdir -p /data
 # Set working directory to web_grading
 WORKDIR /app/web_grading
 
-# Expose port 8000
-EXPOSE 8000
+# Expose port 8765
+EXPOSE 8765
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/api/health', timeout=2)" || exit 1
+    CMD python -c "import requests; requests.get('http://localhost:8765/api/health', timeout=2)" || exit 1
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
@@ -53,4 +54,4 @@ ENV GRADING_DB_PATH=/data/grading.db
 ENV PYTHONPATH=/app/web_grading
 
 # Run the application
-CMD ["uvicorn", "web_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "web_api.main:app", "--host", "0.0.0.0", "--port", "8765"]

@@ -1,7 +1,7 @@
 """
 File upload and processing endpoints.
 """
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
 from typing import List, Dict
 from pydantic import BaseModel
@@ -15,6 +15,7 @@ from ..models import UploadResponse
 from ..repositories import SessionRepository
 from ..domain.common import SessionStatus
 from .. import sse
+from ..auth import require_instructor, require_session_access
 
 # Store in database using repositories
 from ..repositories import with_transaction
@@ -24,7 +25,7 @@ from ..domain.problem import Problem
 import logging
 import asyncio
 from ..services.exam_processor import ExamProcessor
-from lms_interface.canvas_interface import CanvasInterface
+from Autograder.lms_interface.canvas_interface import CanvasInterface
 from ..repositories import SessionRepository, SubmissionRepository, ProblemMetadataRepository
 from ..domain.common import SessionStatus
 
@@ -50,8 +51,11 @@ def compute_file_hash(file_path: Path) -> str:
 
 
 @router.get("/{session_id}/upload-stream")
-async def upload_progress_stream(session_id: int):
-  """SSE stream for upload/processing progress"""
+async def upload_progress_stream(
+  session_id: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """SSE stream for upload/processing progress (requires session access)"""
   stream_id = sse.make_stream_id("upload", session_id)
 
   # Create stream if it doesn't exist
@@ -67,9 +71,13 @@ async def upload_progress_stream(session_id: int):
 
 
 @router.post("/{session_id}/upload", response_model=UploadResponse)
-async def upload_exams(session_id: int, files: List[UploadFile] = File(...)):
+async def upload_exams(
+  session_id: int,
+  files: List[UploadFile] = File(...),
+  current_user: dict = Depends(require_instructor)
+):
   """
-    Upload exam PDFs or a zip file containing exams.
+    Upload exam PDFs or a zip file containing exams (instructor only).
     Returns composites for manual alignment before processing.
     """
   from ..services.manual_alignment import ManualAlignmentService
@@ -307,10 +315,14 @@ async def upload_exams(session_id: int, files: List[UploadFile] = File(...)):
 
 
 @router.post("/{session_id}/submit-alignment")
-async def submit_alignment(session_id: int, background_tasks: BackgroundTasks,
-                           submission: SplitPointsSubmission):
+async def submit_alignment(
+  session_id: int,
+  background_tasks: BackgroundTasks,
+  submission: SplitPointsSubmission,
+  current_user: dict = Depends(require_instructor)
+):
   """
-    Submit manual split points and start processing exams.
+    Submit manual split points and start processing exams (instructor only).
 
     Args:
         session_id: Session ID

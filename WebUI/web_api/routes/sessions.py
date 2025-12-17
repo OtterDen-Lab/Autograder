@@ -1,7 +1,7 @@
 """
 Session management endpoints.
 """
-from fastapi import APIRouter, HTTPException, Response, UploadFile, File
+from fastapi import APIRouter, HTTPException, Response, UploadFile, File, Depends
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
 import json
@@ -27,16 +27,20 @@ from ..database import get_db_connection  # Still needed for unrefactored endpoi
 from ..repositories import SessionRepository, SubmissionRepository, ProblemRepository, ProblemMetadataRepository
 from ..domain.common import SessionStatus as DomainSessionStatus
 from ..domain.session import GradingSession
-from lms_interface.canvas_interface import CanvasInterface
+from Autograder.lms_interface.canvas_interface import CanvasInterface
 from ..services.qr_scanner import QRScanner
+from ..auth import get_current_user, require_instructor, require_session_access
 import os
 
 router = APIRouter()
 
 
 @router.post("", response_model=SessionResponse)
-async def create_session(session: SessionCreate):
-  """Create a new grading session"""
+async def create_session(
+  session: SessionCreate,
+  current_user: dict = Depends(require_instructor)
+):
+  """Create a new grading session (instructor only)"""
   repo = SessionRepository()
 
   # Create domain object
@@ -63,8 +67,11 @@ async def create_session(session: SessionCreate):
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
-async def get_session(session_id: int):
-  """Get session details"""
+async def get_session(
+  session_id: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """Get session details (requires session access)"""
   from ..repositories import SessionRepository
 
   repo = SessionRepository()
@@ -78,9 +85,12 @@ async def get_session(session_id: int):
 
 
 @router.patch("/{session_id}/status")
-async def update_session_status(session_id: int,
-                                status_update: SessionStatusChange):
-  """Update session status (e.g., from name_matching_needed to ready)"""
+async def update_session_status(
+  session_id: int,
+  status_update: SessionStatusChange,
+  current_user: dict = Depends(require_session_access())
+):
+  """Update session status (requires session access)"""
   from ..repositories import SessionRepository, ProblemRepository, FeedbackTagRepository
   from ..domain.common import SessionStatus as DomainSessionStatus
 
@@ -126,16 +136,30 @@ async def update_session_status(session_id: int,
 
 
 @router.get("", response_model=List[SessionResponse])
-async def list_sessions():
-  """List all grading sessions"""
+async def list_sessions(current_user: dict = Depends(get_current_user)):
+  """List grading sessions (instructors see all, TAs see only assigned)"""
   repo = SessionRepository()
-  sessions = repo.list_all()
+
+  # Instructors see all sessions
+  if current_user["role"] == "instructor":
+    sessions = repo.list_all()
+  else:
+    # TAs only see sessions they're assigned to
+    from ..repositories.session_assignment_repository import SessionAssignmentRepository
+    assignment_repo = SessionAssignmentRepository()
+    assigned_session_ids = assignment_repo.get_assigned_sessions(current_user["user_id"])
+    sessions = [repo.get_by_id(sid) for sid in assigned_session_ids]
+    sessions = [s for s in sessions if s is not None]  # Filter out None values
+
   return [SessionResponse.model_validate(session) for session in sessions]
 
 
 @router.get("/{session_id}/stats", response_model=SessionStatsResponse)
-async def get_session_stats(session_id: int):
-  """Get grading statistics for a session"""
+async def get_session_stats(
+  session_id: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """Get grading statistics for a session (requires session access)"""
   import statistics
   import logging
 
@@ -228,24 +252,34 @@ async def get_session_stats(session_id: int):
 
 
 @router.get("/{session_id}/problem-numbers")
-async def get_problem_numbers(session_id: int):
-  """Get list of distinct problem numbers for a session"""
+async def get_problem_numbers(
+  session_id: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """Get list of distinct problem numbers for a session (requires session access)"""
   repo = ProblemRepository()
   problem_numbers = repo.get_distinct_problem_numbers(session_id)
   return {"problem_numbers": problem_numbers}
 
 
 @router.get("/{session_id}/student-scores")
-async def get_student_scores(session_id: int):
-  """Get aggregated scores for all students in a session"""
+async def get_student_scores(
+  session_id: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """Get aggregated scores for all students in a session (requires session access)"""
   submission_repo = SubmissionRepository()
   students = submission_repo.get_student_scores(session_id)
   return {"students": students}
 
 
 @router.get("/{session_id}/submissions/{submission_id}/problems")
-async def get_submission_problems(session_id: int, submission_id: int):
-  """Get all problems for a specific submission"""
+async def get_submission_problems(
+  session_id: int,
+  submission_id: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """Get all problems for a specific submission (requires session access)"""
   from ..models import ProblemResponse
 
   submission_repo = SubmissionRepository()
@@ -312,8 +346,11 @@ async def get_submission_problems(session_id: int, submission_id: int):
 
 
 @router.get("/{session_id}/canvas-info")
-async def get_canvas_info(session_id: int):
-  """Get Canvas course and assignment information for verification before finalization"""
+async def get_canvas_info(
+  session_id: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """Get Canvas course and assignment information (requires session access)"""
   repo = SessionRepository()
   session = repo.get_by_id(session_id)
 
@@ -348,11 +385,14 @@ async def get_canvas_info(session_id: int):
 
 
 @router.put("/{session_id}/canvas-config")
-async def update_canvas_config(session_id: int,
-                               course_id: int,
-                               assignment_id: int,
-                               use_prod: bool = False):
-  """Update Canvas configuration for a session (useful for switching dev→prod)"""
+async def update_canvas_config(
+  session_id: int,
+  course_id: int,
+  assignment_id: int,
+  use_prod: bool = False,
+  current_user: dict = Depends(require_instructor)
+):
+  """Update Canvas configuration for a session (instructor only)"""
   # Get course and assignment details from Canvas
   canvas_interface = CanvasInterface(prod=use_prod)
   try:
@@ -387,8 +427,11 @@ async def update_canvas_config(session_id: int,
 
 
 @router.get("/{session_id}/problem-max-points-all")
-async def get_all_problem_max_points(session_id: int):
-  """Get max points for all problems in a session"""
+async def get_all_problem_max_points(
+  session_id: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """Get max points for all problems in a session (requires session access)"""
   session_repo = SessionRepository()
   if not session_repo.exists(session_id):
     raise HTTPException(status_code=404, detail="Session not found")
@@ -400,9 +443,13 @@ async def get_all_problem_max_points(session_id: int):
 
 
 @router.put("/{session_id}/problem-max-points")
-async def update_problem_max_points(session_id: int, problem_number: int,
-                                    max_points: float):
-  """Update max points for a specific problem number in a session"""
+async def update_problem_max_points(
+  session_id: int,
+  problem_number: int,
+  max_points: float,
+  current_user: dict = Depends(require_session_access())
+):
+  """Update max points for a specific problem number in a session (requires session access)"""
   session_repo = SessionRepository()
   if not session_repo.exists(session_id):
     raise HTTPException(status_code=404, detail="Session not found")
@@ -426,8 +473,12 @@ async def update_problem_max_points(session_id: int, problem_number: int,
 
 
 @router.get("/{session_id}/default-feedback/{problem_number}")
-async def get_default_feedback(session_id: int, problem_number: int):
-  """Get default feedback for a specific problem number"""
+async def get_default_feedback(
+  session_id: int,
+  problem_number: int,
+  current_user: dict = Depends(require_session_access())
+):
+  """Get default feedback for a specific problem number (requires session access)"""
   metadata_repo = ProblemMetadataRepository()
   feedback, threshold = metadata_repo.get_default_feedback(
     session_id, problem_number)
@@ -439,11 +490,14 @@ async def get_default_feedback(session_id: int, problem_number: int):
 
 
 @router.put("/{session_id}/default-feedback")
-async def update_default_feedback(session_id: int,
-                                  problem_number: int,
-                                  default_feedback: str = None,
-                                  threshold: float = 100.0):
-  """Update default feedback for a specific problem number"""
+async def update_default_feedback(
+  session_id: int,
+  problem_number: int,
+  default_feedback: str = None,
+  threshold: float = 100.0,
+  current_user: dict = Depends(require_session_access())
+):
+  """Update default feedback for a specific problem number (requires session access)"""
   session_repo = SessionRepository()
   if not session_repo.exists(session_id):
     raise HTTPException(status_code=404, detail="Session not found")
@@ -462,8 +516,11 @@ async def update_default_feedback(session_id: int,
 
 
 @router.delete("/{session_id}")
-async def delete_session(session_id: int):
-  """Delete a grading session and all associated data"""
+async def delete_session(
+  session_id: int,
+  current_user: dict = Depends(require_instructor)
+):
+  """Delete a grading session and all associated data (instructor only)"""
   session_repo = SessionRepository()
   deleted_count = session_repo.delete(session_id)
 
@@ -474,8 +531,11 @@ async def delete_session(session_id: int):
 
 
 @router.get("/{session_id}/export")
-async def export_session(session_id: int):
-  """Export complete session data as JSON for checkpointing"""
+async def export_session(
+  session_id: int,
+  current_user: dict = Depends(require_instructor)
+):
+  """Export complete session data as JSON for checkpointing (instructor only)"""
   from dataclasses import asdict
 
   session_repo = SessionRepository()
@@ -546,8 +606,11 @@ async def export_session(session_id: int):
 
 
 @router.post("/import")
-async def import_session(file: UploadFile = File(...)):
-  """Import session data from JSON checkpoint file"""
+async def import_session(
+  file: UploadFile = File(...),
+  current_user: dict = Depends(require_instructor)
+):
+  """Import session data from JSON checkpoint file (instructor only)"""
   import logging
   from ..repositories import with_transaction
   from ..domain.submission import Submission
@@ -706,8 +769,12 @@ async def import_session(file: UploadFile = File(...)):
 
 
 @router.post("/encryption-key/test")
-async def test_encryption_key(encrypted_data: str, encryption_key: str):
-  """Test if an encryption key can decrypt sample QR code data"""
+async def test_encryption_key(
+  encrypted_data: str,
+  encryption_key: str,
+  current_user: dict = Depends(require_instructor)
+):
+  """Test if an encryption key can decrypt sample QR code data (instructor only)"""
   from ..services.qr_scanner import MinimalQuestionQRCode
   import logging
   log = logging.getLogger(__name__)
@@ -731,9 +798,12 @@ async def test_encryption_key(encrypted_data: str, encryption_key: str):
 
 
 @router.post("/encryption-key/set")
-async def set_encryption_key(encryption_key: str):
+async def set_encryption_key(
+  encryption_key: str,
+  current_user: dict = Depends(require_instructor)
+):
   """
-    Set the encryption key for the current session (runtime only, not persisted).
+    Set the encryption key for the current session (instructor only, runtime only, not persisted).
     This is a workaround for when the QUIZ_ENCRYPTION_KEY env var isn't available.
     """
   import logging
@@ -753,9 +823,12 @@ async def set_encryption_key(encryption_key: str):
 
 
 @router.post("/{session_id}/rescan-qr")
-async def rescan_qr_codes(session_id: int):
+async def rescan_qr_codes(
+  session_id: int,
+  current_user: dict = Depends(require_session_access())
+):
   """
-    Re-scan QR codes for all problems in a session using progressive DPI.
+    Re-scan QR codes for all problems in a session using progressive DPI (requires session access).
     This is useful when the initial scan fails to detect QR codes.
 
     Uses progressive DPI escalation (150, 300, 600, 900) - tries low DPI first
