@@ -9,13 +9,6 @@ from Autograder.assignment import Assignment
 from Autograder.registry import GraderRegistry
 from Autograder.lms_interface.classes import Feedback, Submission, FileSubmission, TextSubmission
 
-# Import all grader implementations to ensure they're registered
-try:
-  import Autograder.graders
-except ImportError:
-  # Graders package may not be available in all environments
-  pass
-
 import logging
 
 log = logging.getLogger(__name__)

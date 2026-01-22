@@ -18,7 +18,7 @@ assignment_types:
 
 courses:
   - name: CST334
-    id: 29978
+    id: 31580
     slack_channel: C09HR2J5EBF
 
     assignment_groups:
@@ -42,4 +42,29 @@ courses:
             path: "include" # subdir within assignment folder
             name: "student_code.h" # target filename, will force to change into this
         assignments:
-          - {id: 506889, repo_path: PA1}
+          - {id: 553736, repo_path: PA1}
+          - {id: 553737, repo_path: PA2}
+          - {id: 553738, repo_path: PA3}
+          - {id: 553739, repo_path: PA4}
+          - {id: 553740, repo_path: PA5}
+          - {id: 553741, repo_path: PA6}
+
+      - name: Learning Logs
+        type: text
+        settings:
+          prefer_anthropic: false
+        assignments:
+          - 553728  # LL2
+          - 553729  # LL3
+          - 553730  # LL4
+          - 553731  # LL5
+          - 553732  # LL6
+          - 553733  # LL7
+          - 553734  # LL8
+          - 553735  # LL9
+          - 553723  # LL10
+          - 553724  # LL11
+          - 553725  # LL12
+          - 553726  # LL13
+          - 553727  # LL14
+

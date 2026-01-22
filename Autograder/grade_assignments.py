@@ -147,8 +147,8 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     repo_path = merged_assignment.get('repo_path')
 
     # Create grader with assignment identifier for better logging
-    assignment_name = settings.get("assignment_name", lms_assignment.name.split()[0])
-    del settings["assignment_name"]
+    assignment_name = settings.pop("assignment_name",
+                                   lms_assignment.name.split()[0])
     grader = GraderRegistry.create(grader_name,
                                    assignment_path=repo_path,
                                    assignment_name=assignment_name,
