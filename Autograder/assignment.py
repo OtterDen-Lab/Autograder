@@ -136,15 +136,15 @@ class Assignment(abc.ABC):
                                assignment_name.replace(' ', '_'))
 
       # Create timestamp
-      timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+      timestamp = datetime.now().strftime("%Y-%b-%d_%H%M")
 
       # Ensure records directory exists
       if not os.path.exists(records_dir):
         os.makedirs(records_dir)
         log.info(f"Created records directory: {records_dir}")
 
-      # Create filename: [assignment_name].[student_name].[timestamp].log
-      filename = f"{assignment_safe}.{student_name}.{timestamp}.log"
+      # Create filename: [timestamp].[assignment_name].[student_name].log
+      filename = f"{timestamp}.{assignment_safe}.{student_name}.log"
       filepath = os.path.join(records_dir, filename)
 
       # Write feedback to file

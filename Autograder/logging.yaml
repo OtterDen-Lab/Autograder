@@ -36,7 +36,7 @@ handlers:
 
 loggers:
   Autograder:
-    level: DEBUG
+    level: INFO
     handlers: [console, file]
     propagate: false
 

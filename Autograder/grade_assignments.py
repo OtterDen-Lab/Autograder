@@ -24,7 +24,7 @@ import logging
 
 logging.basicConfig()
 log = logging.getLogger(__name__)
-log.setLevel(logging.DEBUG)
+log.setLevel(logging.INFO)
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,6 +57,9 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--test",
                       action="store_true",
                       help="Only downloads for test student")
+  parser.add_argument("--debug",
+                      action="store_true",
+                      help="Enable debug logging")
 
   args = parser.parse_args()
 
@@ -69,6 +72,12 @@ def parse_args() -> argparse.Namespace:
     args.max_workers = 1
 
   return args
+
+
+def configure_logging(debug: bool) -> None:
+  level = logging.DEBUG if debug else logging.INFO
+  logging.getLogger("Autograder").setLevel(level)
+  logging.getLogger(__name__).setLevel(level)
 
 
 @contextlib.contextmanager
@@ -624,6 +633,7 @@ def main() -> None:
   Coordinates the entire grading process using a clean, modular approach.
   """
   args = parse_args()
+  configure_logging(args.debug)
 
   with ensure_single_instance():
     try:
