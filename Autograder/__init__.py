@@ -2,9 +2,27 @@ import logging.config
 import yaml
 import os
 import re
+import sys
 
 
 def setup_logging() -> None:
+  if "LOG_DIR" not in os.environ:
+    default_log_dir = "/var/log/grading"
+    if os.path.isdir(default_log_dir) and os.access(default_log_dir,
+                                                    os.W_OK):
+      os.environ["LOG_DIR"] = default_log_dir
+    else:
+      try:
+        os.makedirs(default_log_dir, exist_ok=True)
+        os.environ["LOG_DIR"] = default_log_dir
+      except OSError:
+        fallback_dir = os.getcwd()
+        os.environ["LOG_DIR"] = fallback_dir
+        print(
+          f"Logging: unable to use {default_log_dir}; have you created it with write permissions? "
+          f"Falling back to {fallback_dir}.",
+          file=sys.stderr)
+
   config_path = os.path.join(os.path.dirname(__file__), 'logging.yaml')
   if os.path.exists(config_path):
     with open(config_path, 'r') as f:

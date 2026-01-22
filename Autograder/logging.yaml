@@ -18,20 +18,24 @@ handlers:
     class: logging.StreamHandler
     level: DEBUG
     formatter: standard
-    stream: ext://sys.stdout
+    stream: ext://sys.stderr
 
   file:
-    class: logging.FileHandler
+    class: logging.handlers.RotatingFileHandler
     level: DEBUG
     formatter: detailed
-    filename: ${LOG_FILE:-teachingtools.log}
+    filename: ${LOG_DIR:-/var/log/grading}/teachingtools.log
+    maxBytes: 10485760
+    backupCount: 5
     mode: a
 
   error_file:
-    class: logging.FileHandler
+    class: logging.handlers.RotatingFileHandler
     level: ERROR
     formatter: detailed
-    filename: ${ERROR_LOG_FILE:-teachingtools_errors.log}
+    filename: ${LOG_DIR:-/var/log/grading}/teachingtools_errors.log
+    maxBytes: 10485760
+    backupCount: 5
     mode: a
 
 loggers:
