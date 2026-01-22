@@ -65,14 +65,10 @@ jobs:
 
           SHOULD_RELEASE=false
 
-          # Require version change AND 'release' in the commit message
+          # Require version change
           if [ -n "$CURR" ] && [ "$CURR" != "$PREV" ]; then
-            if echo "$MSG" | grep -qi "release"; then
-              echo "Version changed and commit message indicates release."
-              SHOULD_RELEASE=true
-            else
-              echo "Version changed but commit message does not contain 'release'; not releasing."
-            fi
+            echo "Version changed; releasing."
+            SHOULD_RELEASE=true
           else
             echo "Version did not change; not releasing."
           fi
