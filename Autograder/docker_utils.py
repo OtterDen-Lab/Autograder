@@ -109,15 +109,21 @@ class DockerClient:
   @classmethod
   def cleanup(cls):
     log.debug("Running docker clean up")
-    for container in cls._containers:
+    for container in list(cls._containers):
       log.debug(f"Removing container: {container}")
       try:
         container.stop(timeout=1)
         container.remove(force=True)
+        cls._containers.discard(container)
       except docker.errors.APIError as e:
-        log.warning("Stopping containers failed.")
-        log.warning(e)
-    for image in cls._images:
+        status = getattr(e, "status_code", None)
+        if status in (404, 409):
+          log.debug(f"Container cleanup skipped ({status}): {e}")
+          cls._containers.discard(container)
+        else:
+          log.warning("Stopping containers failed.")
+          log.warning(e)
+    for image in list(cls._images):
       log.debug(f"Removing image: {image}")
       cls.remove_image(image, force=True)
 
@@ -128,10 +134,19 @@ class DockerClient:
       image.remove(force=force)
       log.debug(
         f"Successfully removed image: {getattr(image, 'tags', 'unknown')}")
+      DockerClient._images.discard(image)
     except AttributeError as e:
       log.warning(f"Image object missing remove method: {e}")
+    except docker.errors.ImageNotFound:
+      log.debug("Image already removed.")
+      DockerClient._images.discard(image)
     except docker.errors.APIError as e:
-      log.warning(f"Docker API error removing image: {e}")
+      status = getattr(e, "status_code", None)
+      if status == 404:
+        log.debug(f"Image already removed: {e}")
+        DockerClient._images.discard(image)
+      else:
+        log.warning(f"Docker API error removing image: {e}")
     except Exception as e:
       log.warning(f"Unexpected error removing image: {e}")
 
@@ -258,19 +273,33 @@ class DockerContainer:
         try:
           self.container.remove(force=True)
           log.debug(f"Removed container: {self.container_name}")
+          DockerClient._containers.discard(self.container)
         except docker.errors.NotFound:
           log.debug(f"Container {self.container_name} already removed")
+          DockerClient._containers.discard(self.container)
         except docker.errors.APIError as e:
-          log.warning(
-            f"Docker API error removing container {self.container_name}: {e}")
+          status = getattr(e, "status_code", None)
+          if status in (404, 409):
+            log.debug(
+              f"Container remove skipped ({status}) for {self.container_name}: {e}"
+            )
+            DockerClient._containers.discard(self.container)
+          else:
+            log.warning(
+              f"Docker API error removing container {self.container_name}: {e}")
         except Exception as e:
           log.warning(
             f"Unexpected error removing container {self.container_name}: {e}")
       except docker.errors.NotFound:
         log.debug(f"Container {self.container_name} already removed")
       except docker.errors.APIError as e:
-        log.warning(
-          f"Docker API error stopping container {self.container_name}: {e}")
+        status = getattr(e, "status_code", None)
+        if status in (404, 409):
+          log.debug(
+            f"Container stop skipped ({status}) for {self.container_name}: {e}")
+        else:
+          log.warning(
+            f"Docker API error stopping container {self.container_name}: {e}")
       except Exception as e:
         log.warning(
           f"Unexpected error stopping container {self.container_name}: {e}")
