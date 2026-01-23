@@ -10,6 +10,9 @@ import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Dict, List
+import json
+from datetime import datetime
+import requests
 
 import yaml
 
@@ -56,6 +59,13 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--test",
                       action="store_true",
                       help="Only downloads for test student")
+  parser.add_argument("--report",
+                      default=None,
+                      help="Write a JSON grading report to the given path")
+  parser.add_argument(
+    "--error-slack-channel",
+    default=None,
+    help="Slack channel ID for run-level error notifications")
   parser.add_argument("--debug",
                       action="store_true",
                       help="Enable debug logging")
@@ -115,6 +125,8 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
   """
   thread_id = threading.current_thread().ident
   assignment_id = None  # Initialize for error handling
+  assignment_name = None
+  course_name = assignment_data.get("course_name")
   try:
     course = assignment_data['course']
     yaml_assignment = assignment_data['yaml_assignment']
@@ -129,11 +141,13 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     # Create assignment or quiz object based on type
     if assignment_type.lower() == 'quiz':
       lms_assignment = course.get_quiz(assignment_id)
-      log.info(f"[Thread {thread_id}] Grading quiz \"{lms_assignment.name}\"")
+      assignment_name = lms_assignment.name
+      log.info(f"[Thread {thread_id}] Grading quiz \"{assignment_name}\"")
     else:
       lms_assignment = course.get_assignment(assignment_id)
+      assignment_name = lms_assignment.name
       log.info(
-        f"[Thread {thread_id}] Grading assignment \"{lms_assignment.name}\"")
+        f"[Thread {thread_id}] Grading assignment \"{assignment_name}\"")
 
     # Get unified settings (new format uses 'settings', legacy uses 'kwargs')
     settings = merged_assignment.get('settings') or merged_assignment.get(
@@ -193,7 +207,8 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
         )
         return {
           'success': True,
-          'assignment_name': lms_assignment.name,
+          'assignment_name': assignment_name,
+          'course_name': course_name,
           'assignment_id': assignment_id,
           'thread_id': thread_id
         }
@@ -251,6 +266,8 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     return {
       'success': False,
       'assignment_id': assignment_id,
+      'assignment_name': assignment_name,
+      'course_name': course_name,
       'error': str(e),
       'thread_id': thread_id
     }
@@ -636,7 +653,91 @@ def print_results_summary(results: List[Dict]) -> None:
         log.error(f"  Assignment {result['assignment_id']}: {result['error']}")
 
 
-def main() -> None:
+def send_slack_run_summary(results: List[Dict], args: argparse.Namespace,
+                           config: Dict) -> None:
+  reporting_config = config.get("reporting", {})
+  slack_token = os.getenv("SLACK_BOT_TOKEN")
+  slack_channel = (args.error_slack_channel
+                   or reporting_config.get("slack_channel")
+                   or config.get("error_slack_channel")
+                   or os.getenv("ERROR_SLACK_CHANNEL"))
+
+  if not slack_token or not slack_channel:
+    log.warning(
+      "Slack run summary not configured (missing SLACK_BOT_TOKEN or channel)."
+    )
+    return
+
+  successful = sum(1 for r in results if r['success'])
+  failed = len(results) - successful
+  notify_on = reporting_config.get("notify_on", "failures").lower()
+  if notify_on == "failures" and failed == 0:
+    return
+
+  failure_lines = []
+  for result in results:
+    if not result['success']:
+      assignment_label = (result.get('assignment_name')
+                          or f"ID {result.get('assignment_id')}")
+      course_label = result.get('course_name') or "Unknown Course"
+      error_msg = result.get('error', 'Unknown error')
+      failure_lines.append(
+        f"- {course_label} / {assignment_label}: {error_msg}")
+
+  message_lines = [
+    f":warning: Grading run completed with {failed} failure(s) ({successful} succeeded).",
+    f"Config: `{args.yaml}`",
+  ]
+  if failure_lines:
+    message_lines.append("Failures:")
+    message_lines.extend(failure_lines)
+
+  try:
+    response = requests.post(
+      "https://slack.com/api/chat.postMessage",
+      headers={"Authorization": f"Bearer {slack_token}"},
+      json={
+        "channel": slack_channel,
+        "text": "\n".join(message_lines),
+        "mrkdwn": True,
+        "unfurl_links": False,
+        "unfurl_media": False
+      },
+      timeout=10)
+
+    if not response.json().get('ok'):
+      log.warning(
+        f"Slack run summary failed: {response.json().get('error')}")
+    else:
+      log.info("Slack run summary sent successfully")
+  except Exception as e:
+    log.warning(f"Failed to send Slack run summary: {e}")
+
+
+def write_run_report(results: List[Dict], args: argparse.Namespace) -> None:
+  if not args.report:
+    return
+
+  report_dir = os.path.dirname(os.path.abspath(args.report))
+  if report_dir and not os.path.exists(report_dir):
+    os.makedirs(report_dir, exist_ok=True)
+
+  successful = sum(1 for r in results if r['success'])
+  failed = len(results) - successful
+
+  report_payload = {
+    "run_started_at": datetime.now().isoformat(timespec="seconds"),
+    "yaml_path": args.yaml,
+    "successful": successful,
+    "failed": failed,
+    "results": results,
+  }
+
+  with open(args.report, "w", encoding="utf-8") as report_file:
+    json.dump(report_payload, report_file, indent=2)
+
+
+def main() -> int:
   """
   Main entry point for the grading script.
 
@@ -645,6 +746,7 @@ def main() -> None:
   args = parse_args()
   configure_logging(args.debug)
 
+  exit_code = 0
   with ensure_single_instance():
     try:
       config = load_and_validate_config(args.yaml)
@@ -653,11 +755,18 @@ def main() -> None:
       results = execute_grading(assignments_to_grade, args)
 
       print_results_summary(results)
+      write_run_report(results, args)
+      send_slack_run_summary(results, args, config)
+
+      if any(not r['success'] for r in results):
+        exit_code = 1
     finally:
       # Always perform global Docker cleanup at the end
       log.info("Performing final Docker cleanup...")
       DockerClient.cleanup()
 
+  return exit_code
+
 
 if __name__ == "__main__":
-  main()
+  raise SystemExit(main())
