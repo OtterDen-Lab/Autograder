@@ -221,14 +221,32 @@ class DockerContainer:
       log.debug(f"Started container: {self.container_name}")
     except docker.errors.ContainerError as e:
       log.error(f"Container failed to start: {e}")
+      if self.container is not None:
+        try:
+          self.container.remove(force=True)
+        except Exception as cleanup_error:
+          log.warning(
+            f"Failed to cleanup container after start error: {cleanup_error}")
       raise Autograder.exceptions.ContainerError(
         f"Failed to start container {self.container_name}: {e}") from e
     except docker.errors.ImageNotFound as e:
       log.error(f"Image not found: {self.image}")
+      if self.container is not None:
+        try:
+          self.container.remove(force=True)
+        except Exception as cleanup_error:
+          log.warning(
+            f"Failed to cleanup container after image error: {cleanup_error}")
       raise Autograder.exceptions.DockerError(
         f"Image not found: {self.image}") from e
     except docker.errors.APIError as e:
       log.error(f"Docker API error starting container: {e}")
+      if self.container is not None:
+        try:
+          self.container.remove(force=True)
+        except Exception as cleanup_error:
+          log.warning(
+            f"Failed to cleanup container after API error: {cleanup_error}")
       raise Autograder.exceptions.DockerError(f"Docker API error: {e}") from e
 
   def stop(self, timeout: int = 1) -> None:
@@ -237,6 +255,17 @@ class DockerContainer:
       try:
         self.container.stop(timeout=timeout)
         log.debug(f"Stopped container: {self.container_name}")
+        try:
+          self.container.remove(force=True)
+          log.debug(f"Removed container: {self.container_name}")
+        except docker.errors.NotFound:
+          log.debug(f"Container {self.container_name} already removed")
+        except docker.errors.APIError as e:
+          log.warning(
+            f"Docker API error removing container {self.container_name}: {e}")
+        except Exception as e:
+          log.warning(
+            f"Unexpected error removing container {self.container_name}: {e}")
       except docker.errors.NotFound:
         log.debug(f"Container {self.container_name} already removed")
       except docker.errors.APIError as e:
@@ -265,7 +294,12 @@ class DockerContainer:
       raise Autograder.exceptions.ContainerError(
         "Cannot commit - no running container")
 
-    return self.container.commit(repository=repository, tag=tag)
+    image = self.container.commit(repository=repository, tag=tag)
+    try:
+      self.client._images.add(image)
+    except Exception as e:
+      log.debug(f"Failed to track committed image for cleanup: {e}")
+    return image
 
   def copy_files(self, files_to_copy: List[Tuple[io.IOBase, str]]) -> None:
     """

@@ -4,6 +4,7 @@ Docker-based grader implementations.
 Contains configurable Docker graders that can run arbitrary grading scripts
 in containerized environments.
 """
+import contextlib
 import os
 import pathlib
 import shutil
@@ -372,21 +373,43 @@ class Grader__docker(FileBasedGrader):
     return "ubuntu"
 
   def __enter__(self):
-    """Context manager entry - start container."""
+    """Context manager entry - ensure image is available."""
     if self.image is None:
       log.debug("Building docker image")
       self.image = self._get_image()
-    log.debug(f"Starting docker image {self.image} context")
-    self.start_container()
+    log.debug(f"Prepared docker image {self.image} context")
     return self
 
   def __exit__(self, exc_type, exc_val, exc_tb):
-    """Context manager exit - stop container."""
-    log.debug(f"Exiting docker image context")
-    self.stop_container()
+    """Context manager exit - clean up docker resources."""
+    log.debug("Exiting docker image context")
+    self.cleanup()
     if exc_type is not None:
       log.error(f"An exception occurred: {exc_val}")
     return False
+
+  @contextlib.contextmanager
+  def _container_context(self):
+    """Context manager for per-submission containers."""
+    self.start_container()
+    try:
+      yield
+    finally:
+      self.stop_container()
+
+  def cleanup(self) -> None:
+    """Ensure docker resources are cleaned up on failure or early exit."""
+    try:
+      self.stop_container()
+    except Exception as e:
+      log.warning(f"Failed to stop container during cleanup: {e}")
+
+    if self.image is not None and hasattr(self.image, "remove"):
+      try:
+        self.docker_client.remove_image(self.image, force=True)
+      except Exception as e:
+        log.warning(f"Failed to remove image during cleanup: {e}")
+    self.image = None
 
   def grade_submission(self,
                        submission,
@@ -400,7 +423,11 @@ class Grader__docker(FileBasedGrader):
     :param kwargs:
     :return:
     """
-    with self:
+    if self.image is None:
+      log.debug("Building docker image")
+      self.image = self._get_image()
+
+    with self._container_context():
       if files_to_copy is not None:
         self.add_files_to_docker(files_to_copy)
       # input(f"Waiting on container {self.container}")

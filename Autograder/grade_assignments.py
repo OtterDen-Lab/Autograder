@@ -5,7 +5,6 @@ import fcntl
 import os
 import pprint
 import shutil
-import tempfile
 import threading
 import traceback
 import uuid
@@ -163,16 +162,16 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
                                    assignment_name=assignment_name,
                                    **settings)
 
-    with tempfile.TemporaryDirectory() as working_dir:
-      # Focus on the given assignment
-      # For new format, settings are already complete; for legacy, use assignment_kwargs
-      assignment_creation_kwargs = merged_assignment.get(
-        'assignment_kwargs', {})
+    # Focus on the given assignment
+    # For new format, settings are already complete; for legacy, use assignment_kwargs
+    assignment_creation_kwargs = merged_assignment.get(
+      'assignment_kwargs', {})
 
+    with grader:
       with AssignmentRegistry.create(
           merged_assignment['kind'],
           lms_assignment=lms_assignment,
-          grading_root_dir=working_dir,
+          grading_root_dir=None,
           **assignment_creation_kwargs) as grading_assignment:
 
         # If the grader doesn't need preparation, skip the prep step

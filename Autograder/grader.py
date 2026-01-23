@@ -142,6 +142,13 @@ class Grader(abc.ABC):
   def cleanup(self) -> None:
     pass
 
+  def __enter__(self):
+    return self
+
+  def __exit__(self, exc_type, exc_val, exc_tb):
+    self.cleanup()
+    return False
+
 
 @GraderRegistry.register("Dummy")
 class FileBasedGrader(Grader):

@@ -10,6 +10,7 @@ import re
 import shutil
 import sys
 import threading
+import tempfile
 from datetime import datetime
 from typing import List, Tuple, Dict, Optional
 import io
@@ -43,18 +44,25 @@ class Assignment(abc.ABC):
   2. finalize : combines parts of grading as necessary
   """
 
-  def __init__(self, lms_assignment: CanvasAssignment, grading_root_dir, *args,
+  def __init__(self,
+               lms_assignment: CanvasAssignment,
+               grading_root_dir=None,
+               *args,
                **kwargs):
     self.lms_assignment = lms_assignment
     self.grading_root_dir = grading_root_dir
     self.submissions: List[Submission] = []
     self.original_dir = None
+    self._temp_dir = None
     self.canvas_points = kwargs.get(
       'canvas_points', None)  # Override for Canvas assignment points
 
   def __enter__(self) -> Assignment:
     """Enables use as a context manager (e.g. `with [Assignment]`) by managing working directory"""
-    # todo: Enable use of anonymous temp directories
+    if self.grading_root_dir is None:
+      self._temp_dir = tempfile.TemporaryDirectory()
+      self.grading_root_dir = self._temp_dir.name
+      log.debug(f"Created grading temp dir: {self.grading_root_dir}")
 
     # Only change working directory if we're in the main thread to avoid race conditions
     if threading.current_thread() == threading.main_thread():
@@ -70,6 +78,9 @@ class Assignment(abc.ABC):
     # Only restore working directory if we changed it
     if self.original_dir is not None:
       os.chdir(self.original_dir)
+    if self._temp_dir is not None:
+      self._temp_dir.cleanup()
+      self._temp_dir = None
 
   @abc.abstractmethod
   def prepare(self, *args, **kwargs) -> None:
