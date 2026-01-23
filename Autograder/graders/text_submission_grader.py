@@ -417,7 +417,7 @@ class TextSubmissionGrader(Grader):
           f"✅ Aggregate analysis completed (Anthropic). Identified {len(self.core_topics)} core topics:"
         )
         for i, topic in enumerate(self.core_topics, 1):
-          log.info(f"   {i}. {topic}")
+          log.debug(f"   {i}. {topic}")
 
         return result
 
@@ -444,7 +444,7 @@ class TextSubmissionGrader(Grader):
         f"✅ Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics:"
       )
       for i, topic in enumerate(self.core_topics, 1):
-        log.info(f"   {i}. {topic}")
+        log.debug(f"   {i}. {topic}")
 
       return result
 
@@ -487,7 +487,7 @@ class TextSubmissionGrader(Grader):
             f"✅ Aggregate analysis completed (Anthropic fallback). Identified {len(self.core_topics)} core topics:"
           )
           for i, topic in enumerate(self.core_topics, 1):
-            log.info(f"   {i}. {topic}")
+            log.debug(f"   {i}. {topic}")
 
           return result
 
@@ -954,53 +954,53 @@ class TextSubmissionGrader(Grader):
     """Display aggregate analysis insights."""
     insights = report_data.get("aggregate_insights", {})
 
-    log.info("\n" + "📊 CLASS-WIDE INSIGHTS")
-    log.info("=" * 60)
+    log.debug("\n" + "📊 CLASS-WIDE INSIGHTS")
+    log.debug("=" * 60)
 
     if insights.get("common_themes"):
-      log.info(f"🎯 Common Themes:\n{insights['common_themes']}")
+      log.debug(f"🎯 Common Themes:\n{insights['common_themes']}")
 
     if insights.get("key_insights"):
-      log.info(f"\n💡 Key Learning Insights:\n{insights['key_insights']}")
+      log.debug(f"\n💡 Key Learning Insights:\n{insights['key_insights']}")
 
     if insights.get("learning_patterns"):
-      log.info(f"\n🔄 Learning Patterns:\n{insights['learning_patterns']}")
+      log.debug(f"\n🔄 Learning Patterns:\n{insights['learning_patterns']}")
 
     if insights.get("teaching_feedback"):
-      log.info(
+      log.debug(
         f"\n🎓 Teaching Recommendations:\n{insights['teaching_feedback']}")
 
     # Display core topics
     core_topics = report_data.get("core_topics", [])
     if core_topics:
-      log.info(f"\n📝 Core Topics Identified ({len(core_topics)}):")
+      log.debug(f"\n📝 Core Topics Identified ({len(core_topics)}):")
       for i, topic in enumerate(core_topics, 1):
         coverage = report_data["topic_coverage"].get(topic, {})
         coverage_pct = coverage.get("coverage_percentage", 0)
-        log.info(f"   {i}. {topic} ({coverage_pct:.1f}% of students)")
+        log.debug(f"   {i}. {topic} ({coverage_pct:.1f}% of students)")
 
   def _display_grade_summary(self, report_data: Dict) -> None:
     """Display grade summary statistics."""
     stats = report_data.get("grade_statistics", {})
 
-    log.info("\n" + "📈 GRADE SUMMARY")
-    log.info("=" * 60)
+    log.debug("\n" + "📈 GRADE SUMMARY")
+    log.debug("=" * 60)
 
-    log.info(f"Total Students: {stats.get('total_students', 0)}")
-    log.info(
+    log.debug(f"Total Students: {stats.get('total_students', 0)}")
+    log.debug(
       f"Average Grade: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)"
     )
 
     distribution = stats.get("grade_distribution", {})
     if distribution:
-      log.info("\nGrade Distribution:")
+      log.debug("\nGrade Distribution:")
       for letter, count in distribution.items():
         percentage = (count / stats.get('total_students', 1)) * 100
-        log.info(f"   {letter}: {count} students ({percentage:.1f}%)")
+        log.debug(f"   {letter}: {count} students ({percentage:.1f}%)")
 
     below_70 = stats.get("students_below_70", 0)
     if below_70 > 0:
-      log.info(f"\n⚠️  {below_70} students scored below 70%")
+      log.debug(f"\n⚠️  {below_70} students scored below 70%")
 
   def _display_support_recommendations(self, report_data: Dict) -> None:
     """Display support recommendations for students."""
@@ -1008,15 +1008,15 @@ class TextSubmissionGrader(Grader):
     students_needing_support = support.get("students_needing_support", 0)
 
     if students_needing_support > 0:
-      log.info("\n" + "🆘 STUDENTS WHO MAY BENEFIT FROM OFFICE HOURS")
-      log.info("=" * 60)
+      log.debug("\n" + "🆘 STUDENTS WHO MAY BENEFIT FROM OFFICE HOURS")
+      log.debug("=" * 60)
 
       for student_info in support.get("support_details", []):
         student_id = student_info.get("student_id", "Unknown")
         reason = student_info.get("reason", "No reason provided")
-        log.info(f"• {student_id}: {reason}")
+        log.debug(f"• {student_id}: {reason}")
     else:
-      log.info(
+      log.debug(
         "\n📈 All students appear to be engaging well with the material!")
 
   def _apply_grades_to_submissions(self, submissions: List[Submission],
@@ -1461,7 +1461,7 @@ class TextSubmissionGrader(Grader):
     Args:
         report_data: Report data to display
     """
-    log.info("Report generation completed - see Phase 3 output above")
+    log.info("Report generation completed (use --debug for full summary).")
 
   # Abstract method implementations (required by base Grader class)
   def execute_grading(self, *args, **kwargs) -> any:
