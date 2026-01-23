@@ -167,27 +167,38 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     assignment_creation_kwargs = merged_assignment.get(
       'assignment_kwargs', {})
 
-    with grader:
-      with AssignmentRegistry.create(
-          merged_assignment['kind'],
-          lms_assignment=lms_assignment,
-          grading_root_dir=None,
-          **assignment_creation_kwargs) as grading_assignment:
+    with AssignmentRegistry.create(
+        merged_assignment['kind'],
+        lms_assignment=lms_assignment,
+        grading_root_dir=None,
+        **assignment_creation_kwargs) as grading_assignment:
 
-        # If the grader doesn't need preparation, skip the prep step
-        if grader.assignment_needs_preparation():
-          # For manual grading, we'll skip the interactive prompt in multi-threaded mode
-          if grader_name.lower() in ["manual"]:
-            log.warning(
-              f"[Thread {thread_id}] Manual grading detected for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode"
-            )
+      # If the grader doesn't need preparation, skip the prep step
+      if grader.assignment_needs_preparation():
+        # For manual grading, we'll skip the interactive prompt in multi-threaded mode
+        if grader_name.lower() in ["manual"]:
+          log.warning(
+            f"[Thread {thread_id}] Manual grading detected for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode"
+          )
 
-          grading_assignment.prepare(limit=args.limit,
-                                     do_regrade=do_regrade,
-                                     merge_only=args.merge_only,
-                                     test=args.test,
-                                     **settings)
+        grading_assignment.prepare(limit=args.limit,
+                                   do_regrade=do_regrade,
+                                   merge_only=args.merge_only,
+                                   test=args.test,
+                                   **settings)
 
+      if not grading_assignment.submissions:
+        log.info(
+          f"[Thread {thread_id}] No submissions for {lms_assignment.name}; skipping grading."
+        )
+        return {
+          'success': True,
+          'assignment_name': lms_assignment.name,
+          'assignment_id': assignment_id,
+          'thread_id': thread_id
+        }
+
+      with grader:
         grader.grade_assignment(grading_assignment,
                                 **settings,
                                 merge_only=args.merge_only,
