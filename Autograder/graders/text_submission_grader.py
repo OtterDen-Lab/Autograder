@@ -111,9 +111,11 @@ RUBRIC (8 points - length scored separately):
   - 1: Mostly surface-level definitions
   - 0: Just lists terms with no explanation
 
-SCORING EXAMPLES (for the grey zone between effort and understanding):
-• Score 3-4 engagement: "Round-robin gives each process equal time slices. I think this prevents starvation but causes more context switches. Not sure how the OS picks the time quantum though."
-  → Confused about details but clearly trying to work through the concept
+SCORING EXAMPLES:
+• Score 4 engagement: Student covers multiple topics, explains concepts in own words, shows how ideas connect, gives examples or walks through scenarios. Minor gaps or confusion about details are fine.
+
+• Score 3 engagement: "Round-robin gives each process equal time slices. I think this prevents starvation but causes more context switches. Not sure how the OS picks the time quantum though."
+  → Engaged and trying to work through concepts, even if some details unclear
 
 • Score 2 engagement: "Round-robin is a scheduling algorithm. Context switching happens when processes change."
   → Technically correct but shallow, no evidence of processing the material
@@ -121,7 +123,17 @@ SCORING EXAMPLES (for the grey zone between effort and understanding):
 • Score 1 engagement: "We learned about scheduling."
   → Minimal effort
 
-Note: A good faith effort typically results in at least 6/10 overall. Don't penalize confusion - penalize lack of effort. Verbosity is fine.
+IMPORTANT SCORING GUIDANCE:
+• A good faith effort typically results in at least 6/10 overall
+• Excellent, thorough work should get 9-10/10 - don't be stingy with top scores for engaged students
+• Don't penalize confusion - penalize lack of effort
+• Verbosity is fine
+• Minor gaps in understanding are NORMAL and should not significantly lower scores
+
+For needs_support: Set to TRUE only for students who are:
+• Clearly disengaged or putting in minimal effort, OR
+• Fundamentally lost on most concepts (not just minor gaps)
+Do NOT flag students who are engaged but have some confusion - that's normal learning. Most students should NOT need support.
 
 Return JSON:
 {{
@@ -130,12 +142,14 @@ Return JSON:
   "explanation_quality_score": "0-2",
   "topics_covered": ["topics", "addressed"],
   "topics_missing": ["topics", "not", "addressed"],
-  "topics_needing_review": ["topics", "where", "student", "shows", "confusion"],
-  "misconception_notes": "Brief note on misconceptions if any",
-  "needs_support": "true/false if significant confusion warrants outreach",
+  "topics_needing_review": ["any", "topics", "with", "confusion", "or", "empty", "list"],
+  "misconception_notes": "Brief note if confusion exists, or empty string if understanding seems solid",
+  "needs_support": "true/false - see criteria above, most students should be false",
   "support_reason": "reason if needs_support true, else empty",
-  "feedback": "Constructive guidance: topics to review, suggestions for more useful notes"
+  "feedback": "Constructive guidance addressed directly to the student using 'you' (not 'the student'): acknowledge what they did well, suggest any topics to review"
 }}
+
+Note: topics_needing_review and misconception_notes are informational for the instructor - they do NOT lower the student's score. A student can have minor misconceptions and still earn 10/10 if they engaged thoroughly.
 
 Submission:
 {submission_text}
@@ -1337,20 +1351,52 @@ class TextSubmissionGrader(Grader):
     course_name = getattr(self, 'course_name', 'Unknown Course')
     assignment_name = getattr(self, 'assignment_name', 'Unknown Assignment')
 
-    # Add cost information if available
+    # Add cost information if available, with phase breakdown
     cost_text = ""
+    phase_breakdown = ""
     if self.total_cost > 0:
+      # Calculate cost and model by phase
+      phase1_entries = [u for u in self.usage_details if 'Phase 1' in u.get('operation', '')]
+      phase2_entries = [u for u in self.usage_details if 'Phase 2 -' in u.get('operation', '')]
+      phase25_entries = [u for u in self.usage_details if 'Phase 2.5' in u.get('operation', '')]
+
+      phase1_cost = sum(u.get('cost', 0) for u in phase1_entries)
+      phase2_cost = sum(u.get('cost', 0) for u in phase2_entries)
+      phase25_cost = sum(u.get('cost', 0) for u in phase25_entries)
+
+      # Get predominant model for each phase
+      def get_model(entries):
+        if not entries:
+          return "n/a"
+        models = [u.get('model', u.get('provider', 'unknown')) for u in entries]
+        # Return most common model, shortened
+        model = max(set(models), key=models.count) if models else "unknown"
+        # Shorten model names for display
+        if 'claude' in model.lower():
+          return 'claude'
+        elif 'gpt' in model.lower():
+          return model.replace('gpt-', '')
+        return model[:12]
+
+      phase1_model = get_model(phase1_entries)
+      phase2_model = get_model(phase2_entries)
+
       cost_text = f" (${self.total_cost:.4f} - {self.total_tokens} tokens)"
+      phase_breakdown = f"  _Phase 1: ${phase1_cost:.2f} ({phase1_model}) | Phase 2: ${phase2_cost:.2f} ({phase2_model}) | Q&A: ${phase25_cost:.2f}_"
 
     # Build summary message with header
     lines = [
       f"*{course_name} - {assignment_name}*",
       f"Grading Complete{cost_text}",
+    ]
+    if phase_breakdown:
+      lines.append(phase_breakdown)
+    lines.extend([
       "",
       "*Summary:*",
       f"• {stats.get('total_students', 0)} students graded",
       f"• Average: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)",
-    ]
+    ])
 
     # Add grade distribution summary
     distribution = stats.get("grade_distribution", {})
@@ -1434,6 +1480,7 @@ class TextSubmissionGrader(Grader):
         operation: Description of the operation
     """
     provider = usage_info.get("provider", "unknown")
+    model = usage_info.get("model", "unknown")
     total_tokens = usage_info.get("total_tokens", 0)
     prompt_tokens = usage_info.get("prompt_tokens", 0)
     completion_tokens = usage_info.get("completion_tokens", 0)
@@ -1449,6 +1496,7 @@ class TextSubmissionGrader(Grader):
     self.usage_details.append({
       "operation": operation,
       "provider": provider,
+      "model": model,
       "total_tokens": total_tokens,
       "prompt_tokens": prompt_tokens,
       "completion_tokens": completion_tokens,
@@ -1456,7 +1504,7 @@ class TextSubmissionGrader(Grader):
     })
 
     log.debug(
-      f"{operation}: {total_tokens} tokens (${cost:.4f}) via {provider}")
+      f"{operation}: {total_tokens} tokens (${cost:.4f}) via {provider}/{model}")
 
   def _calculate_cost(self, usage_info: Dict) -> float:
     """

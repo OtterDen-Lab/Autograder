@@ -84,7 +84,9 @@ class AI_Helper__Anthropic(AI_Helper):
       "total_tokens": (response.usage.input_tokens +
                        response.usage.output_tokens) if response.usage else 0,
       "provider":
-      "anthropic"
+      "anthropic",
+      "model":
+      getattr(response, 'model', 'unknown')
     }
 
     return response.content[0].text, usage_info
@@ -143,7 +145,9 @@ class AI_Helper__OpenAI(AI_Helper):
       "total_tokens":
       response.usage.total_tokens if response.usage else 0,
       "provider":
-      "openai"
+      "openai",
+      "model":
+      getattr(response, 'model', 'unknown')
     }
 
     try:
@@ -250,7 +254,8 @@ class AI_Helper__Ollama(AI_Helper):
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
-        "provider": "ollama"
+        "provider": "ollama",
+        "model": model
       }
 
       return content, usage_info
