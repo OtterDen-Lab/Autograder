@@ -1,11 +1,17 @@
 #!env python
 """
-Text Submission Grader for Learning Log Assignments
+Text Submission Grader for Weekly Study Notes
 
 Implements a 3-phase grading approach:
-1. Aggregate Analysis - Identify core topics across all submissions
-2. Individual Grading - Grade each submission using identified topics
-3. Report Generation - Generate comprehensive insights and recommendations
+1. Aggregate Analysis - Identify core topics, common misconceptions, and student questions
+2. Individual Grading - Grade each submission for engagement, relevance, and explanation quality
+3. Report Generation - Generate comprehensive insights and recommendations for instruction
+
+Grading Philosophy:
+- Students are graded on effort and engagement, not correctness
+- A good faith effort typically results in at least 6/10
+- Confusion is not penalized; lack of effort is
+- Verbosity is acceptable if the student is genuinely engaging with the material
 """
 
 from typing import List, Dict
@@ -24,13 +30,15 @@ log = logging.getLogger(__name__)
 
 # AI Prompts for Text Submission Grading
 def get_aggregate_analysis_prompt(submission_texts: List[str],
-                                  assignment_name: str) -> str:
+                                  assignment_name: str,
+                                  course_name: str = "Unknown Course") -> str:
   """
     Get prompt for aggregate analysis of all submissions.
 
     Args:
         submission_texts: List of all submission text content
         assignment_name: Name of the assignment for context
+        course_name: Name of the course for context
 
     Returns:
         Formatted prompt string for aggregate analysis
@@ -38,25 +46,29 @@ def get_aggregate_analysis_prompt(submission_texts: List[str],
   num_submissions = len(submission_texts)
 
   return f"""
-You are analyzing student learning log submissions for an assignment called "{assignment_name}".
+You are analyzing student weekly study notes for "{assignment_name}" in {course_name}.
 
-Please analyze these {num_submissions} student submissions and return a JSON response with:
+These notes help students prepare for exams by explaining topics to their future selves. Students were asked to list topics, explain what each is and why it matters, and note anything unclear.
+
+Analyze these {num_submissions} submissions and return JSON:
 
 {{
-  "common_themes": "What concepts or topics are most students discussing?",
-  "key_insights": "What seems to be sticking with students vs. what they're struggling with?",
-  "learning_patterns": "Are there recurring learning patterns or misconceptions?",
-  "teaching_feedback": "Based on these submissions, what feedback would help the instructor improve their teaching?",
-  "core_topics": ["exactly", "5", "most", "important", "general", "topics"]
+  "common_themes": "What concepts are most students engaging with?",
+  "commonly_misunderstood_topics": ["topics", "where", "students", "show", "confusion"],
+  "misconception_details": "What are students getting wrong or confused about?",
+  "key_insights": "What's clicking well vs. needs more coverage?",
+  "teaching_feedback": "What topics might benefit from additional review?",
+  "core_topics": ["5", "most", "important", "topics", "covered"],
+  "student_questions": ["actual", "questions", "students", "asked", "verbatim"]
 }}
 
-For core_topics, identify the 5 most important and general topics that best summarize what was covered in class this week. These should be:
-- Broad enough to encompass multiple related concepts students discussed
-- The most fundamental/important topics from the class session
-- Topics that multiple students engaged with (directly or indirectly)
-- General categories rather than very specific technical terms
+For core_topics: Identify the 5 most important general topics from class this week.
 
-Here are the submissions:
+For commonly_misunderstood_topics: Look for topics where explanations contain errors, are vague, or where students express confusion.
+
+For student_questions: Extract actual questions students asked (with '?' or clear interrogative phrasing like "I wonder why..."). Include verbatim. Do NOT include statements about wanting to study more or rhetorical questions.
+
+Submissions:
 
 {chr(10).join([f"---SUBMISSION {i+1}---{chr(10)}{text}" for i, text in enumerate(submission_texts)])}
 
@@ -79,54 +91,53 @@ def get_individual_grading_prompt(submission_text: str,
   topics_str = ", ".join(core_topics)
 
   return f"""
-You are analyzing a student's learning log submission for grading and support identification. Learning logs are study tools where students explain topics to their future selves. The instructor emphasizes: "the best way to make a study guide and are for you, because I know this material already -- write it for your future self."
+Grade this student's weekly study notes. Students explain topics to help their future selves study for exams.
 
-These GENERAL topics were covered in class: {topics_str}
+Likely class topics (compiled from all submissions; related topics may also appear): {topics_str}
 
-GRADING RUBRIC (Total: 10 points):
-- Completion (4 pts): Based on genuine effort and depth of reflection
-- Length (2 pts): ≥250 words gets 2/2, <250 words gets 0/2
-- Relevance (2 pts): Addresses class material (2=covers 3+ topics, 1=covers 1-2, 0=off-topic)
-- Explanation Effort (2 pts): Attempts to explain concepts for future self, even if confused
+RUBRIC (8 points - length scored separately):
 
-Please analyze this submission and return a JSON response with:
+• Engagement (4 pts): Genuine effort to process and explain material
+  - 4: Thorough - worked to understand and explain multiple topics in depth
+  - 3: Solid effort - engaged meaningfully, even if some explanations incomplete
+  - 2: Superficial - lists topics without real explanation
+  - 1: Minimal - barely addresses material
+  - 0: No meaningful content
+
+• Relevance (2 pts): 2=covers 3+ topics, 1=covers 1-2 topics, 0=off-topic
+
+• Explanation Quality (2 pts): Depth of explanation, not correctness
+  - 2: Explains WHY concepts matter and HOW they connect
+  - 1: Mostly surface-level definitions
+  - 0: Just lists terms with no explanation
+
+SCORING EXAMPLES (for the grey zone between effort and understanding):
+• Score 3-4 engagement: "Round-robin gives each process equal time slices. I think this prevents starvation but causes more context switches. Not sure how the OS picks the time quantum though."
+  → Confused about details but clearly trying to work through the concept
+
+• Score 2 engagement: "Round-robin is a scheduling algorithm. Context switching happens when processes change."
+  → Technically correct but shallow, no evidence of processing the material
+
+• Score 1 engagement: "We learned about scheduling."
+  → Minimal effort
+
+Note: A good faith effort typically results in at least 6/10 overall. Don't penalize confusion - penalize lack of effort. Verbosity is fine.
+
+Return JSON:
 {{
-  "completion_score": "4, 3, 2, 1, or 0 based on depth of reflection and genuine effort",
-  "relevance_score": "2, 1, or 0 based on topic coverage",
-  "explanation_effort_score": "2, 1, or 0 based on attempt to explain vs. just list facts",
-  "topics_covered": ["list", "of", "general", "class", "topics", "that", "relate", "to", "student", "content"],
-  "topics_missing": ["list", "of", "general", "class", "topics", "not", "addressed"],
-  "questions_asked": ["list", "of", "actual", "questions", "with", "question", "marks", "or", "clear", "interrogative", "statements"],
-  "needs_support": "true/false - student shows significant confusion or struggle that warrants office hours suggestion",
-  "support_reason": "brief explanation if needs_support is true, empty string if false",
-  "feedback": "supportive guidance to help the student write more reflectively for better studying"
+  "engagement_score": "0-4",
+  "relevance_score": "0-2",
+  "explanation_quality_score": "0-2",
+  "topics_covered": ["topics", "addressed"],
+  "topics_missing": ["topics", "not", "addressed"],
+  "topics_needing_review": ["topics", "where", "student", "shows", "confusion"],
+  "misconception_notes": "Brief note on misconceptions if any",
+  "needs_support": "true/false if significant confusion warrants outreach",
+  "support_reason": "reason if needs_support true, else empty",
+  "feedback": "Constructive guidance: topics to review, suggestions for more useful notes"
 }}
 
-IMPORTANT - For questions_asked:
-- Only include actual questions that seek answers (should have '?' or be clearly interrogative like "I wonder why...")
-- Do NOT include statements about curiosity, interest, or things to study further (e.g. "I should study X more", "I am curious about Y")
-- Do NOT include rhetorical questions or self-answered questions
-- Include the question exactly as written by the student
-
-SCORING GUIDELINES:
-- Completion: Reward genuine engagement with learning, even if confused. Penalize only minimal effort.
-- Explanation Effort: Full points for trying to work through concepts in their own words, even if incorrect.
-- A confused student genuinely trying to understand should get high completion and explanation scores.
-- IMPORTANT: Questions are a sign of engagement and should NOT be penalized. Students asking questions often shows they are thinking critically about the material.
-
-IMPORTANT:
-- If the student wrote about completely unrelated topics (different subject area), note this gently in feedback
-- Only mark topics as "covered" if they actually relate to the class material, even if mentioned indirectly
-- For topics_covered, use ONLY the general topic names from the class list, not the specific student subtopics
-
-For feedback, focus on:
-- Suggesting how concepts could be explained more clearly
-- Noting topics that might be worth reviewing
-- Study strategies rather than corrections
-- If content is off-topic, redirect toward class material without excessive praise
-- Keep tone professional and direct, not overly enthusiastic
-
-Student submission:
+Submission:
 {submission_text}
 
 Return only valid JSON.
@@ -189,21 +200,27 @@ DEFAULT_MAX_WORDS = 1000
 DEFAULT_MAX_CHARACTERS = 7500
 
 # Rubric component defaults
-COMPLETION_POINTS = 4
-LENGTH_POINTS = 2
-RELEVANCE_POINTS = 2
-EXPLANATION_POINTS = 2
+ENGAGEMENT_POINTS = 4  # Effort to process and explain material
+LENGTH_POINTS = 2      # Meeting word count requirement (calculated locally)
+RELEVANCE_POINTS = 2   # Coverage of class topics
+EXPLANATION_QUALITY_POINTS = 2  # Depth of explanation
 
 
 @GraderRegistry.register("TextSubmissionGrader")
 class TextSubmissionGrader(Grader):
   """
-  Grader for text-based learning log submissions.
+  Grader for text-based weekly study notes submissions.
 
   Implements a 3-phase grading approach:
-  1. Aggregate Analysis - Identify core topics across all submissions
-  2. Individual Grading - Grade each submission using identified topics
+  1. Aggregate Analysis - Identify core topics, misconceptions, and student questions
+  2. Individual Grading - Grade each submission for engagement, relevance, and explanation quality
   3. Report Generation - Generate comprehensive insights and recommendations
+
+  Rubric (10 points total):
+  - Engagement (4 pts): Effort to process and explain material
+  - Length (2 pts): Meeting 250+ word requirement (calculated locally)
+  - Relevance (2 pts): Coverage of class topics
+  - Explanation Quality (2 pts): Depth of explanation, not correctness
   """
 
   def __init__(self, *args, **kwargs):
@@ -327,7 +344,7 @@ class TextSubmissionGrader(Grader):
     log.info("PHASE 1: AGGREGATE ANALYSIS")
     log.info("=" * 60)
     self.aggregate_results = self.phase_1_aggregate_analysis(
-      truncated_texts, assignment_name)
+      truncated_texts, assignment_name, self.course_name)
 
     # Phase 2: Individual Grading
     log.info("=" * 60)
@@ -348,13 +365,15 @@ class TextSubmissionGrader(Grader):
                                  self.individual_results)
 
   def phase_1_aggregate_analysis(self, submission_texts: List[str],
-                                 assignment_name: str) -> Dict:
+                                 assignment_name: str,
+                                 course_name: str = "Unknown Course") -> Dict:
     """
     Phase 1: Analyze all submissions to identify core topics and patterns.
 
     Args:
         submission_texts: List of all submission text content
         assignment_name: Name of the assignment for context
+        course_name: Name of the course for context
 
     Returns:
         Dictionary containing aggregate analysis results
@@ -373,12 +392,14 @@ class TextSubmissionGrader(Grader):
         "core_topics": [],
         "common_themes": "",
         "key_insights": "",
-        "learning_patterns": "",
-        "teaching_feedback": ""
+        "commonly_misunderstood_topics": [],
+        "misconception_details": "",
+        "teaching_feedback": "",
+        "student_questions": []
       }
 
     # Get the prompt
-    prompt = get_aggregate_analysis_prompt(submission_texts, assignment_name)
+    prompt = get_aggregate_analysis_prompt(submission_texts, assignment_name, course_name)
 
     if self.prefer_anthropic:
       # Try Anthropic first if preferred
@@ -540,15 +561,17 @@ class TextSubmissionGrader(Grader):
         # Handle empty submissions
         result = {
           "student_id": student_id,
-          "completion_score": 0,
+          "engagement_score": 0,
           "relevance_score": 0,
-          "explanation_effort_score": 0,
+          "explanation_quality_score": 0,
           "topics_covered": [],
           "topics_missing": core_topics,
+          "topics_needing_review": [],
+          "misconception_notes": "",
           "word_count": 0,
           "needs_support": True,
           "support_reason": "No submission content",
-          "feedback": "Please submit your learning log content for grading."
+          "feedback": "Please submit your study notes for grading."
         }
       else:
         # Grade the submission using AI
@@ -561,10 +584,12 @@ class TextSubmissionGrader(Grader):
       result["student_name"] = student_name  # Store student name for reporting
 
       # Calculate total grade (ensure all scores are integers)
-      total_grade = (int(result.get("completion_score", 0)) +
+      # AI provides 8 points (engagement + relevance + explanation_quality)
+      # Length (2 points) is calculated locally
+      total_grade = (int(result.get("engagement_score", 0)) +
                      int(result.get("length_score", 0)) +
                      int(result.get("relevance_score", 0)) +
-                     int(result.get("explanation_effort_score", 0)))
+                     int(result.get("explanation_quality_score", 0)))
       result["total_grade"] = total_grade
 
       # Track students needing support (handle string boolean from AI)
@@ -588,22 +613,22 @@ class TextSubmissionGrader(Grader):
       f"✅ Individual grading completed. {len(self.support_needed_students)} students may need support."
     )
 
-    # Phase 2.5: Consolidate questions
+    # Phase 2.5: Consolidate questions (using questions from aggregate analysis)
     log.info("=" * 60)
     log.info("PHASE 2.5: QUESTION CONSOLIDATION")
     log.info("=" * 60)
-    self.consolidated_questions = self._consolidate_questions(
-      individual_results)
+    student_questions = self.aggregate_results.get("student_questions", [])
+    self.consolidated_questions = self._consolidate_questions(student_questions)
 
     return individual_results
 
   def _consolidate_questions(self,
-                             individual_results: List[Dict]) -> List[Dict]:
+                             all_questions: List[str]) -> List[Dict]:
     """
     Consolidate similar questions from all submissions into canonical versions.
 
     Args:
-        individual_results: List of individual grading results
+        all_questions: List of questions extracted from aggregate analysis
 
     Returns:
         List of consolidated question dictionaries
@@ -611,12 +636,6 @@ class TextSubmissionGrader(Grader):
     import json
     import re
     from Autograder.ai_helper import AI_Helper__OpenAI, AI_Helper__Anthropic
-
-    # Collect all questions from individual results
-    all_questions = []
-    for result in individual_results:
-      questions = result.get("questions_asked", [])
-      all_questions.extend(questions)
 
     if not all_questions:
       log.info("No questions found to consolidate")
@@ -745,24 +764,17 @@ class TextSubmissionGrader(Grader):
         else:
           # If no JSON, create structured response from text
           return {
-            "student_id":
-            student_id,
-            "completion_score":
-            3,  # Default to moderate score
-            "relevance_score":
-            1,
-            "explanation_effort_score":
-            1,
+            "student_id": student_id,
+            "engagement_score": 3,  # Default to moderate score
+            "relevance_score": 1,
+            "explanation_quality_score": 1,
             "topics_covered": [],
-            "topics_missing":
-            core_topics,
-            "needs_support":
-            False,
-            "support_reason":
-            "",
-            "feedback":
-            analysis_text[:300] +
-            "..." if len(analysis_text) > 300 else analysis_text
+            "topics_missing": core_topics,
+            "topics_needing_review": [],
+            "misconception_notes": "",
+            "needs_support": False,
+            "support_reason": "",
+            "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
           }
 
       except Exception as e:
@@ -806,24 +818,17 @@ class TextSubmissionGrader(Grader):
           else:
             # If no JSON, create structured response from text
             return {
-              "student_id":
-              student_id,
-              "completion_score":
-              3,  # Default to moderate score
-              "relevance_score":
-              1,
-              "explanation_effort_score":
-              1,
+              "student_id": student_id,
+              "engagement_score": 3,  # Default to moderate score
+              "relevance_score": 1,
+              "explanation_quality_score": 1,
               "topics_covered": [],
-              "topics_missing":
-              core_topics,
-              "needs_support":
-              False,
-              "support_reason":
-              "",
-              "feedback":
-              analysis_text[:300] +
-              "..." if len(analysis_text) > 300 else analysis_text
+              "topics_missing": core_topics,
+              "topics_needing_review": [],
+              "misconception_notes": "",
+              "needs_support": False,
+              "support_reason": "",
+              "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
             }
 
         except Exception as fallback_error:
@@ -831,11 +836,13 @@ class TextSubmissionGrader(Grader):
             f"Both AI providers failed for {student_id}: {fallback_error}")
           return {
             "student_id": student_id,
-            "completion_score": 0,
+            "engagement_score": 0,
             "relevance_score": 0,
-            "explanation_effort_score": 0,
+            "explanation_quality_score": 0,
             "topics_covered": [],
             "topics_missing": core_topics,
+            "topics_needing_review": [],
+            "misconception_notes": "",
             "needs_support": True,
             "support_reason": "Error analyzing submission",
             "feedback": f"Error analyzing submission: {e}"
@@ -963,8 +970,14 @@ class TextSubmissionGrader(Grader):
     if insights.get("key_insights"):
       log.debug(f"\n💡 Key Learning Insights:\n{insights['key_insights']}")
 
-    if insights.get("learning_patterns"):
-      log.debug(f"\n🔄 Learning Patterns:\n{insights['learning_patterns']}")
+    # Display commonly misunderstood topics
+    misunderstood = insights.get("commonly_misunderstood_topics", [])
+    if misunderstood:
+      log.debug(f"\n⚠️ Topics Needing Review ({len(misunderstood)}):")
+      for topic in misunderstood:
+        log.debug(f"   • {topic}")
+      if insights.get("misconception_details"):
+        log.debug(f"   Details: {insights['misconception_details']}")
 
     if insights.get("teaching_feedback"):
       log.debug(
@@ -1059,24 +1072,34 @@ class TextSubmissionGrader(Grader):
     Returns:
         Formatted feedback string with rubric breakdown
     """
-    completion_score = result.get('completion_score', 0)
+    engagement_score = result.get('engagement_score', 0)
     length_score = result.get('length_score', 0)
     relevance_score = result.get('relevance_score', 0)
-    effort_score = result.get('explanation_effort_score', 0)
+    quality_score = result.get('explanation_quality_score', 0)
     total_score = result.get('total_grade', 0)
     # Always use our accurate word count
     word_count = result.get('accurate_word_count', 0)
     ai_feedback = result.get('feedback', '')
+    topics_needing_review = result.get('topics_needing_review', [])
 
     feedback_lines = [
-      "Learning Log Feedback", "=" * 50, "", "GRADE BREAKDOWN:",
-      f"• Completion (4 pts): {completion_score}/4 - Depth of reflection and genuine effort",
+      "Study Notes Feedback", "=" * 50, "", "GRADE BREAKDOWN:",
+      f"• Engagement (4 pts): {engagement_score}/4 - Effort to process and explain material",
       f"• Length (2 pts): {length_score}/2 - {'✓ Met 250+ word requirement' if length_score == 2 else '✗ Under 250 words required'}",
-      f"• Relevance (2 pts): {relevance_score}/2 - Connection to class material",
-      f"• Explanation Effort (2 pts): {effort_score}/2 - Attempt to explain concepts clearly",
+      f"• Relevance (2 pts): {relevance_score}/2 - Coverage of class topics",
+      f"• Explanation Quality (2 pts): {quality_score}/2 - Depth of explanation",
       "", f"TOTAL SCORE: {total_score}/10 ({(total_score/10)*100:.0f}%)",
-      f"Word Count: {word_count} words", "", "FEEDBACK:", ai_feedback
+      f"Word Count: {word_count} words"
     ]
+
+    # Add topics needing review if any
+    if topics_needing_review:
+      feedback_lines.append("")
+      feedback_lines.append("TOPICS TO REVIEW:")
+      for topic in topics_needing_review:
+        feedback_lines.append(f"• {topic}")
+
+    feedback_lines.extend(["", "FEEDBACK:", ai_feedback])
 
     return "\n".join(feedback_lines)
 
@@ -1355,9 +1378,19 @@ class TextSubmissionGrader(Grader):
 
     # Add topic insights as a list - show ALL topics
     if topics:
-      lines.append(f"\n*Key Topics Mentioned:*")
+      lines.append(f"\n*Key Topics Covered:*")
       for topic in topics:
         lines.append(f"• {topic}")
+
+    # Add commonly misunderstood topics
+    misunderstood = insights.get("commonly_misunderstood_topics", [])
+    if misunderstood:
+      lines.append(f"\n*Topics Needing Review (common confusion):*")
+      for topic in misunderstood:
+        lines.append(f"• {topic}")
+      misconception_details = insights.get("misconception_details", "").strip()
+      if misconception_details:
+        lines.append(f"_{misconception_details}_")
 
     # Add teaching insights as a list
     teaching_feedback = insights.get("teaching_feedback", "").strip()
