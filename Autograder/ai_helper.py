@@ -23,27 +23,64 @@ DEFAULT_MAX_RETRIES = 3  # Default number of retries for failed requests
 # MODEL CONFIGURATION
 # =============================================================================
 # Define available models per provider and tier (small, medium, large)
-# These can be overridden via environment variables:
+# Each model includes: name and pricing (input_cost, output_cost) per million tokens
+# Model names can be overridden via environment variables:
 #   ANTHROPIC_MODEL_SMALL, ANTHROPIC_MODEL_MEDIUM, ANTHROPIC_MODEL_LARGE
 #   OPENAI_MODEL_SMALL, OPENAI_MODEL_MEDIUM, OPENAI_MODEL_LARGE
 #   OLLAMA_MODEL_SMALL, OLLAMA_MODEL_MEDIUM, OLLAMA_MODEL_LARGE
 # =============================================================================
 MODEL_CONFIG = {
   "anthropic": {
-    "small": "claude-haiku-4-5",
-    "medium": "claude-sonnet-4-5",
-    "large": "claude-opus-4-5",
+    "small": {
+      "name": "claude-haiku-4-5",
+      "input_cost": 1.0,    # $ per million tokens
+      "output_cost": 5.0,
+    },
+    "medium": {
+      "name": "claude-sonnet-4-5",
+      "input_cost": 3.0,
+      "output_cost": 15.0,
+    },
+    "large": {
+      "name": "claude-opus-4-5",
+      "input_cost": 15.0,
+      "output_cost": 75.0,
+    },
   },
   "openai": {
-    "small": "gpt-4.1-nano",
-    "medium": "gpt-4.1-mini",
-    "large": "gpt-4.1",
+    "small": {
+      "name": "gpt-4.1-nano",
+      "input_cost": 0.10,
+      "output_cost": 0.40,
+    },
+    "medium": {
+      "name": "gpt-4.1-mini",
+      "input_cost": 0.40,
+      "output_cost": 1.60,
+    },
+    "large": {
+      "name": "gpt-4.1",
+      "input_cost": 2.0,
+      "output_cost": 8.0,
+    },
   },
   "ollama": {
-    "small": "qwen3:4b",
-    "medium": "qwen3:14b",
-    "large": "qwen3:32b",
-  }
+    "small": {
+      "name": "qwen3:4b",
+      "input_cost": 0.0,
+      "output_cost": 0.0,
+    },
+    "medium": {
+      "name": "qwen3:14b",
+      "input_cost": 0.0,
+      "output_cost": 0.0,
+    },
+    "large": {
+      "name": "qwen3:32b",
+      "input_cost": 0.0,
+      "output_cost": 0.0,
+    },
+  },
 }
 
 # Default tier to use when not specified
@@ -84,7 +121,34 @@ def get_model_for_tier(provider: str, tier: str = None) -> str:
     log.warning(f"Unknown tier '{tier}' for {provider}, falling back to 'small'")
     tier = "small"
 
-  return MODEL_CONFIG[provider][tier]
+  return MODEL_CONFIG[provider][tier]["name"]
+
+
+def get_model_pricing(provider: str, model: str) -> tuple:
+  """
+  Get the pricing for a given provider and model.
+
+  Args:
+      provider: The AI provider ("anthropic", "openai", "ollama")
+      model: The model name to look up pricing for
+
+  Returns:
+      Tuple of (input_cost, output_cost) per million tokens
+  """
+  provider = provider.lower()
+  model = model.lower()
+
+  if provider not in MODEL_CONFIG:
+    return (0.0, 0.0)
+
+  # Search through tiers to find matching model
+  for tier_config in MODEL_CONFIG[provider].values():
+    if tier_config["name"].lower() in model or model in tier_config["name"].lower():
+      return (tier_config["input_cost"], tier_config["output_cost"])
+
+  # Default to small tier pricing if model not found
+  default_tier = MODEL_CONFIG[provider].get("small", {})
+  return (default_tier.get("input_cost", 0.0), default_tier.get("output_cost", 0.0))
 
 
 class AI_Helper(abc.ABC):

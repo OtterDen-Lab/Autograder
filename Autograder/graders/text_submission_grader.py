@@ -253,6 +253,8 @@ class TextSubmissionGrader(Grader):
     self.phase2_tier = kwargs.get('phase2_tier', 'small')  # Individual grading
     self.phase25_tier = kwargs.get('phase25_tier', 'small')  # Question consolidation
 
+    log.info(f"TextSubmissionGrader initialized with tiers: phase1={self.phase1_tier}, phase2={self.phase2_tier}, phase25={self.phase25_tier}")
+
   def can_grade_submission(self, submission: Submission) -> bool:
     """
     Text-based graders can only grade TextSubmission objects.
@@ -1384,14 +1386,26 @@ class TextSubmissionGrader(Grader):
         if not entries:
           return "n/a"
         models = [u.get('model', u.get('provider', 'unknown')) for u in entries]
-        # Return most common model, shortened
+        # Return most common model, with light shortening
         model = max(set(models), key=models.count) if models else "unknown"
-        # Shorten model names for display
+        # Shorten model names for display but keep distinguishing info
+        # e.g., "claude-sonnet-4-5-20250514" -> "sonnet-4-5"
+        #       "claude-haiku-4-5-20250514" -> "haiku-4-5"
+        #       "gpt-4.1-nano" -> "4.1-nano"
         if 'claude' in model.lower():
-          return 'claude'
+          # Extract the model variant (haiku, sonnet, opus) and version
+          for variant in ['haiku', 'sonnet', 'opus']:
+            if variant in model.lower():
+              # Try to get version info too
+              parts = model.lower().split('-')
+              version_parts = [p for p in parts if p[0].isdigit()] if parts else []
+              if version_parts:
+                return f"{variant}-{version_parts[0]}"
+              return variant
+          return model[:20]  # Fallback
         elif 'gpt' in model.lower():
           return model.replace('gpt-', '')
-        return model[:12]
+        return model[:15]
 
       phase1_model = get_model(phase1_entries)
       phase2_model = get_model(phase2_entries)
@@ -1523,32 +1537,28 @@ class TextSubmissionGrader(Grader):
 
   def _calculate_cost(self, usage_info: Dict) -> float:
     """
-    Calculate cost based on provider pricing.
+    Calculate cost based on provider and model pricing.
 
     Args:
-        usage_info: Usage information with provider and token counts
+        usage_info: Usage information with provider, model, and token counts
 
     Returns:
         Estimated cost in USD
     """
+    from Autograder.ai_helper import get_model_pricing
+
     provider = usage_info.get("provider", "unknown")
+    model = usage_info.get("model", "unknown")
     prompt_tokens = usage_info.get("prompt_tokens", 0)
     completion_tokens = usage_info.get("completion_tokens", 0)
 
-    if provider == "openai":
-      # GPT-4o pricing (approximate)
-      prompt_cost = (prompt_tokens / 1000) * 0.03  # $0.03 per 1K input tokens
-      completion_cost = (completion_tokens /
-                         1000) * 0.06  # $0.06 per 1K output tokens
-      return prompt_cost + completion_cost
-    elif provider == "anthropic":
-      # Claude pricing (approximate)
-      prompt_cost = (prompt_tokens / 1000) * 0.03  # $0.03 per 1K input tokens
-      completion_cost = (completion_tokens /
-                         1000) * 0.015  # $0.015 per 1K output tokens
-      return prompt_cost + completion_cost
-    else:
-      return 0.0
+    # Get pricing from centralized MODEL_CONFIG
+    input_price, output_price = get_model_pricing(provider, model)
+
+    # Calculate cost (prices are per million tokens)
+    prompt_cost = (prompt_tokens / 1_000_000) * input_price
+    completion_cost = (completion_tokens / 1_000_000) * output_price
+    return prompt_cost + completion_cost
 
   def _print_report_to_console(self, report_data: Dict) -> None:
     """
