@@ -247,6 +247,12 @@ class TextSubmissionGrader(Grader):
     self.slack_channel = kwargs.get('slack_channel')
     self.records_dir = None
 
+    # Model tier settings for each phase (small, medium, large)
+    # Can be configured via grader settings in YAML
+    self.phase1_tier = kwargs.get('phase1_tier', 'small')  # Aggregate analysis
+    self.phase2_tier = kwargs.get('phase2_tier', 'small')  # Individual grading
+    self.phase25_tier = kwargs.get('phase25_tier', 'small')  # Question consolidation
+
   def can_grade_submission(self, submission: Submission) -> bool:
     """
     Text-based graders can only grade TextSubmission objects.
@@ -419,10 +425,11 @@ class TextSubmissionGrader(Grader):
       # Try Anthropic first if preferred
       try:
         log.debug(
-          "Attempting aggregate analysis with Anthropic (preferred)...")
+          f"Attempting aggregate analysis with Anthropic (preferred, tier={self.phase1_tier})...")
         ai_helper = AI_Helper__Anthropic()
         analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                  max_response_tokens=2000)
+                                                  max_response_tokens=2000,
+                                                  tier=self.phase1_tier)
 
         # Track token usage
         self._track_token_usage(usage,
@@ -462,9 +469,10 @@ class TextSubmissionGrader(Grader):
 
     try:
       # Try OpenAI (either first choice or fallback)
-      log.debug("Attempting aggregate analysis with OpenAI...")
+      log.debug(f"Attempting aggregate analysis with OpenAI (tier={self.phase1_tier})...")
       ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000,
+                                         tier=self.phase1_tier)
 
       # Track token usage
       self._track_token_usage(usage, "Phase 1 - Aggregate Analysis (OpenAI)")
@@ -492,7 +500,8 @@ class TextSubmissionGrader(Grader):
           # Fallback to Anthropic when OpenAI was first choice
           ai_helper = AI_Helper__Anthropic()
           analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                    max_response_tokens=2000)
+                                                    max_response_tokens=2000,
+                                                    tier=self.phase1_tier)
 
           # Track token usage
           self._track_token_usage(
@@ -665,7 +674,8 @@ class TextSubmissionGrader(Grader):
       try:
         ai_helper = AI_Helper__Anthropic()
         analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                  max_response_tokens=2000)
+                                                  max_response_tokens=2000,
+                                                  tier=self.phase25_tier)
 
         # Track token usage
         self._track_token_usage(
@@ -691,7 +701,8 @@ class TextSubmissionGrader(Grader):
     try:
       # Try OpenAI (either first choice or fallback)
       ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000,
+                                         tier=self.phase25_tier)
 
       # Track token usage
       self._track_token_usage(usage,
@@ -712,7 +723,8 @@ class TextSubmissionGrader(Grader):
           # Fallback to Anthropic when OpenAI was first choice
           ai_helper = AI_Helper__Anthropic()
           analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                    max_response_tokens=2000)
+                                                    max_response_tokens=2000,
+                                                    tier=self.phase25_tier)
 
           # Track token usage
           self._track_token_usage(
@@ -763,7 +775,8 @@ class TextSubmissionGrader(Grader):
       try:
         ai_helper = AI_Helper__Anthropic()
         analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                  max_response_tokens=1000)
+                                                  max_response_tokens=1000,
+                                                  tier=self.phase2_tier)
 
         # Track token usage
         self._track_token_usage(
@@ -797,7 +810,8 @@ class TextSubmissionGrader(Grader):
     try:
       # Try OpenAI (either first choice or fallback)
       ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
+      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000,
+                                         tier=self.phase2_tier)
 
       # Track token usage
       self._track_token_usage(
@@ -815,7 +829,8 @@ class TextSubmissionGrader(Grader):
           # Fallback to Anthropic when OpenAI was first choice
           ai_helper = AI_Helper__Anthropic()
           analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                    max_response_tokens=1000)
+                                                    max_response_tokens=1000,
+                                                    tier=self.phase2_tier)
 
           # Track token usage
           self._track_token_usage(

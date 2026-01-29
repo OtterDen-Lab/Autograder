@@ -19,6 +19,73 @@ log = logging.getLogger(__name__)
 DEFAULT_MAX_TOKENS = 1000  # Default token limit for AI responses
 DEFAULT_MAX_RETRIES = 3  # Default number of retries for failed requests
 
+# =============================================================================
+# MODEL CONFIGURATION
+# =============================================================================
+# Define available models per provider and tier (small, medium, large)
+# These can be overridden via environment variables:
+#   ANTHROPIC_MODEL_SMALL, ANTHROPIC_MODEL_MEDIUM, ANTHROPIC_MODEL_LARGE
+#   OPENAI_MODEL_SMALL, OPENAI_MODEL_MEDIUM, OPENAI_MODEL_LARGE
+#   OLLAMA_MODEL_SMALL, OLLAMA_MODEL_MEDIUM, OLLAMA_MODEL_LARGE
+# =============================================================================
+MODEL_CONFIG = {
+  "anthropic": {
+    "small": "claude-haiku-4-5",
+    "medium": "claude-sonnet-4-5",
+    "large": "claude-opus-4-5",
+  },
+  "openai": {
+    "small": "gpt-4.1-nano",
+    "medium": "gpt-4.1-mini",
+    "large": "gpt-4.1",
+  },
+  "ollama": {
+    "small": "qwen3:4b",
+    "medium": "qwen3:14b",
+    "large": "qwen3:32b",
+  }
+}
+
+# Default tier to use when not specified
+DEFAULT_MODEL_TIER = "small"
+
+
+def get_model_for_tier(provider: str, tier: str = None) -> str:
+  """
+  Get the model name for a given provider and tier.
+
+  Args:
+      provider: The AI provider ("anthropic", "openai", "ollama")
+      tier: The model tier ("small", "medium", "large"). Defaults to DEFAULT_MODEL_TIER.
+
+  Returns:
+      The model name to use
+  """
+  if tier is None:
+    tier = DEFAULT_MODEL_TIER
+
+  # Normalize inputs
+  provider = provider.lower()
+  tier = tier.lower()
+
+  # Check for environment variable override first
+  env_var = f"{provider.upper()}_MODEL_{tier.upper()}"
+  env_model = os.getenv(env_var)
+  if env_model:
+    log.debug(f"Using model from {env_var}: {env_model}")
+    return env_model
+
+  # Fall back to config
+  if provider not in MODEL_CONFIG:
+    log.warning(f"Unknown provider '{provider}', using default")
+    return "unknown"
+
+  if tier not in MODEL_CONFIG[provider]:
+    log.warning(f"Unknown tier '{tier}' for {provider}, falling back to 'small'")
+    tier = "small"
+
+  return MODEL_CONFIG[provider][tier]
+
 
 class AI_Helper(abc.ABC):
   _client = None
@@ -46,8 +113,12 @@ class AI_Helper__Anthropic(AI_Helper):
                message: str,
                attachments: List[Tuple[str, str]],
                max_response_tokens: int = DEFAULT_MAX_TOKENS,
-               max_retries: int = DEFAULT_MAX_RETRIES) -> Tuple[str, Dict]:
+               max_retries: int = DEFAULT_MAX_RETRIES,
+               tier: str = None) -> Tuple[str, Dict]:
     messages = []
+
+    # Get model for the specified tier
+    model = get_model_for_tier("anthropic", tier)
 
     attachment_messages = []
     for file_type, b64_file_contents in attachments:
@@ -70,8 +141,8 @@ class AI_Helper__Anthropic(AI_Helper):
       }, *attachment_messages]
     })
 
-    response = cls._client.messages.create(model="claude-3-7-sonnet-latest",
-                                           max_tokens=DEFAULT_MAX_TOKENS,
+    response = cls._client.messages.create(model=model,
+                                           max_tokens=max_response_tokens,
                                            messages=messages)
     log.debug(response.content)
 
@@ -103,8 +174,12 @@ class AI_Helper__OpenAI(AI_Helper):
                message: str,
                attachments: List[Tuple[str, str]],
                max_response_tokens: int = DEFAULT_MAX_TOKENS,
-               max_retries: int = DEFAULT_MAX_RETRIES) -> Tuple[Dict, Dict]:
+               max_retries: int = DEFAULT_MAX_RETRIES,
+               tier: str = None) -> Tuple[Dict, Dict]:
     messages = []
+
+    # Get model for the specified tier
+    model = get_model_for_tier("openai", tier)
 
     attachment_messages = []
     for file_type, b64_file_contents in attachments:
@@ -126,7 +201,7 @@ class AI_Helper__OpenAI(AI_Helper):
     })
 
     response = cls._client.chat.completions.create(
-      model="gpt-4.1-nano",
+      model=model,
       response_format={"type": "json_object"},
       messages=messages,
       temperature=1,
@@ -180,7 +255,8 @@ class AI_Helper__Ollama(AI_Helper):
                message: str,
                attachments: List[Tuple[str, str]],
                max_response_tokens: int = DEFAULT_MAX_TOKENS,
-               max_retries: int = DEFAULT_MAX_RETRIES) -> Tuple[str, Dict]:
+               max_retries: int = DEFAULT_MAX_RETRIES,
+               tier: str = None) -> Tuple[str, Dict]:
 
     # Ensure client is initialized
     if cls._client is None:
@@ -203,9 +279,13 @@ class AI_Helper__Ollama(AI_Helper):
     if images:
       msg_content['images'] = images
 
-    # Use the client instance to make the request
-    # Model can be configured via environment variable or default to qwen3-vl:2b
-    model = os.getenv('OLLAMA_MODEL', 'qwen3-vl:2b')
+    # Get model for the specified tier
+    # Also check legacy OLLAMA_MODEL env var for backward compatibility
+    legacy_model = os.getenv('OLLAMA_MODEL')
+    if legacy_model and tier is None:
+      model = legacy_model
+    else:
+      model = get_model_for_tier("ollama", tier)
 
     log.info(
       f"Ollama: Using model {model} with host {cls._client._client.base_url}")
