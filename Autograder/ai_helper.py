@@ -19,6 +19,137 @@ log = logging.getLogger(__name__)
 DEFAULT_MAX_TOKENS = 1000  # Default token limit for AI responses
 DEFAULT_MAX_RETRIES = 3  # Default number of retries for failed requests
 
+# =============================================================================
+# MODEL CONFIGURATION
+# =============================================================================
+# Define available models per provider and tier (small, medium, large)
+# Each model includes: name and pricing (input_cost, output_cost) per million tokens
+# Model names can be overridden via environment variables:
+#   ANTHROPIC_MODEL_SMALL, ANTHROPIC_MODEL_MEDIUM, ANTHROPIC_MODEL_LARGE
+#   OPENAI_MODEL_SMALL, OPENAI_MODEL_MEDIUM, OPENAI_MODEL_LARGE
+#   OLLAMA_MODEL_SMALL, OLLAMA_MODEL_MEDIUM, OLLAMA_MODEL_LARGE
+# =============================================================================
+MODEL_CONFIG = {
+  "anthropic": {
+    "small": {
+      "name": "claude-haiku-4-5",
+      "input_cost": 1.0,    # $ per million tokens
+      "output_cost": 5.0,
+    },
+    "medium": {
+      "name": "claude-sonnet-4-5",
+      "input_cost": 3.0,
+      "output_cost": 15.0,
+    },
+    "large": {
+      "name": "claude-opus-4-5",
+      "input_cost": 15.0,
+      "output_cost": 75.0,
+    },
+  },
+  "openai": {
+    "small": {
+      "name": "gpt-4.1-nano",
+      "input_cost": 0.10,
+      "output_cost": 0.40,
+    },
+    "medium": {
+      "name": "gpt-4.1-mini",
+      "input_cost": 0.40,
+      "output_cost": 1.60,
+    },
+    "large": {
+      "name": "gpt-4.1",
+      "input_cost": 2.0,
+      "output_cost": 8.0,
+    },
+  },
+  "ollama": {
+    "small": {
+      "name": "qwen3:4b",
+      "input_cost": 0.0,
+      "output_cost": 0.0,
+    },
+    "medium": {
+      "name": "qwen3:14b",
+      "input_cost": 0.0,
+      "output_cost": 0.0,
+    },
+    "large": {
+      "name": "qwen3:32b",
+      "input_cost": 0.0,
+      "output_cost": 0.0,
+    },
+  },
+}
+
+# Default tier to use when not specified
+DEFAULT_MODEL_TIER = "small"
+
+
+def get_model_for_tier(provider: str, tier: str = None) -> str:
+  """
+  Get the model name for a given provider and tier.
+
+  Args:
+      provider: The AI provider ("anthropic", "openai", "ollama")
+      tier: The model tier ("small", "medium", "large"). Defaults to DEFAULT_MODEL_TIER.
+
+  Returns:
+      The model name to use
+  """
+  if tier is None:
+    tier = DEFAULT_MODEL_TIER
+
+  # Normalize inputs
+  provider = provider.lower()
+  tier = tier.lower()
+
+  # Check for environment variable override first
+  env_var = f"{provider.upper()}_MODEL_{tier.upper()}"
+  env_model = os.getenv(env_var)
+  if env_model:
+    log.debug(f"Using model from {env_var}: {env_model}")
+    return env_model
+
+  # Fall back to config
+  if provider not in MODEL_CONFIG:
+    log.warning(f"Unknown provider '{provider}', using default")
+    return "unknown"
+
+  if tier not in MODEL_CONFIG[provider]:
+    log.warning(f"Unknown tier '{tier}' for {provider}, falling back to 'small'")
+    tier = "small"
+
+  return MODEL_CONFIG[provider][tier]["name"]
+
+
+def get_model_pricing(provider: str, model: str) -> tuple:
+  """
+  Get the pricing for a given provider and model.
+
+  Args:
+      provider: The AI provider ("anthropic", "openai", "ollama")
+      model: The model name to look up pricing for
+
+  Returns:
+      Tuple of (input_cost, output_cost) per million tokens
+  """
+  provider = provider.lower()
+  model = model.lower()
+
+  if provider not in MODEL_CONFIG:
+    return (0.0, 0.0)
+
+  # Search through tiers to find matching model
+  for tier_config in MODEL_CONFIG[provider].values():
+    if tier_config["name"].lower() in model or model in tier_config["name"].lower():
+      return (tier_config["input_cost"], tier_config["output_cost"])
+
+  # Default to small tier pricing if model not found
+  default_tier = MODEL_CONFIG[provider].get("small", {})
+  return (default_tier.get("input_cost", 0.0), default_tier.get("output_cost", 0.0))
+
 
 class AI_Helper(abc.ABC):
   _client = None
@@ -46,8 +177,12 @@ class AI_Helper__Anthropic(AI_Helper):
                message: str,
                attachments: List[Tuple[str, str]],
                max_response_tokens: int = DEFAULT_MAX_TOKENS,
-               max_retries: int = DEFAULT_MAX_RETRIES) -> Tuple[str, Dict]:
+               max_retries: int = DEFAULT_MAX_RETRIES,
+               tier: str = None) -> Tuple[str, Dict]:
     messages = []
+
+    # Get model for the specified tier
+    model = get_model_for_tier("anthropic", tier)
 
     attachment_messages = []
     for file_type, b64_file_contents in attachments:
@@ -70,8 +205,8 @@ class AI_Helper__Anthropic(AI_Helper):
       }, *attachment_messages]
     })
 
-    response = cls._client.messages.create(model="claude-3-7-sonnet-latest",
-                                           max_tokens=DEFAULT_MAX_TOKENS,
+    response = cls._client.messages.create(model=model,
+                                           max_tokens=max_response_tokens,
                                            messages=messages)
     log.debug(response.content)
 
@@ -84,7 +219,9 @@ class AI_Helper__Anthropic(AI_Helper):
       "total_tokens": (response.usage.input_tokens +
                        response.usage.output_tokens) if response.usage else 0,
       "provider":
-      "anthropic"
+      "anthropic",
+      "model":
+      getattr(response, 'model', 'unknown')
     }
 
     return response.content[0].text, usage_info
@@ -101,8 +238,12 @@ class AI_Helper__OpenAI(AI_Helper):
                message: str,
                attachments: List[Tuple[str, str]],
                max_response_tokens: int = DEFAULT_MAX_TOKENS,
-               max_retries: int = DEFAULT_MAX_RETRIES) -> Tuple[Dict, Dict]:
+               max_retries: int = DEFAULT_MAX_RETRIES,
+               tier: str = None) -> Tuple[Dict, Dict]:
     messages = []
+
+    # Get model for the specified tier
+    model = get_model_for_tier("openai", tier)
 
     attachment_messages = []
     for file_type, b64_file_contents in attachments:
@@ -124,7 +265,7 @@ class AI_Helper__OpenAI(AI_Helper):
     })
 
     response = cls._client.chat.completions.create(
-      model="gpt-4.1-nano",
+      model=model,
       response_format={"type": "json_object"},
       messages=messages,
       temperature=1,
@@ -143,7 +284,9 @@ class AI_Helper__OpenAI(AI_Helper):
       "total_tokens":
       response.usage.total_tokens if response.usage else 0,
       "provider":
-      "openai"
+      "openai",
+      "model":
+      getattr(response, 'model', 'unknown')
     }
 
     try:
@@ -176,7 +319,8 @@ class AI_Helper__Ollama(AI_Helper):
                message: str,
                attachments: List[Tuple[str, str]],
                max_response_tokens: int = DEFAULT_MAX_TOKENS,
-               max_retries: int = DEFAULT_MAX_RETRIES) -> Tuple[str, Dict]:
+               max_retries: int = DEFAULT_MAX_RETRIES,
+               tier: str = None) -> Tuple[str, Dict]:
 
     # Ensure client is initialized
     if cls._client is None:
@@ -199,9 +343,13 @@ class AI_Helper__Ollama(AI_Helper):
     if images:
       msg_content['images'] = images
 
-    # Use the client instance to make the request
-    # Model can be configured via environment variable or default to qwen3-vl:2b
-    model = os.getenv('OLLAMA_MODEL', 'qwen3-vl:2b')
+    # Get model for the specified tier
+    # Also check legacy OLLAMA_MODEL env var for backward compatibility
+    legacy_model = os.getenv('OLLAMA_MODEL')
+    if legacy_model and tier is None:
+      model = legacy_model
+    else:
+      model = get_model_for_tier("ollama", tier)
 
     log.info(
       f"Ollama: Using model {model} with host {cls._client._client.base_url}")
@@ -250,7 +398,8 @@ class AI_Helper__Ollama(AI_Helper):
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
-        "provider": "ollama"
+        "provider": "ollama",
+        "model": model
       }
 
       return content, usage_info

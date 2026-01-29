@@ -1,11 +1,17 @@
 #!env python
 """
-Text Submission Grader for Learning Log Assignments
+Text Submission Grader for Weekly Study Notes
 
 Implements a 3-phase grading approach:
-1. Aggregate Analysis - Identify core topics across all submissions
-2. Individual Grading - Grade each submission using identified topics
-3. Report Generation - Generate comprehensive insights and recommendations
+1. Aggregate Analysis - Identify core topics, common misconceptions, and student questions
+2. Individual Grading - Grade each submission for engagement, relevance, and explanation quality
+3. Report Generation - Generate comprehensive insights and recommendations for instruction
+
+Grading Philosophy:
+- Students are graded on effort and engagement, not correctness
+- A good faith effort typically results in at least 6/10
+- Confusion is not penalized; lack of effort is
+- Verbosity is acceptable if the student is genuinely engaging with the material
 """
 
 from typing import List, Dict
@@ -24,13 +30,15 @@ log = logging.getLogger(__name__)
 
 # AI Prompts for Text Submission Grading
 def get_aggregate_analysis_prompt(submission_texts: List[str],
-                                  assignment_name: str) -> str:
+                                  assignment_name: str,
+                                  course_name: str = "Unknown Course") -> str:
   """
     Get prompt for aggregate analysis of all submissions.
 
     Args:
         submission_texts: List of all submission text content
         assignment_name: Name of the assignment for context
+        course_name: Name of the course for context
 
     Returns:
         Formatted prompt string for aggregate analysis
@@ -38,25 +46,35 @@ def get_aggregate_analysis_prompt(submission_texts: List[str],
   num_submissions = len(submission_texts)
 
   return f"""
-You are analyzing student learning log submissions for an assignment called "{assignment_name}".
+You are analyzing student weekly study notes for "{assignment_name}" in {course_name}.
 
-Please analyze these {num_submissions} student submissions and return a JSON response with:
+These notes help students prepare for exams by explaining topics to their future selves. Students were asked to list topics, explain what each is and why it matters, and note anything unclear.
+
+Analyze these {num_submissions} submissions and return JSON:
 
 {{
-  "common_themes": "What concepts or topics are most students discussing?",
-  "key_insights": "What seems to be sticking with students vs. what they're struggling with?",
-  "learning_patterns": "Are there recurring learning patterns or misconceptions?",
-  "teaching_feedback": "Based on these submissions, what feedback would help the instructor improve their teaching?",
-  "core_topics": ["exactly", "5", "most", "important", "general", "topics"]
+  "common_themes": "What concepts are most students engaging with?",
+  "commonly_misunderstood_topics": ["topics", "where", "students", "show", "confusion"],
+  "misconception_details": "What are students getting wrong or confused about?",
+  "key_insights": "What's clicking well vs. needs more coverage?",
+  "teaching_feedback": "What topics might benefit from additional review?",
+  "core_topics": ["5", "most", "important", "topics", "covered"],
+  "related_topics": ["tangential", "topics", "that", "connect", "to", "core", "material"],
+  "off_topic_indicators": ["topics", "that", "suggest", "wrong", "lecture", "or", "not", "attending"],
+  "student_questions": ["actual", "questions", "students", "asked", "verbatim"]
 }}
 
-For core_topics, identify the 5 most important and general topics that best summarize what was covered in class this week. These should be:
-- Broad enough to encompass multiple related concepts students discussed
-- The most fundamental/important topics from the class session
-- Topics that multiple students engaged with (directly or indirectly)
-- General categories rather than very specific technical terms
+For core_topics: Identify the 5 most important general topics from class this week.
 
-Here are the submissions:
+For related_topics: Identify topics that are tangential but legitimately connected to this week's material. These are topics students might reasonably discuss because they relate to the core material (e.g., IO devices when discussing file systems, or page tables when discussing virtual memory). Students mentioning these should get credit.
+
+For off_topic_indicators: Identify topics that would suggest a student attended the wrong lecture or is looking at old/future material. These are topics from completely different units that don't connect to this week's content. Only include if you notice any in submissions.
+
+For commonly_misunderstood_topics: Look for topics where explanations contain errors, are vague, or where students express confusion.
+
+For student_questions: Extract actual questions students asked (with '?' or clear interrogative phrasing like "I wonder why..."). Include verbatim. Do NOT include statements about wanting to study more or rhetorical questions.
+
+Submissions:
 
 {chr(10).join([f"---SUBMISSION {i+1}---{chr(10)}{text}" for i, text in enumerate(submission_texts)])}
 
@@ -65,68 +83,100 @@ Return only valid JSON.
 
 
 def get_individual_grading_prompt(submission_text: str,
-                                  core_topics: List[str]) -> str:
+                                  core_topics: List[str],
+                                  related_topics: List[str] = None,
+                                  off_topic_indicators: List[str] = None) -> str:
   """
     Get prompt for individual submission grading.
 
     Args:
         submission_text: The student's submission text
         core_topics: List of core topics identified from aggregate analysis
+        related_topics: List of tangential but valid topics that should get credit
+        off_topic_indicators: List of topics that suggest wrong lecture/not attending
 
     Returns:
         Formatted prompt string for individual grading
     """
-  topics_str = ", ".join(core_topics)
+  core_str = ", ".join(core_topics)
+  related_str = ", ".join(related_topics) if related_topics else ""
+  off_topic_str = ", ".join(off_topic_indicators) if off_topic_indicators else ""
+
+  # Build the topics section
+  topics_section = f"Core topics from this week: {core_str}"
+  if related_str:
+    topics_section += f"\nRelated topics (also valid, give credit): {related_str}"
+  if off_topic_str:
+    topics_section += f"\nOff-topic indicators (suggest wrong lecture - flag if student ONLY discusses these): {off_topic_str}"
 
   return f"""
-You are analyzing a student's learning log submission for grading and support identification. Learning logs are study tools where students explain topics to their future selves. The instructor emphasizes: "the best way to make a study guide and are for you, because I know this material already -- write it for your future self."
+Grade this student's weekly study notes. Students explain topics to help their future selves study for exams.
 
-These GENERAL topics were covered in class: {topics_str}
+{topics_section}
 
-GRADING RUBRIC (Total: 10 points):
-- Completion (4 pts): Based on genuine effort and depth of reflection
-- Length (2 pts): ≥250 words gets 2/2, <250 words gets 0/2
-- Relevance (2 pts): Addresses class material (2=covers 3+ topics, 1=covers 1-2, 0=off-topic)
-- Explanation Effort (2 pts): Attempts to explain concepts for future self, even if confused
+RUBRIC (8 points - length scored separately):
 
-Please analyze this submission and return a JSON response with:
+• Engagement (4 pts): Genuine effort to process and explain material
+  - 4: Thorough - worked to understand and explain multiple topics in depth
+  - 3: Solid effort - engaged meaningfully, even if some explanations incomplete
+  - 2: Superficial - lists topics without real explanation
+  - 1: Minimal - barely addresses material
+  - 0: No meaningful content
+
+• Relevance (2 pts): Coverage of class material (core OR related topics both count)
+  - 2: Covers 3+ topics from core or related lists
+  - 1: Covers 1-2 topics
+  - 0: Completely off-topic (discusses only unrelated material)
+
+• Explanation Quality (2 pts): Depth of explanation, not correctness
+  - 2: Explains WHY concepts matter and HOW they connect
+  - 1: Mostly surface-level definitions
+  - 0: Just lists terms with no explanation
+
+SCORING EXAMPLES:
+• Score 4 engagement: Student covers multiple topics, explains concepts in own words, shows how ideas connect, gives examples or walks through scenarios. Minor gaps or confusion about details are fine.
+
+• Score 3 engagement: "Round-robin gives each process equal time slices. I think this prevents starvation but causes more context switches. Not sure how the OS picks the time quantum though."
+  → Engaged and trying to work through concepts, even if some details unclear
+
+• Score 2 engagement: "Round-robin is a scheduling algorithm. Context switching happens when processes change."
+  → Technically correct but shallow, no evidence of processing the material
+
+• Score 1 engagement: "We learned about scheduling."
+  → Minimal effort
+
+IMPORTANT SCORING GUIDANCE:
+• A good faith effort typically results in at least 6/10 overall
+• Excellent, thorough work should get 9-10/10 - don't be stingy with top scores for engaged students
+• Don't penalize confusion - penalize lack of effort
+• Verbosity is fine
+• Minor gaps in understanding are NORMAL and should not significantly lower scores
+• Students discussing RELATED topics should get full relevance credit - these connect to the material
+
+For needs_support: Set to TRUE only for students who are:
+• Clearly disengaged or putting in minimal effort, OR
+• Fundamentally lost on most concepts (not just minor gaps), OR
+• Discussing completely unrelated material (suggests didn't attend class)
+Do NOT flag students who are engaged but have some confusion - that's normal learning. Most students should NOT need support.
+
+Return JSON:
 {{
-  "completion_score": "4, 3, 2, 1, or 0 based on depth of reflection and genuine effort",
-  "relevance_score": "2, 1, or 0 based on topic coverage",
-  "explanation_effort_score": "2, 1, or 0 based on attempt to explain vs. just list facts",
-  "topics_covered": ["list", "of", "general", "class", "topics", "that", "relate", "to", "student", "content"],
-  "topics_missing": ["list", "of", "general", "class", "topics", "not", "addressed"],
-  "questions_asked": ["list", "of", "actual", "questions", "with", "question", "marks", "or", "clear", "interrogative", "statements"],
-  "needs_support": "true/false - student shows significant confusion or struggle that warrants office hours suggestion",
-  "support_reason": "brief explanation if needs_support is true, empty string if false",
-  "feedback": "supportive guidance to help the student write more reflectively for better studying"
+  "engagement_score": "0-4",
+  "relevance_score": "0-2",
+  "explanation_quality_score": "0-2",
+  "topics_covered": ["topics", "addressed", "from", "core", "or", "related"],
+  "topics_missing": ["core", "topics", "not", "addressed"],
+  "topics_needing_review": ["any", "topics", "with", "confusion", "or", "empty", "list"],
+  "off_topic_content": "If student discussed unrelated material, note what. Empty string if on-topic.",
+  "misconception_notes": "Brief note if confusion exists, or empty string if understanding seems solid",
+  "needs_support": "true/false - see criteria above, most students should be false",
+  "support_reason": "reason if needs_support true, else empty",
+  "feedback": "Constructive guidance addressed directly to the student using 'you' (not 'the student'): acknowledge what they did well, suggest any topics to review"
 }}
 
-IMPORTANT - For questions_asked:
-- Only include actual questions that seek answers (should have '?' or be clearly interrogative like "I wonder why...")
-- Do NOT include statements about curiosity, interest, or things to study further (e.g. "I should study X more", "I am curious about Y")
-- Do NOT include rhetorical questions or self-answered questions
-- Include the question exactly as written by the student
+Note: topics_needing_review and misconception_notes are informational for the instructor - they do NOT lower the student's score. A student can have minor misconceptions and still earn 10/10 if they engaged thoroughly.
 
-SCORING GUIDELINES:
-- Completion: Reward genuine engagement with learning, even if confused. Penalize only minimal effort.
-- Explanation Effort: Full points for trying to work through concepts in their own words, even if incorrect.
-- A confused student genuinely trying to understand should get high completion and explanation scores.
-- IMPORTANT: Questions are a sign of engagement and should NOT be penalized. Students asking questions often shows they are thinking critically about the material.
-
-IMPORTANT:
-- If the student wrote about completely unrelated topics (different subject area), note this gently in feedback
-- Only mark topics as "covered" if they actually relate to the class material, even if mentioned indirectly
-- For topics_covered, use ONLY the general topic names from the class list, not the specific student subtopics
-
-For feedback, focus on:
-- Suggesting how concepts could be explained more clearly
-- Noting topics that might be worth reviewing
-- Study strategies rather than corrections
-- If content is off-topic, redirect toward class material without excessive praise
-- Keep tone professional and direct, not overly enthusiastic
-
-Student submission:
+Submission:
 {submission_text}
 
 Return only valid JSON.
@@ -189,32 +239,48 @@ DEFAULT_MAX_WORDS = 1000
 DEFAULT_MAX_CHARACTERS = 7500
 
 # Rubric component defaults
-COMPLETION_POINTS = 4
-LENGTH_POINTS = 2
-RELEVANCE_POINTS = 2
-EXPLANATION_POINTS = 2
+ENGAGEMENT_POINTS = 4  # Effort to process and explain material
+LENGTH_POINTS = 2      # Meeting word count requirement (calculated locally)
+RELEVANCE_POINTS = 2   # Coverage of class topics
+EXPLANATION_QUALITY_POINTS = 2  # Depth of explanation
 
 
 @GraderRegistry.register("TextSubmissionGrader")
 class TextSubmissionGrader(Grader):
   """
-  Grader for text-based learning log submissions.
+  Grader for text-based weekly study notes submissions.
 
   Implements a 3-phase grading approach:
-  1. Aggregate Analysis - Identify core topics across all submissions
-  2. Individual Grading - Grade each submission using identified topics
+  1. Aggregate Analysis - Identify core topics, misconceptions, and student questions
+  2. Individual Grading - Grade each submission for engagement, relevance, and explanation quality
   3. Report Generation - Generate comprehensive insights and recommendations
+
+  Rubric (10 points total):
+  - Engagement (4 pts): Effort to process and explain material
+  - Length (2 pts): Meeting 250+ word requirement (calculated locally)
+  - Relevance (2 pts): Coverage of class topics
+  - Explanation Quality (2 pts): Depth of explanation, not correctness
   """
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
     self.core_topics = []
+    self.related_topics = []
+    self.off_topic_indicators = []
     self.aggregate_results = {}
     self.individual_results = []
     self.support_needed_students = []
     self.consolidated_questions = []
     self.slack_channel = kwargs.get('slack_channel')
     self.records_dir = None
+
+    # Model tier settings for each phase (small, medium, large)
+    # Can be configured via grader settings in YAML
+    self.phase1_tier = kwargs.get('phase1_tier', 'small')  # Aggregate analysis
+    self.phase2_tier = kwargs.get('phase2_tier', 'small')  # Individual grading
+    self.phase25_tier = kwargs.get('phase25_tier', 'small')  # Question consolidation
+
+    log.info(f"TextSubmissionGrader initialized with tiers: phase1={self.phase1_tier}, phase2={self.phase2_tier}, phase25={self.phase25_tier}")
 
   def can_grade_submission(self, submission: Submission) -> bool:
     """
@@ -327,7 +393,7 @@ class TextSubmissionGrader(Grader):
     log.info("PHASE 1: AGGREGATE ANALYSIS")
     log.info("=" * 60)
     self.aggregate_results = self.phase_1_aggregate_analysis(
-      truncated_texts, assignment_name)
+      truncated_texts, assignment_name, self.course_name)
 
     # Phase 2: Individual Grading
     log.info("=" * 60)
@@ -348,13 +414,15 @@ class TextSubmissionGrader(Grader):
                                  self.individual_results)
 
   def phase_1_aggregate_analysis(self, submission_texts: List[str],
-                                 assignment_name: str) -> Dict:
+                                 assignment_name: str,
+                                 course_name: str = "Unknown Course") -> Dict:
     """
     Phase 1: Analyze all submissions to identify core topics and patterns.
 
     Args:
         submission_texts: List of all submission text content
         assignment_name: Name of the assignment for context
+        course_name: Name of the course for context
 
     Returns:
         Dictionary containing aggregate analysis results
@@ -373,21 +441,24 @@ class TextSubmissionGrader(Grader):
         "core_topics": [],
         "common_themes": "",
         "key_insights": "",
-        "learning_patterns": "",
-        "teaching_feedback": ""
+        "commonly_misunderstood_topics": [],
+        "misconception_details": "",
+        "teaching_feedback": "",
+        "student_questions": []
       }
 
     # Get the prompt
-    prompt = get_aggregate_analysis_prompt(submission_texts, assignment_name)
+    prompt = get_aggregate_analysis_prompt(submission_texts, assignment_name, course_name)
 
     if self.prefer_anthropic:
       # Try Anthropic first if preferred
       try:
         log.debug(
-          "Attempting aggregate analysis with Anthropic (preferred)...")
+          f"Attempting aggregate analysis with Anthropic (preferred, tier={self.phase1_tier})...")
         ai_helper = AI_Helper__Anthropic()
         analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                  max_response_tokens=2000)
+                                                  max_response_tokens=2000,
+                                                  tier=self.phase1_tier)
 
         # Track token usage
         self._track_token_usage(usage,
@@ -407,17 +478,12 @@ class TextSubmissionGrader(Grader):
             "core_topics": []
           }
 
-        # Store core topics for use in Phase 2
-        self.core_topics = result.get("core_topics", [])
-
-        # Apply topic addition hook
-        self.core_topics = self.add_manual_topics_hook(self.core_topics)
+        # Store topics for use in Phase 2
+        self._store_topics_from_result(result)
 
         log.info(
-          f"✅ Aggregate analysis completed (Anthropic). Identified {len(self.core_topics)} core topics:"
+          f"✅ Aggregate analysis completed (Anthropic). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
         )
-        for i, topic in enumerate(self.core_topics, 1):
-          log.debug(f"   {i}. {topic}")
 
         return result
 
@@ -427,24 +493,20 @@ class TextSubmissionGrader(Grader):
 
     try:
       # Try OpenAI (either first choice or fallback)
-      log.debug("Attempting aggregate analysis with OpenAI...")
+      log.debug(f"Attempting aggregate analysis with OpenAI (tier={self.phase1_tier})...")
       ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000,
+                                         tier=self.phase1_tier)
 
       # Track token usage
       self._track_token_usage(usage, "Phase 1 - Aggregate Analysis (OpenAI)")
 
-      # Store core topics for use in Phase 2
-      self.core_topics = result.get("core_topics", [])
-
-      # Apply topic addition hook
-      self.core_topics = self.add_manual_topics_hook(self.core_topics)
+      # Store topics for use in Phase 2
+      self._store_topics_from_result(result)
 
       log.info(
-        f"✅ Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics:"
+        f"✅ Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
       )
-      for i, topic in enumerate(self.core_topics, 1):
-        log.debug(f"   {i}. {topic}")
 
       return result
 
@@ -457,7 +519,8 @@ class TextSubmissionGrader(Grader):
           # Fallback to Anthropic when OpenAI was first choice
           ai_helper = AI_Helper__Anthropic()
           analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                    max_response_tokens=2000)
+                                                    max_response_tokens=2000,
+                                                    tier=self.phase1_tier)
 
           # Track token usage
           self._track_token_usage(
@@ -477,17 +540,12 @@ class TextSubmissionGrader(Grader):
               "core_topics": []
             }
 
-          # Store core topics for use in Phase 2
-          self.core_topics = result.get("core_topics", [])
-
-          # Apply topic addition hook
-          self.core_topics = self.add_manual_topics_hook(self.core_topics)
+          # Store topics for use in Phase 2
+          self._store_topics_from_result(result)
 
           log.info(
-            f"✅ Aggregate analysis completed (Anthropic fallback). Identified {len(self.core_topics)} core topics:"
+            f"✅ Aggregate analysis completed (Anthropic fallback). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
           )
-          for i, topic in enumerate(self.core_topics, 1):
-            log.debug(f"   {i}. {topic}")
 
           return result
 
@@ -540,15 +598,17 @@ class TextSubmissionGrader(Grader):
         # Handle empty submissions
         result = {
           "student_id": student_id,
-          "completion_score": 0,
+          "engagement_score": 0,
           "relevance_score": 0,
-          "explanation_effort_score": 0,
+          "explanation_quality_score": 0,
           "topics_covered": [],
           "topics_missing": core_topics,
+          "topics_needing_review": [],
+          "misconception_notes": "",
           "word_count": 0,
           "needs_support": True,
           "support_reason": "No submission content",
-          "feedback": "Please submit your learning log content for grading."
+          "feedback": "Please submit your study notes for grading."
         }
       else:
         # Grade the submission using AI
@@ -561,10 +621,12 @@ class TextSubmissionGrader(Grader):
       result["student_name"] = student_name  # Store student name for reporting
 
       # Calculate total grade (ensure all scores are integers)
-      total_grade = (int(result.get("completion_score", 0)) +
+      # AI provides 8 points (engagement + relevance + explanation_quality)
+      # Length (2 points) is calculated locally
+      total_grade = (int(result.get("engagement_score", 0)) +
                      int(result.get("length_score", 0)) +
                      int(result.get("relevance_score", 0)) +
-                     int(result.get("explanation_effort_score", 0)))
+                     int(result.get("explanation_quality_score", 0)))
       result["total_grade"] = total_grade
 
       # Track students needing support (handle string boolean from AI)
@@ -588,22 +650,22 @@ class TextSubmissionGrader(Grader):
       f"✅ Individual grading completed. {len(self.support_needed_students)} students may need support."
     )
 
-    # Phase 2.5: Consolidate questions
+    # Phase 2.5: Consolidate questions (using questions from aggregate analysis)
     log.info("=" * 60)
     log.info("PHASE 2.5: QUESTION CONSOLIDATION")
     log.info("=" * 60)
-    self.consolidated_questions = self._consolidate_questions(
-      individual_results)
+    student_questions = self.aggregate_results.get("student_questions", [])
+    self.consolidated_questions = self._consolidate_questions(student_questions)
 
     return individual_results
 
   def _consolidate_questions(self,
-                             individual_results: List[Dict]) -> List[Dict]:
+                             all_questions: List[str]) -> List[Dict]:
     """
     Consolidate similar questions from all submissions into canonical versions.
 
     Args:
-        individual_results: List of individual grading results
+        all_questions: List of questions extracted from aggregate analysis
 
     Returns:
         List of consolidated question dictionaries
@@ -611,12 +673,6 @@ class TextSubmissionGrader(Grader):
     import json
     import re
     from Autograder.ai_helper import AI_Helper__OpenAI, AI_Helper__Anthropic
-
-    # Collect all questions from individual results
-    all_questions = []
-    for result in individual_results:
-      questions = result.get("questions_asked", [])
-      all_questions.extend(questions)
 
     if not all_questions:
       log.info("No questions found to consolidate")
@@ -632,7 +688,8 @@ class TextSubmissionGrader(Grader):
       try:
         ai_helper = AI_Helper__Anthropic()
         analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                  max_response_tokens=2000)
+                                                  max_response_tokens=2000,
+                                                  tier=self.phase25_tier)
 
         # Track token usage
         self._track_token_usage(
@@ -658,7 +715,8 @@ class TextSubmissionGrader(Grader):
     try:
       # Try OpenAI (either first choice or fallback)
       ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000)
+      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000,
+                                         tier=self.phase25_tier)
 
       # Track token usage
       self._track_token_usage(usage,
@@ -679,7 +737,8 @@ class TextSubmissionGrader(Grader):
           # Fallback to Anthropic when OpenAI was first choice
           ai_helper = AI_Helper__Anthropic()
           analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                    max_response_tokens=2000)
+                                                    max_response_tokens=2000,
+                                                    tier=self.phase25_tier)
 
           # Track token usage
           self._track_token_usage(
@@ -723,14 +782,19 @@ class TextSubmissionGrader(Grader):
     import json
     import re
 
-    prompt = get_individual_grading_prompt(submission_text, core_topics)
+    prompt = get_individual_grading_prompt(
+      submission_text, core_topics,
+      related_topics=self.related_topics,
+      off_topic_indicators=self.off_topic_indicators
+    )
 
     if self.prefer_anthropic:
       # Try Anthropic first if preferred
       try:
         ai_helper = AI_Helper__Anthropic()
         analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                  max_response_tokens=1000)
+                                                  max_response_tokens=1000,
+                                                  tier=self.phase2_tier)
 
         # Track token usage
         self._track_token_usage(
@@ -745,24 +809,17 @@ class TextSubmissionGrader(Grader):
         else:
           # If no JSON, create structured response from text
           return {
-            "student_id":
-            student_id,
-            "completion_score":
-            3,  # Default to moderate score
-            "relevance_score":
-            1,
-            "explanation_effort_score":
-            1,
+            "student_id": student_id,
+            "engagement_score": 3,  # Default to moderate score
+            "relevance_score": 1,
+            "explanation_quality_score": 1,
             "topics_covered": [],
-            "topics_missing":
-            core_topics,
-            "needs_support":
-            False,
-            "support_reason":
-            "",
-            "feedback":
-            analysis_text[:300] +
-            "..." if len(analysis_text) > 300 else analysis_text
+            "topics_missing": core_topics,
+            "topics_needing_review": [],
+            "misconception_notes": "",
+            "needs_support": False,
+            "support_reason": "",
+            "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
           }
 
       except Exception as e:
@@ -771,7 +828,8 @@ class TextSubmissionGrader(Grader):
     try:
       # Try OpenAI (either first choice or fallback)
       ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000)
+      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000,
+                                         tier=self.phase2_tier)
 
       # Track token usage
       self._track_token_usage(
@@ -789,7 +847,8 @@ class TextSubmissionGrader(Grader):
           # Fallback to Anthropic when OpenAI was first choice
           ai_helper = AI_Helper__Anthropic()
           analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                    max_response_tokens=1000)
+                                                    max_response_tokens=1000,
+                                                    tier=self.phase2_tier)
 
           # Track token usage
           self._track_token_usage(
@@ -806,24 +865,17 @@ class TextSubmissionGrader(Grader):
           else:
             # If no JSON, create structured response from text
             return {
-              "student_id":
-              student_id,
-              "completion_score":
-              3,  # Default to moderate score
-              "relevance_score":
-              1,
-              "explanation_effort_score":
-              1,
+              "student_id": student_id,
+              "engagement_score": 3,  # Default to moderate score
+              "relevance_score": 1,
+              "explanation_quality_score": 1,
               "topics_covered": [],
-              "topics_missing":
-              core_topics,
-              "needs_support":
-              False,
-              "support_reason":
-              "",
-              "feedback":
-              analysis_text[:300] +
-              "..." if len(analysis_text) > 300 else analysis_text
+              "topics_missing": core_topics,
+              "topics_needing_review": [],
+              "misconception_notes": "",
+              "needs_support": False,
+              "support_reason": "",
+              "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
             }
 
         except Exception as fallback_error:
@@ -831,11 +883,13 @@ class TextSubmissionGrader(Grader):
             f"Both AI providers failed for {student_id}: {fallback_error}")
           return {
             "student_id": student_id,
-            "completion_score": 0,
+            "engagement_score": 0,
             "relevance_score": 0,
-            "explanation_effort_score": 0,
+            "explanation_quality_score": 0,
             "topics_covered": [],
             "topics_missing": core_topics,
+            "topics_needing_review": [],
+            "misconception_notes": "",
             "needs_support": True,
             "support_reason": "Error analyzing submission",
             "feedback": f"Error analyzing submission: {e}"
@@ -963,8 +1017,14 @@ class TextSubmissionGrader(Grader):
     if insights.get("key_insights"):
       log.debug(f"\n💡 Key Learning Insights:\n{insights['key_insights']}")
 
-    if insights.get("learning_patterns"):
-      log.debug(f"\n🔄 Learning Patterns:\n{insights['learning_patterns']}")
+    # Display commonly misunderstood topics
+    misunderstood = insights.get("commonly_misunderstood_topics", [])
+    if misunderstood:
+      log.debug(f"\n⚠️ Topics Needing Review ({len(misunderstood)}):")
+      for topic in misunderstood:
+        log.debug(f"   • {topic}")
+      if insights.get("misconception_details"):
+        log.debug(f"   Details: {insights['misconception_details']}")
 
     if insights.get("teaching_feedback"):
       log.debug(
@@ -1059,28 +1119,62 @@ class TextSubmissionGrader(Grader):
     Returns:
         Formatted feedback string with rubric breakdown
     """
-    completion_score = result.get('completion_score', 0)
+    engagement_score = result.get('engagement_score', 0)
     length_score = result.get('length_score', 0)
     relevance_score = result.get('relevance_score', 0)
-    effort_score = result.get('explanation_effort_score', 0)
+    quality_score = result.get('explanation_quality_score', 0)
     total_score = result.get('total_grade', 0)
     # Always use our accurate word count
     word_count = result.get('accurate_word_count', 0)
     ai_feedback = result.get('feedback', '')
+    topics_needing_review = result.get('topics_needing_review', [])
 
     feedback_lines = [
-      "Learning Log Feedback", "=" * 50, "", "GRADE BREAKDOWN:",
-      f"• Completion (4 pts): {completion_score}/4 - Depth of reflection and genuine effort",
+      "Study Notes Feedback", "=" * 50, "", "GRADE BREAKDOWN:",
+      f"• Engagement (4 pts): {engagement_score}/4 - Effort to process and explain material",
       f"• Length (2 pts): {length_score}/2 - {'✓ Met 250+ word requirement' if length_score == 2 else '✗ Under 250 words required'}",
-      f"• Relevance (2 pts): {relevance_score}/2 - Connection to class material",
-      f"• Explanation Effort (2 pts): {effort_score}/2 - Attempt to explain concepts clearly",
+      f"• Relevance (2 pts): {relevance_score}/2 - Coverage of class topics",
+      f"• Explanation Quality (2 pts): {quality_score}/2 - Depth of explanation",
       "", f"TOTAL SCORE: {total_score}/10 ({(total_score/10)*100:.0f}%)",
-      f"Word Count: {word_count} words", "", "FEEDBACK:", ai_feedback
+      f"Word Count: {word_count} words"
     ]
+
+    # Add topics needing review if any
+    if topics_needing_review:
+      feedback_lines.append("")
+      feedback_lines.append("TOPICS TO REVIEW:")
+      for topic in topics_needing_review:
+        feedback_lines.append(f"• {topic}")
+
+    feedback_lines.extend(["", "FEEDBACK:", ai_feedback])
 
     return "\n".join(feedback_lines)
 
   # Hook methods for customization
+  def _store_topics_from_result(self, result: Dict) -> None:
+    """
+    Extract and store all topic types from aggregate analysis result.
+
+    Args:
+        result: The aggregate analysis result dictionary
+    """
+    # Store core topics
+    self.core_topics = result.get("core_topics", [])
+    # Apply topic addition hook
+    self.core_topics = self.add_manual_topics_hook(self.core_topics)
+
+    # Store related topics (tangential but valid)
+    self.related_topics = result.get("related_topics", [])
+
+    # Store off-topic indicators
+    self.off_topic_indicators = result.get("off_topic_indicators", [])
+
+    # Log topic counts
+    log.debug(f"Core topics: {self.core_topics}")
+    log.debug(f"Related topics: {self.related_topics}")
+    if self.off_topic_indicators:
+      log.debug(f"Off-topic indicators: {self.off_topic_indicators}")
+
   def add_manual_topics_hook(self, ai_topics: List[str]) -> List[str]:
     """
     Hook for manually adding or modifying topics after AI analysis.
@@ -1314,20 +1408,64 @@ class TextSubmissionGrader(Grader):
     course_name = getattr(self, 'course_name', 'Unknown Course')
     assignment_name = getattr(self, 'assignment_name', 'Unknown Assignment')
 
-    # Add cost information if available
+    # Add cost information if available, with phase breakdown
     cost_text = ""
+    phase_breakdown = ""
     if self.total_cost > 0:
+      # Calculate cost and model by phase
+      phase1_entries = [u for u in self.usage_details if 'Phase 1' in u.get('operation', '')]
+      phase2_entries = [u for u in self.usage_details if 'Phase 2 -' in u.get('operation', '')]
+      phase25_entries = [u for u in self.usage_details if 'Phase 2.5' in u.get('operation', '')]
+
+      phase1_cost = sum(u.get('cost', 0) for u in phase1_entries)
+      phase2_cost = sum(u.get('cost', 0) for u in phase2_entries)
+      phase25_cost = sum(u.get('cost', 0) for u in phase25_entries)
+
+      # Get predominant model for each phase
+      def get_model(entries):
+        if not entries:
+          return "n/a"
+        models = [u.get('model', u.get('provider', 'unknown')) for u in entries]
+        # Return most common model, with light shortening
+        model = max(set(models), key=models.count) if models else "unknown"
+        # Shorten model names for display but keep distinguishing info
+        # e.g., "claude-sonnet-4-5-20250514" -> "sonnet-4-5"
+        #       "claude-haiku-4-5-20250514" -> "haiku-4-5"
+        #       "gpt-4.1-nano" -> "4.1-nano"
+        if 'claude' in model.lower():
+          # Extract the model variant (haiku, sonnet, opus) and version
+          for variant in ['haiku', 'sonnet', 'opus']:
+            if variant in model.lower():
+              # Try to get version info too
+              parts = model.lower().split('-')
+              version_parts = [p for p in parts if p[0].isdigit()] if parts else []
+              if version_parts:
+                return f"{variant}-{version_parts[0]}"
+              return variant
+          return model[:20]  # Fallback
+        elif 'gpt' in model.lower():
+          return model.replace('gpt-', '')
+        return model[:15]
+
+      phase1_model = get_model(phase1_entries)
+      phase2_model = get_model(phase2_entries)
+
       cost_text = f" (${self.total_cost:.4f} - {self.total_tokens} tokens)"
+      phase_breakdown = f"  _Phase 1: ${phase1_cost:.2f} ({phase1_model}) | Phase 2: ${phase2_cost:.2f} ({phase2_model}) | Q&A: ${phase25_cost:.2f}_"
 
     # Build summary message with header
     lines = [
       f"*{course_name} - {assignment_name}*",
       f"Grading Complete{cost_text}",
+    ]
+    if phase_breakdown:
+      lines.append(phase_breakdown)
+    lines.extend([
       "",
       "*Summary:*",
       f"• {stats.get('total_students', 0)} students graded",
       f"• Average: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)",
-    ]
+    ])
 
     # Add grade distribution summary
     distribution = stats.get("grade_distribution", {})
@@ -1355,9 +1493,26 @@ class TextSubmissionGrader(Grader):
 
     # Add topic insights as a list - show ALL topics
     if topics:
-      lines.append(f"\n*Key Topics Mentioned:*")
+      lines.append(f"\n*Core Topics:*")
       for topic in topics:
         lines.append(f"• {topic}")
+
+    # Add related topics if any
+    related = insights.get("related_topics", [])
+    if related:
+      lines.append(f"\n*Related Topics (also valid):*")
+      for topic in related:
+        lines.append(f"• {topic}")
+
+    # Add commonly misunderstood topics
+    misunderstood = insights.get("commonly_misunderstood_topics", [])
+    if misunderstood:
+      lines.append(f"\n*Topics Needing Review (common confusion):*")
+      for topic in misunderstood:
+        lines.append(f"• {topic}")
+      misconception_details = insights.get("misconception_details", "").strip()
+      if misconception_details:
+        lines.append(f"_{misconception_details}_")
 
     # Add teaching insights as a list
     teaching_feedback = insights.get("teaching_feedback", "").strip()
@@ -1401,6 +1556,7 @@ class TextSubmissionGrader(Grader):
         operation: Description of the operation
     """
     provider = usage_info.get("provider", "unknown")
+    model = usage_info.get("model", "unknown")
     total_tokens = usage_info.get("total_tokens", 0)
     prompt_tokens = usage_info.get("prompt_tokens", 0)
     completion_tokens = usage_info.get("completion_tokens", 0)
@@ -1416,6 +1572,7 @@ class TextSubmissionGrader(Grader):
     self.usage_details.append({
       "operation": operation,
       "provider": provider,
+      "model": model,
       "total_tokens": total_tokens,
       "prompt_tokens": prompt_tokens,
       "completion_tokens": completion_tokens,
@@ -1423,36 +1580,32 @@ class TextSubmissionGrader(Grader):
     })
 
     log.debug(
-      f"{operation}: {total_tokens} tokens (${cost:.4f}) via {provider}")
+      f"{operation}: {total_tokens} tokens (${cost:.4f}) via {provider}/{model}")
 
   def _calculate_cost(self, usage_info: Dict) -> float:
     """
-    Calculate cost based on provider pricing.
+    Calculate cost based on provider and model pricing.
 
     Args:
-        usage_info: Usage information with provider and token counts
+        usage_info: Usage information with provider, model, and token counts
 
     Returns:
         Estimated cost in USD
     """
+    from Autograder.ai_helper import get_model_pricing
+
     provider = usage_info.get("provider", "unknown")
+    model = usage_info.get("model", "unknown")
     prompt_tokens = usage_info.get("prompt_tokens", 0)
     completion_tokens = usage_info.get("completion_tokens", 0)
 
-    if provider == "openai":
-      # GPT-4o pricing (approximate)
-      prompt_cost = (prompt_tokens / 1000) * 0.03  # $0.03 per 1K input tokens
-      completion_cost = (completion_tokens /
-                         1000) * 0.06  # $0.06 per 1K output tokens
-      return prompt_cost + completion_cost
-    elif provider == "anthropic":
-      # Claude pricing (approximate)
-      prompt_cost = (prompt_tokens / 1000) * 0.03  # $0.03 per 1K input tokens
-      completion_cost = (completion_tokens /
-                         1000) * 0.015  # $0.015 per 1K output tokens
-      return prompt_cost + completion_cost
-    else:
-      return 0.0
+    # Get pricing from centralized MODEL_CONFIG
+    input_price, output_price = get_model_pricing(provider, model)
+
+    # Calculate cost (prices are per million tokens)
+    prompt_cost = (prompt_tokens / 1_000_000) * input_price
+    completion_cost = (completion_tokens / 1_000_000) * output_price
+    return prompt_cost + completion_cost
 
   def _print_report_to_console(self, report_data: Dict) -> None:
     """
