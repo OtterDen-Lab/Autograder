@@ -59,10 +59,16 @@ Analyze these {num_submissions} submissions and return JSON:
   "key_insights": "What's clicking well vs. needs more coverage?",
   "teaching_feedback": "What topics might benefit from additional review?",
   "core_topics": ["5", "most", "important", "topics", "covered"],
+  "related_topics": ["tangential", "topics", "that", "connect", "to", "core", "material"],
+  "off_topic_indicators": ["topics", "that", "suggest", "wrong", "lecture", "or", "not", "attending"],
   "student_questions": ["actual", "questions", "students", "asked", "verbatim"]
 }}
 
 For core_topics: Identify the 5 most important general topics from class this week.
+
+For related_topics: Identify topics that are tangential but legitimately connected to this week's material. These are topics students might reasonably discuss because they relate to the core material (e.g., IO devices when discussing file systems, or page tables when discussing virtual memory). Students mentioning these should get credit.
+
+For off_topic_indicators: Identify topics that would suggest a student attended the wrong lecture or is looking at old/future material. These are topics from completely different units that don't connect to this week's content. Only include if you notice any in submissions.
 
 For commonly_misunderstood_topics: Look for topics where explanations contain errors, are vague, or where students express confusion.
 
@@ -77,23 +83,36 @@ Return only valid JSON.
 
 
 def get_individual_grading_prompt(submission_text: str,
-                                  core_topics: List[str]) -> str:
+                                  core_topics: List[str],
+                                  related_topics: List[str] = None,
+                                  off_topic_indicators: List[str] = None) -> str:
   """
     Get prompt for individual submission grading.
 
     Args:
         submission_text: The student's submission text
         core_topics: List of core topics identified from aggregate analysis
+        related_topics: List of tangential but valid topics that should get credit
+        off_topic_indicators: List of topics that suggest wrong lecture/not attending
 
     Returns:
         Formatted prompt string for individual grading
     """
-  topics_str = ", ".join(core_topics)
+  core_str = ", ".join(core_topics)
+  related_str = ", ".join(related_topics) if related_topics else ""
+  off_topic_str = ", ".join(off_topic_indicators) if off_topic_indicators else ""
+
+  # Build the topics section
+  topics_section = f"Core topics from this week: {core_str}"
+  if related_str:
+    topics_section += f"\nRelated topics (also valid, give credit): {related_str}"
+  if off_topic_str:
+    topics_section += f"\nOff-topic indicators (suggest wrong lecture - flag if student ONLY discusses these): {off_topic_str}"
 
   return f"""
 Grade this student's weekly study notes. Students explain topics to help their future selves study for exams.
 
-Likely class topics (compiled from all submissions; related topics may also appear): {topics_str}
+{topics_section}
 
 RUBRIC (8 points - length scored separately):
 
@@ -104,7 +123,10 @@ RUBRIC (8 points - length scored separately):
   - 1: Minimal - barely addresses material
   - 0: No meaningful content
 
-• Relevance (2 pts): 2=covers 3+ topics, 1=covers 1-2 topics, 0=off-topic
+• Relevance (2 pts): Coverage of class material (core OR related topics both count)
+  - 2: Covers 3+ topics from core or related lists
+  - 1: Covers 1-2 topics
+  - 0: Completely off-topic (discusses only unrelated material)
 
 • Explanation Quality (2 pts): Depth of explanation, not correctness
   - 2: Explains WHY concepts matter and HOW they connect
@@ -129,10 +151,12 @@ IMPORTANT SCORING GUIDANCE:
 • Don't penalize confusion - penalize lack of effort
 • Verbosity is fine
 • Minor gaps in understanding are NORMAL and should not significantly lower scores
+• Students discussing RELATED topics should get full relevance credit - these connect to the material
 
 For needs_support: Set to TRUE only for students who are:
 • Clearly disengaged or putting in minimal effort, OR
-• Fundamentally lost on most concepts (not just minor gaps)
+• Fundamentally lost on most concepts (not just minor gaps), OR
+• Discussing completely unrelated material (suggests didn't attend class)
 Do NOT flag students who are engaged but have some confusion - that's normal learning. Most students should NOT need support.
 
 Return JSON:
@@ -140,9 +164,10 @@ Return JSON:
   "engagement_score": "0-4",
   "relevance_score": "0-2",
   "explanation_quality_score": "0-2",
-  "topics_covered": ["topics", "addressed"],
-  "topics_missing": ["topics", "not", "addressed"],
+  "topics_covered": ["topics", "addressed", "from", "core", "or", "related"],
+  "topics_missing": ["core", "topics", "not", "addressed"],
   "topics_needing_review": ["any", "topics", "with", "confusion", "or", "empty", "list"],
+  "off_topic_content": "If student discussed unrelated material, note what. Empty string if on-topic.",
   "misconception_notes": "Brief note if confusion exists, or empty string if understanding seems solid",
   "needs_support": "true/false - see criteria above, most students should be false",
   "support_reason": "reason if needs_support true, else empty",
@@ -240,6 +265,8 @@ class TextSubmissionGrader(Grader):
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
     self.core_topics = []
+    self.related_topics = []
+    self.off_topic_indicators = []
     self.aggregate_results = {}
     self.individual_results = []
     self.support_needed_students = []
@@ -451,17 +478,12 @@ class TextSubmissionGrader(Grader):
             "core_topics": []
           }
 
-        # Store core topics for use in Phase 2
-        self.core_topics = result.get("core_topics", [])
-
-        # Apply topic addition hook
-        self.core_topics = self.add_manual_topics_hook(self.core_topics)
+        # Store topics for use in Phase 2
+        self._store_topics_from_result(result)
 
         log.info(
-          f"✅ Aggregate analysis completed (Anthropic). Identified {len(self.core_topics)} core topics:"
+          f"✅ Aggregate analysis completed (Anthropic). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
         )
-        for i, topic in enumerate(self.core_topics, 1):
-          log.debug(f"   {i}. {topic}")
 
         return result
 
@@ -479,17 +501,12 @@ class TextSubmissionGrader(Grader):
       # Track token usage
       self._track_token_usage(usage, "Phase 1 - Aggregate Analysis (OpenAI)")
 
-      # Store core topics for use in Phase 2
-      self.core_topics = result.get("core_topics", [])
-
-      # Apply topic addition hook
-      self.core_topics = self.add_manual_topics_hook(self.core_topics)
+      # Store topics for use in Phase 2
+      self._store_topics_from_result(result)
 
       log.info(
-        f"✅ Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics:"
+        f"✅ Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
       )
-      for i, topic in enumerate(self.core_topics, 1):
-        log.debug(f"   {i}. {topic}")
 
       return result
 
@@ -523,17 +540,12 @@ class TextSubmissionGrader(Grader):
               "core_topics": []
             }
 
-          # Store core topics for use in Phase 2
-          self.core_topics = result.get("core_topics", [])
-
-          # Apply topic addition hook
-          self.core_topics = self.add_manual_topics_hook(self.core_topics)
+          # Store topics for use in Phase 2
+          self._store_topics_from_result(result)
 
           log.info(
-            f"✅ Aggregate analysis completed (Anthropic fallback). Identified {len(self.core_topics)} core topics:"
+            f"✅ Aggregate analysis completed (Anthropic fallback). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
           )
-          for i, topic in enumerate(self.core_topics, 1):
-            log.debug(f"   {i}. {topic}")
 
           return result
 
@@ -770,7 +782,11 @@ class TextSubmissionGrader(Grader):
     import json
     import re
 
-    prompt = get_individual_grading_prompt(submission_text, core_topics)
+    prompt = get_individual_grading_prompt(
+      submission_text, core_topics,
+      related_topics=self.related_topics,
+      off_topic_indicators=self.off_topic_indicators
+    )
 
     if self.prefer_anthropic:
       # Try Anthropic first if preferred
@@ -1135,6 +1151,30 @@ class TextSubmissionGrader(Grader):
     return "\n".join(feedback_lines)
 
   # Hook methods for customization
+  def _store_topics_from_result(self, result: Dict) -> None:
+    """
+    Extract and store all topic types from aggregate analysis result.
+
+    Args:
+        result: The aggregate analysis result dictionary
+    """
+    # Store core topics
+    self.core_topics = result.get("core_topics", [])
+    # Apply topic addition hook
+    self.core_topics = self.add_manual_topics_hook(self.core_topics)
+
+    # Store related topics (tangential but valid)
+    self.related_topics = result.get("related_topics", [])
+
+    # Store off-topic indicators
+    self.off_topic_indicators = result.get("off_topic_indicators", [])
+
+    # Log topic counts
+    log.debug(f"Core topics: {self.core_topics}")
+    log.debug(f"Related topics: {self.related_topics}")
+    if self.off_topic_indicators:
+      log.debug(f"Off-topic indicators: {self.off_topic_indicators}")
+
   def add_manual_topics_hook(self, ai_topics: List[str]) -> List[str]:
     """
     Hook for manually adding or modifying topics after AI analysis.
@@ -1453,8 +1493,15 @@ class TextSubmissionGrader(Grader):
 
     # Add topic insights as a list - show ALL topics
     if topics:
-      lines.append(f"\n*Key Topics Covered:*")
+      lines.append(f"\n*Core Topics:*")
       for topic in topics:
+        lines.append(f"• {topic}")
+
+    # Add related topics if any
+    related = insights.get("related_topics", [])
+    if related:
+      lines.append(f"\n*Related Topics (also valid):*")
+      for topic in related:
         lines.append(f"• {topic}")
 
     # Add commonly misunderstood topics
