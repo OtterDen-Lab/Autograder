@@ -7,7 +7,7 @@ from typing import List, Tuple, Optional
 
 from Autograder.assignment import Assignment
 from Autograder.registry import GraderRegistry
-from Autograder.lms_interface.classes import Feedback, Submission, FileSubmission, TextSubmission
+from lms_interface.classes import Feedback, Submission, FileSubmission, TextSubmission
 
 import logging
 

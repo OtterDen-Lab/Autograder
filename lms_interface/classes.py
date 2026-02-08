@@ -1,4 +1,4 @@
-#!env python
+#!/usr/bin/env python
 from __future__ import annotations
 
 import enum
@@ -7,8 +7,9 @@ import dataclasses
 import functools
 import io
 import os
+import typing
 import urllib.request
-from typing import Optional, List, Dict
+
 
 import canvasapi.canvas
 
@@ -25,10 +26,10 @@ class LMSWrapper():
       # Try to get the attribute from the inner instance
       return getattr(self._inner, name)
     except AttributeError:
-      # Handle the case where the inner instance also doesn't have the attribute
-      print(f"Warning: '{name}' not found in either wrapper or inner class")
-      # You can raise the error again, return None, or handle it however you want
-      return lambda *args, **kwargs: None  # Returns a no-op function for method calls
+      # Surface missing attributes instead of silently swallowing errors
+      message = f"'{name}' not found in either wrapper or inner class"
+      log.error(message)
+      raise AttributeError(message)
 
 
 @dataclasses.dataclass
@@ -61,15 +62,15 @@ class Submission:
   def __init__(
       self,
       *,
-      student : Student = None,
+      student : Student | None = None,
       status : Submission.Status = Status.UNGRADED,
       **kwargs
   ):
-    self._student: Optional[Student] = student
+    self._student: Student | None = student
     self.status = status
-    self.input_files = None
-    self.feedback : Optional[Feedback] = None
-    self.extra_info = {}
+    self.input_files: list[io.BytesIO] | None = None
+    self.feedback : Feedback | None = None
+    self.extra_info: dict[str, typing.Any] = {}
 
   @property
   def student(self):
@@ -85,7 +86,7 @@ class Submission:
     except AttributeError:
       return f"Submission({self.student} : {self.feedback})"
 
-  def set_extra(self, extras_dict: Dict):
+  def set_extra(self, extras_dict: dict):
     self.extra_info.update(extras_dict)
 
 
@@ -93,7 +94,7 @@ class FileSubmission(Submission):
   """Base class for submissions that contain files (e.g., programming assignments)"""
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
-    self._files = None
+    self._files: list[io.BytesIO] | None = None
 
   @property
   def files(self):
@@ -106,7 +107,7 @@ class FileSubmission(Submission):
 
 class FileSubmission__Canvas(FileSubmission):
   """Canvas-specific file submission with attachment downloading"""
-  def __init__(self, *args, attachments : Optional[List], **kwargs):
+  def __init__(self, *args, attachments : list | None, **kwargs):
     super().__init__(*args, **kwargs)
     self._attachments = attachments
     self.submission_index = kwargs.get("submission_index", None)
@@ -211,14 +212,15 @@ Submission__Canvas = FileSubmission__Canvas
 @functools.total_ordering
 @dataclasses.dataclass
 class Feedback:
-  percentage_score: Optional[float] = None
+  percentage_score: float | None = None
   comments: str = ""
-  attachments: List[io.BytesIO] = dataclasses.field(default_factory=list)
+  attachments: list[io.BytesIO] = dataclasses.field(default_factory=list)
   
   def __str__(self):
     short_comment = self.comments[:10].replace('\n', '\\n')
     ellipsis = '...' if len(self.comments) > 10 else ''
-    return f"Feedback({self.percentage_score:.4g}%, {short_comment}{ellipsis})"
+    score = "None" if self.percentage_score is None else f"{self.percentage_score:.4g}%"
+    return f"Feedback({score}, {short_comment}{ellipsis})"
 
   def __eq__(self, other):
     if not isinstance(other, Feedback):

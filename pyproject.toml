@@ -64,7 +64,10 @@ grade-assignments = "Autograder.grade_assignments:main"
 
 
 [tool.hatch.build.targets.wheel]
-packages = ["Autograder"]
+packages = ["Autograder", "lms_interface"]
+
+[tool.hatch.build.targets.sdist]
+include = ["Autograder/**", "lms_interface/**", "pyproject.toml", "README.md", "LICENSE"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

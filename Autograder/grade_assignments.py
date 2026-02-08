@@ -16,7 +16,7 @@ import requests
 
 import yaml
 
-from Autograder.lms_interface.canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment, CanvasQuiz
+from lms_interface.canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment, CanvasQuiz
 from Autograder.assignment import AssignmentRegistry
 from Autograder.grader import GraderRegistry
 from Autograder.registry import TypeRegistry
