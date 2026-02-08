@@ -99,7 +99,7 @@ class Grader__Manual(FileBasedGrader):
     # todo: this should probably be done in the `assignment`
     canvas_students_by_id = {
       s.user_id: s
-      for s in assignment.lms_assignment.get_students()
+      for s in assignment.lms_assignment.get_students(include_names=True)
     }
 
     graded_submissions = []

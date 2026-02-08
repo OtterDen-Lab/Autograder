@@ -438,8 +438,12 @@ class CanvasCourse(LMSWrapper):
   def get_username(self, user_id: int):
     return self.course.get_user(user_id).name
   
-  def get_students(self) -> list[Student]:
+  def get_students(self, *, include_names: bool = False) -> list[Student]:
+    if self.canvas_interface.privacy_mode == "id_only":
+      include_names = False
     students = [Student(s.name, s.id, s) for s in self.course.get_users(enrollment_type=["student"])]
+    if include_names:
+      return students
     return [self._apply_privacy(s) for s in students]
 
   def get_quiz(self, quiz_id: int) -> CanvasQuiz | None:
@@ -468,8 +472,7 @@ class CanvasCourse(LMSWrapper):
     return quizzes
 
   def _apply_privacy(self, student: Student) -> Student:
-    if self.canvas_interface.privacy_mode == "id_only":
-      student.name = f"Student {student.user_id}"
+    student.name = f"Student {student.user_id}"
     return student
 
 
@@ -597,12 +600,24 @@ class CanvasAssignment(LMSWrapper):
     for student_index, canvaspai_submission in enumerate(self.assignment.get_submissions(include='submission_history', **kwargs)):
       
       # Get the student object for the submission
-      student = Student(
-        self.canvas_course.get_username(canvaspai_submission.user_id),
-        user_id=canvaspai_submission.user_id,
-        _inner=self.canvas_course.get_user(canvaspai_submission.user_id)
-      )
-      student = self.canvas_course._apply_privacy(student)
+      include_names = kwargs.get("include_names", False)
+      if self.canvas_course.canvas_interface.privacy_mode == "id_only":
+        include_names = False
+
+      if include_names:
+        student = Student(
+          self.canvas_course.get_username(canvaspai_submission.user_id),
+          user_id=canvaspai_submission.user_id,
+          _inner=self.canvas_course.get_user(canvaspai_submission.user_id)
+        )
+      else:
+        student = Student(
+          f"Student {canvaspai_submission.user_id}",
+          user_id=canvaspai_submission.user_id,
+          _inner=None
+        )
+      if not include_names:
+        student = self.canvas_course._apply_privacy(student)
       
       if test_only and not "Test Student" in student.name:
         continue
@@ -662,8 +677,8 @@ class CanvasAssignment(LMSWrapper):
     submissions = list(reversed(submissions))
     return submissions
   
-  def get_students(self):
-    return self.canvas_course.get_students()
+  def get_students(self, *, include_names: bool = False):
+    return self.canvas_course.get_students(include_names=include_names)
 
 
 class CanvasQuiz(LMSWrapper):
@@ -691,12 +706,24 @@ class CanvasQuiz(LMSWrapper):
 
       # Get the student object for the submission
       try:
-        student = Student(
-          self.canvas_course.get_username(canvasapi_quiz_submission.user_id),
-          user_id=canvasapi_quiz_submission.user_id,
-          _inner=self.canvas_course.get_user(canvasapi_quiz_submission.user_id)
-        )
-        student = self.canvas_course._apply_privacy(student)
+        include_names = kwargs.get("include_names", False)
+        if self.canvas_course.canvas_interface.privacy_mode == "id_only":
+          include_names = False
+
+        if include_names:
+          student = Student(
+            self.canvas_course.get_username(canvasapi_quiz_submission.user_id),
+            user_id=canvasapi_quiz_submission.user_id,
+            _inner=self.canvas_course.get_user(canvasapi_quiz_submission.user_id)
+          )
+        else:
+          student = Student(
+            f"Student {canvasapi_quiz_submission.user_id}",
+            user_id=canvasapi_quiz_submission.user_id,
+            _inner=None
+          )
+        if not include_names:
+          student = self.canvas_course._apply_privacy(student)
       except Exception as e:
         log.warning(f"Could not get student info for user_id {canvasapi_quiz_submission.user_id}: {e}")
         continue
