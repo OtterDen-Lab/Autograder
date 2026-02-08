@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import itertools
+import logging
+import os
 import queue
 import tempfile
 import threading
@@ -9,18 +11,23 @@ import time
 from datetime import datetime, timezone
 
 import canvasapi
-import canvasapi.course
-import canvasapi.quiz
 import canvasapi.assignment
-import canvasapi.submission
+import canvasapi.course
 import canvasapi.exceptions
-import os
+import canvasapi.quiz
+import canvasapi.submission
 import dotenv
 import requests
 
-from .classes import LMSWrapper, Student, Submission, Submission__Canvas, FileSubmission__Canvas, TextSubmission__Canvas, QuizSubmission
-
-import logging
+from .classes import (
+  FileSubmission__Canvas,
+  LMSWrapper,
+  QuizSubmission,
+  Student,
+  Submission,
+  Submission__Canvas,
+  TextSubmission__Canvas,
+)
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +91,8 @@ class CanvasInterface:
       prod: bool = False,
       env_path: str | None = None,
       canvas_url: str | None = None,
-      canvas_key: str | None = None
+      canvas_key: str | None = None,
+      privacy_mode: str | None = None
   ):
     self.env_path = env_path
     if canvas_url is not None or canvas_key is not None:
@@ -99,6 +107,9 @@ class CanvasInterface:
         dotenv.load_dotenv(os.path.join(os.path.expanduser("~"), ".env"))
 
     self.prod = prod
+    self.privacy_mode = privacy_mode
+    if self.privacy_mode not in {None, "id_only"}:
+      raise ValueError("privacy_mode must be None or 'id_only'.")
     if canvas_url is None and canvas_key is None:
       if self.prod:
         log.warning("Using canvas PROD!")
@@ -428,7 +439,8 @@ class CanvasCourse(LMSWrapper):
     return self.course.get_user(user_id).name
   
   def get_students(self) -> list[Student]:
-    return [Student(s.name, s.id, s) for s in self.course.get_users(enrollment_type=["student"])]
+    students = [Student(s.name, s.id, s) for s in self.course.get_users(enrollment_type=["student"])]
+    return [self._apply_privacy(s) for s in students]
 
   def get_quiz(self, quiz_id: int) -> CanvasQuiz | None:
     """Get a specific quiz by ID"""
@@ -454,6 +466,11 @@ class CanvasCourse(LMSWrapper):
         )
       )
     return quizzes
+
+  def _apply_privacy(self, student: Student) -> Student:
+    if self.canvas_interface.privacy_mode == "id_only":
+      student.name = f"Student {student.user_id}"
+    return student
 
 
 class _CanvasBackoffController:
@@ -585,6 +602,7 @@ class CanvasAssignment(LMSWrapper):
         user_id=canvaspai_submission.user_id,
         _inner=self.canvas_course.get_user(canvaspai_submission.user_id)
       )
+      student = self.canvas_course._apply_privacy(student)
       
       if test_only and not "Test Student" in student.name:
         continue
@@ -678,6 +696,7 @@ class CanvasQuiz(LMSWrapper):
           user_id=canvasapi_quiz_submission.user_id,
           _inner=self.canvas_course.get_user(canvasapi_quiz_submission.user_id)
         )
+        student = self.canvas_course._apply_privacy(student)
       except Exception as e:
         log.warning(f"Could not get student info for user_id {canvasapi_quiz_submission.user_id}: {e}")
         continue

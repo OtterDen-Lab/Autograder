@@ -383,7 +383,7 @@ def collect_assignments_to_grade(config: Dict,
     log.info("Using new configuration format with assignment_types")
 
   # Create the LMS interface
-  lms_interface = CanvasInterface(prod=use_prod)
+  lms_interface = CanvasInterface(prod=use_prod, privacy_mode="id_only")
 
   assignments_to_grade = []
 

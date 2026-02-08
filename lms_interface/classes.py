@@ -1,15 +1,14 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
-import enum
-import logging
 import dataclasses
+import enum
 import functools
 import io
+import logging
 import os
 import typing
 import urllib.request
-
 
 import canvasapi.canvas
 
