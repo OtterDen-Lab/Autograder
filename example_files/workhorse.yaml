@@ -1,6 +1,10 @@
 prod: False
 push: False
 
+reporting:
+  slack_channel: C0AAD94FX5K
+  notify_on: all #failures
+
 # Define assignment types with default graders and settings
 assignment_types:
   programming:
@@ -15,6 +19,10 @@ assignment_types:
     settings:
       grade_after_lock_date: true
       prefer_anthropic: true
+      # Model tier settings (small, medium, large)
+      phase1_tier: medium    # Aggregate analysis
+      phase2_tier: medium    # Individual grading
+      phase25_tier: medium   # Question consolidation
 
 courses:
   - name: CST334
@@ -67,4 +75,3 @@ courses:
           - 553725  # LL12
           - 553726  # LL13
           - 553727  # LL14
-
