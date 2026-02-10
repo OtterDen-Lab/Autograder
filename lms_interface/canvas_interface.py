@@ -220,7 +220,10 @@ class CanvasCourse(LMSWrapper):
       retry_backoff_base: float = RETRY_BACKOFF_BASE,
       retry_backoff_max: float = RETRY_BACKOFF_MAX,
       max_workers: int = UPLOAD_MAX_WORKERS,
-      max_in_flight: int = UPLOAD_MAX_IN_FLIGHT
+      max_in_flight: int = UPLOAD_MAX_IN_FLIGHT,
+      progress_callback=None,
+      show_progress_bar: bool = False,
+      progress_label: str | None = None
   ) -> canvasapi.quiz.QuizGroup | None:
     """
     Upload one question or a group of questions to Canvas.
@@ -231,15 +234,21 @@ class CanvasCourse(LMSWrapper):
       group_name: If provided (or if multiple payloads), create a question group.
       question_points: Points per question in the group (required for grouping).
       pick_count: Number of questions to pick from the group.
+      progress_callback: Optional callable receiving progress events.
+      show_progress_bar: If True, display a tqdm progress bar when available.
+      progress_label: Optional label for progress bars.
 
     Note:
       If question_payloads is an iterator, uploads are streamed without buffering.
     """
+    total_questions = None
     if isinstance(question_payloads, dict):
       payload_iter = iter([question_payloads])
+      total_questions = 1
       use_group = False
     elif isinstance(question_payloads, (list, tuple)):
       payload_iter = iter(question_payloads)
+      total_questions = len(question_payloads)
       use_group = True
     else:
       payload_iter = iter(question_payloads)
@@ -284,7 +293,11 @@ class CanvasCourse(LMSWrapper):
         retry_backoff_base=retry_backoff_base,
         retry_backoff_max=retry_backoff_max,
         max_workers=max_workers,
-        max_in_flight=max_in_flight
+        max_in_flight=max_in_flight,
+        progress_callback=progress_callback,
+        show_progress_bar=show_progress_bar,
+        total_questions=total_questions,
+        progress_label=progress_label
       )
       return group
 
@@ -295,7 +308,11 @@ class CanvasCourse(LMSWrapper):
       retry_backoff_base=retry_backoff_base,
       retry_backoff_max=retry_backoff_max,
       max_workers=max_workers,
-      max_in_flight=max_in_flight
+      max_in_flight=max_in_flight,
+      progress_callback=progress_callback,
+      show_progress_bar=show_progress_bar,
+      total_questions=total_questions,
+      progress_label=progress_label
     )
 
     return group
@@ -309,13 +326,107 @@ class CanvasCourse(LMSWrapper):
       retry_backoff_base: float = RETRY_BACKOFF_BASE,
       retry_backoff_max: float = RETRY_BACKOFF_MAX,
       max_workers: int = UPLOAD_MAX_WORKERS,
-      max_in_flight: int = UPLOAD_MAX_IN_FLIGHT
+      max_in_flight: int = UPLOAD_MAX_IN_FLIGHT,
+      progress_callback=None,
+      show_progress_bar: bool = False,
+      total_questions: int | None = None,
+      progress_label: str | None = None
   ) -> None:
+    total = total_questions
+    if total is None and isinstance(payloads, (list, tuple)):
+      total = len(payloads)
+
+    stats = {"completed": 0, "succeeded": 0, "failed": 0}
+    progress_lock = threading.Lock()
+
+    tqdm_bar = None
+    if show_progress_bar:
+      try:
+        from tqdm import tqdm
+      except Exception as exc:
+        log.warning(f"Progress bar requested but tqdm is unavailable: {exc}")
+      else:
+        tqdm_bar = tqdm(
+          total=total,
+          unit="q",
+          smoothing=0.1,
+          leave=True,
+          desc=progress_label
+        )
+
+    if progress_callback is None and tqdm_bar is None:
+      def _default_progress_callback(event):
+        event_type = event.get("event")
+        total_count = event.get("total")
+        completed_count = event.get("completed", 0)
+        succeeded_count = event.get("succeeded", 0)
+        failed_count = event.get("failed", 0)
+        if event_type == "start":
+          if total_count is None:
+            log.info("Uploading question variations (streaming total).")
+          else:
+            log.info(f"Uploading question variations (total={total_count}).")
+          return
+        if event_type == "complete":
+          log.info(
+            f"Upload complete: {succeeded_count} succeeded, {failed_count} failed."
+          )
+          return
+
+        label = event.get("label") or "question"
+        if total_count:
+          bar_width = 20
+          filled = min(bar_width, int((completed_count / total_count) * bar_width))
+          bar = "[" + ("#" * filled) + ("-" * (bar_width - filled)) + "]"
+          log.info(
+            f"{bar} {completed_count}/{total_count} {label} "
+            f"({succeeded_count} ok, {failed_count} failed)"
+          )
+        else:
+          log.info(
+            f"{completed_count} uploaded ({succeeded_count} ok, "
+            f"{failed_count} failed): {label}"
+          )
+
+      progress_callback = _default_progress_callback
+    elif tqdm_bar is not None:
+      user_callback = progress_callback
+
+      def _tqdm_callback(event):
+        event_type = event.get("event")
+        if event_type in {"success", "failed"}:
+          tqdm_bar.update(1)
+        if event_type == "complete":
+          tqdm_bar.close()
+        if user_callback is not None:
+          user_callback(event)
+
+      progress_callback = _tqdm_callback
+
+    def report(event: str, *, label: str | None = None):
+      if progress_callback is None:
+        return
+      with progress_lock:
+        snapshot = {
+          "event": event,
+          "label": label,
+          "completed": stats["completed"],
+          "succeeded": stats["succeeded"],
+          "failed": stats["failed"],
+          "total": total
+        }
+      try:
+        progress_callback(snapshot)
+      except Exception as exc:
+        log.warning(f"Progress callback failed: {exc}")
+
+    report("start")
+
     if max_workers <= 1:
       for index, payload in enumerate(payloads):
         label = payload.get("question_name", f"question_{index}")
         log.info(f"Uploading {index + 1} to canvas!")
-        self._call_canvas_with_retry(
+        success = self._call_canvas_with_retry(
           label,
           lambda: canvas_quiz.create_question(question=payload),
           max_upload_retries=max_upload_retries,
@@ -323,6 +434,16 @@ class CanvasCourse(LMSWrapper):
           retry_backoff_max=retry_backoff_max,
           backoff_controller=None
         )
+        with progress_lock:
+          stats["completed"] += 1
+          if success:
+            stats["succeeded"] += 1
+            event = "success"
+          else:
+            stats["failed"] += 1
+            event = "failed"
+      report(event, label=label)
+      report("complete")
       return
 
     quiz_id = getattr(canvas_quiz, "id", None)
@@ -346,7 +467,7 @@ class CanvasCourse(LMSWrapper):
           break
         label = payload.get("question_name", f"question_{worker_index}")
         with in_flight:
-          self._call_canvas_with_retry(
+          success = self._call_canvas_with_retry(
             label,
             lambda: quiz.create_question(question=payload),
             max_upload_retries=max_upload_retries,
@@ -354,6 +475,15 @@ class CanvasCourse(LMSWrapper):
             retry_backoff_max=retry_backoff_max,
             backoff_controller=backoff
           )
+        with progress_lock:
+          stats["completed"] += 1
+          if success:
+            stats["succeeded"] += 1
+            event = "success"
+          else:
+            stats["failed"] += 1
+            event = "failed"
+        report(event, label=label)
 
     threads = [
       threading.Thread(target=worker, args=(i,), daemon=True)
@@ -363,6 +493,8 @@ class CanvasCourse(LMSWrapper):
       thread.start()
     for thread in threads:
       thread.join()
+
+    report("complete")
 
   def _create_quiz_client(self, quiz_id: int) -> canvasapi.quiz.Quiz:
     canvas_interface = CanvasInterface(
