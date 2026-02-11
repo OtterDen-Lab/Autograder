@@ -12,7 +12,7 @@ pip install Otter-Autograder
 
 ### 1. Set up Canvas API credentials
 
-Create a `.env` file in your working directory:
+Create a `.env` file (by default this tool reads `~/.env`):
 
 ```bash
 CANVAS_API_KEY=your_canvas_api_key_here
@@ -45,6 +45,12 @@ courses:
 
 ```bash
 grade-assignments --yaml assignments.yaml
+```
+
+Use a specific env file:
+
+```bash
+grade-assignments --yaml assignments.yaml --env /path/to/.env
 ```
 
 ## Features
