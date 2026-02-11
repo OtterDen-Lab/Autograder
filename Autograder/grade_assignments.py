@@ -43,6 +43,9 @@ def parse_args() -> argparse.Namespace:
                       default=os.path.join(
                         os.path.dirname(os.path.abspath(__file__)),
                         "example_files/programming_assignments.yaml"))
+  parser.add_argument("--env",
+                      default=None,
+                      help="Path to the .env file (defaults to ~/.env)")
   parser.add_argument("--limit", default=None, type=int)
   parser.add_argument("--regrade",
                       "--do_regrade",
@@ -71,6 +74,11 @@ def parse_args() -> argparse.Namespace:
                       help="Enable debug logging")
 
   args = parser.parse_args()
+
+  if args.env is not None:
+    args.env = os.path.abspath(os.path.expanduser(args.env))
+    if not os.path.isfile(args.env):
+      parser.error(f"--env file not found: {args.env}")
 
   # Handle TEST command
   if args.command == "TEST":
@@ -381,6 +389,7 @@ def collect_assignments_to_grade(config: Dict,
   # Pull flags from YAML file that will be applied to all submissions
   use_prod = config.get('prod', False)
   push_grades = config.get('push', False)
+  env_path = args.env or os.path.join(os.path.expanduser("~"), ".env")
 
   # Load assignment types if present (new format)
   if 'assignment_types' in config:
@@ -388,7 +397,9 @@ def collect_assignments_to_grade(config: Dict,
     log.info("Using new configuration format with assignment_types")
 
   # Create the LMS interface
-  lms_interface = CanvasInterface(prod=use_prod, privacy_mode="id_only")
+  lms_interface = CanvasInterface(prod=use_prod,
+                                  env_path=env_path,
+                                  privacy_mode="id_only")
 
   assignments_to_grade = []
 
