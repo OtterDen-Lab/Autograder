@@ -168,9 +168,14 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     grader_name = merged_assignment.get("grader")
     repo_path = merged_assignment.get('repo_path')
 
-    # Create grader with assignment identifier for better logging
-    assignment_name = settings.pop("assignment_name",
-                                   lms_assignment.name.split()[0])
+    # Create grader with assignment identifier for better logging.
+    # Prefer explicit assignment_name, then repo_path (e.g., "HW3"),
+    # then full LMS assignment name.
+    assignment_name = settings.pop("assignment_name", None)
+    if isinstance(assignment_name, str):
+      assignment_name = assignment_name.strip()
+    if not assignment_name:
+      assignment_name = repo_path or lms_assignment.name
     grader = GraderRegistry.create(grader_name,
                                    assignment_path=repo_path,
                                    assignment_name=assignment_name,
