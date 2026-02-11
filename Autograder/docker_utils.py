@@ -366,6 +366,25 @@ class DockerContainer:
       target_dir = target_path.rstrip('/')
       target_filename = os.path.basename(src_file.name if hasattr(src_file, 'name') else 'file')
 
+    # put_archive requires an existing destination directory.
+    # Create it first so file_paths can target new nested locations.
+    if not target_dir:
+      target_dir = "/"
+
+    mkdir_rc, mkdir_output = self.container.exec_run(cmd=[
+      "mkdir", "-p", target_dir
+    ],
+                                                     demux=False,
+                                                     tty=False)
+    if mkdir_rc != 0:
+      mkdir_stderr = mkdir_output.decode(
+        errors="replace") if isinstance(mkdir_output, (bytes,
+                                                       bytearray)) else str(
+                                                         mkdir_output)
+      raise Autograder.exceptions.ContainerError(
+        f"Failed to create directory in container: {target_dir}. {mkdir_stderr}"
+      )
+
     # Create a TarInfo object with the target filename
     tar_info = tarfile.TarInfo(name=target_filename)
 
