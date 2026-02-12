@@ -45,6 +45,7 @@ dependencies = [
     "ollama>=0.6.0",
     "QuizGenerator>=0.4.2",
     "bcrypt>=4.0.0",
+    "pytest>=8.4.1",
 ]
 
 [project.optional-dependencies]
