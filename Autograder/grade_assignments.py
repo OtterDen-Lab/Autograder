@@ -39,10 +39,10 @@ def parse_args() -> argparse.Namespace:
   test_parser.add_argument("--limit", default=None, type=int)
 
   # Keep existing arguments for backward compatibility when no subcommand is used
-  parser.add_argument("--yaml",
-                      default=os.path.join(
-                        os.path.dirname(os.path.abspath(__file__)),
-                        "example_files/programming_assignments.yaml"))
+  parser.add_argument(
+    "--yaml",
+    default=None,
+    help="Path to grading YAML configuration (required unless using TEST)")
   parser.add_argument("--env",
                       default=None,
                       help="Path to the .env file (defaults to ~/.env)")
@@ -75,18 +75,24 @@ def parse_args() -> argparse.Namespace:
 
   args = parser.parse_args()
 
+  # Handle TEST command
+  if args.command == "TEST":
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    args.yaml = os.path.join(repo_root, "example_files", "learning-logs.yaml")
+    args.do_regrade = True
+    args.test = True
+    args.max_workers = 1
+
+  if args.yaml is None:
+    parser.error("--yaml is required (or use the TEST command)")
+  args.yaml = os.path.abspath(os.path.expanduser(args.yaml))
+  if not os.path.isfile(args.yaml):
+    parser.error(f"--yaml file not found: {args.yaml}")
+
   if args.env is not None:
     args.env = os.path.abspath(os.path.expanduser(args.env))
     if not os.path.isfile(args.env):
       parser.error(f"--env file not found: {args.env}")
-
-  # Handle TEST command
-  if args.command == "TEST":
-    args.yaml = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             "example_files/learning-logs.yaml")
-    args.do_regrade = True
-    args.test = True
-    args.max_workers = 1
 
   return args
 
@@ -145,6 +151,18 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     assignment_id = yaml_assignment['id']
     assignment_type = merged_assignment.get(
       'type', 'assignment')  # Default to assignment
+    grader_name = merged_assignment.get("grader")
+    assignment_kind = merged_assignment.get("kind", "")
+
+    # Explicitly block unsupported/vestigial flows.
+    if assignment_type.lower() == 'quiz' or str(grader_name).lower(
+    ) == "quizgrader":
+      raise NotImplementedError(
+        "Quiz grading flow is intentionally disabled in this build.")
+    if assignment_kind in {"Exam", "ExamCST231", "QuizAssignment"}:
+      raise NotImplementedError(
+        f"Assignment kind '{assignment_kind}' is intentionally disabled in this build."
+      )
 
     # Create assignment or quiz object based on type
     if assignment_type.lower() == 'quiz':
@@ -173,7 +191,6 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
     do_regrade = args.do_regrade
 
     # Get the grader from the registry
-    grader_name = merged_assignment.get("grader")
     repo_path = merged_assignment.get('repo_path')
 
     # Create grader with assignment identifier for better logging.
@@ -248,13 +265,12 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
             # Determine where to save records
             records_dir = settings.get('records_dir') or merged_assignment.get(
               'records_dir')
-            if records_dir is None:
-              # Default to 'records' directory in the main project directory
-              records_dir = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "records")
-            else:
-              # Expand user paths (like ~/records)
-              records_dir = os.path.expanduser(records_dir)
+            if not records_dir:
+              raise ValueError(
+                "record_retention=true requires an explicit records_dir in config"
+              )
+            # Expand user paths (like ~/records)
+            records_dir = os.path.abspath(os.path.expanduser(records_dir))
 
             grading_assignment.finalize(push=push_grades,
                                         merge_only=args.merge_only,
@@ -596,6 +612,9 @@ def execute_grading(assignments_to_grade: List[Dict],
     List of grading results
   """
   log.info(f"Found {len(assignments_to_grade)} assignments to grade")
+  if not assignments_to_grade:
+    log.warning("No assignments found to grade for the provided configuration.")
+    return []
 
   # Determine number of worker threads
   max_workers = args.max_workers
@@ -603,6 +622,8 @@ def execute_grading(assignments_to_grade: List[Dict],
     max_workers = min(
       len(assignments_to_grade),
       4)  # Default to 4 or number of assignments, whichever is smaller
+  if max_workers < 1:
+    max_workers = 1
 
   log.info(f"Using {max_workers} worker threads for grading")
 

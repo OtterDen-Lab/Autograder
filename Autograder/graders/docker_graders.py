@@ -690,12 +690,14 @@ class Grader__template_grader(Grader__docker):
       log.info("Using legacy student_code_path for file organization")
       submission_files = []
       for f in submission.files:
-        # Copy all files to the working directory
+        # Copy each file into the target directory using its own filename.
+        # This avoids accidental overwrite when multiple files are submitted.
+        original_name = os.path.basename(getattr(f, "name", "submission_file"))
         submission_files.append(
           (f,
            os.path.join(
              f"/repo/programming-assignments/{self.assignment_name}",
-             self.student_code_path)))
+             self.student_code_path, original_name)))
       log.debug(f"submission.files: {submission.files}")
       log.debug(f"submission_files: {submission_files}")
 

@@ -1,3 +1,4 @@
+# NOTE: Quiz flow is intentionally disabled in the current build.
 prod: False
 push: False
 

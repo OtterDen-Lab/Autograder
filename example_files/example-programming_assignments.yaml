@@ -6,7 +6,7 @@ courses:
     # Course-level defaults
     grader: CST334online
     record_retention: true  # Enable feedback record retention for entire course
-    records_dir: "./course_records"  # Custom directory for records (default: ./records)
+    records_dir: "./course_records"  # Required when record_retention is true
     assignment_defaults:
       kind: ProgrammingAssignment
       kwargs:

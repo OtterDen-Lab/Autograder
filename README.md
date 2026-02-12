@@ -59,9 +59,8 @@ grade-assignments --yaml assignments.yaml --env /path/to/.env
 
 - **Programming Assignments**: Docker-based grading with template matching and test execution
 - **Text Submissions**: AI-powered grading with rubric generation and clustering analysis
-- **Quizzes**: Canvas quiz grading support
-- **Exams**: Manual grading with AI-assisted name extraction and handwriting recognition
-- **Web-based Grading UI**: Modern interface for problem-first exam grading
+- **Quizzes**: Placeholder only (currently disabled)
+- **Exams**: Legacy flow (currently disabled)
 
 ### Key Capabilities
 

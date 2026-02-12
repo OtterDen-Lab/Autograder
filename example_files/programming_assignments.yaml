@@ -11,6 +11,7 @@ courses:
     assignment_defaults:
       kind: ProgrammingAssignment
       record_retention: true
+      records_dir: "./records/programming_assignments"
       kwargs:
         base_image_name: "samogden/cst334"
         source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
