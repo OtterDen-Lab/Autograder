@@ -7,7 +7,7 @@ assignment_types:
     kind: ProgrammingAssignment
     grader: template-grader
     settings:
-      record_retention: False
+      record_retention: true
 
 courses:
   - name: CST370
@@ -18,13 +18,13 @@ courses:
         type: programming
         settings:
           base_image_name: "samogden/cst334"
-          source_repo: "/Users/ssogden/scratch/autograder/CST370_AutoGrader"
-
+          source_repo: https://github.com/ImagineWagons8487/CST370_AutoGrader
+        
         extra_dockerfile_lines:
-          - "RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y clang openjdk-21-jdk make && rm -rf /var/lib/apt/lists/*"
-          
-        student_code_path: "src"
+          - "RUN apt update -y && apt install clang -y && apt install openjdk-21-jdk -y && apt install make -y"
 
+        student_code_path: "src"
+        
         file_paths:
           '.*_1.*\.java':
             path: "hw3_1_grading/src" # subdir within assignment folder
@@ -38,8 +38,8 @@ courses:
           '.*_2.*\.cpp':
             path: "hw3_2_grading/src"
             name: "hw3_2.cpp"
-
+        
         assignments:
           - id: 480061
-            repo_path: HW3
             assignment_name: HW3
+            repo_path: HW3
