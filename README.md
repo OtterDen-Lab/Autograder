@@ -1,6 +1,6 @@
 # Otter-Autograder
 
-An autograding system for teaching, primarily focused on Canvas LMS integration. Supports automated grading of programming assignments (via Docker), text submissions (like learning logs), quizzes, and manual exam grading with AI assistance.
+An autograding system for teaching, primarily focused on Canvas LMS integration. Supports automated grading of programming assignments (via Docker) and text submissions (like learning logs).
 
 ## Installation
 
@@ -59,8 +59,7 @@ grade-assignments --yaml assignments.yaml --env /path/to/.env
 
 - **Programming Assignments**: Docker-based grading with template matching and test execution
 - **Text Submissions**: AI-powered grading with rubric generation and clustering analysis
-- **Quizzes**: Placeholder only (currently disabled)
-- **Exams**: Legacy flow (currently disabled)
+- **Quizzes**: Placeholder only (intentionally disabled)
 
 ### Key Capabilities
 
@@ -101,9 +100,9 @@ grade-assignments --yaml config.yaml --max_workers 2
 
 See the `example_files/` directory for complete configuration examples:
 
-- `example-programming_assignments.yaml`: Docker-based grading
-- `journal_assignments.yaml`: Text submission grading
-- `example-exams.yaml`: Exam grading setup
+- `workhorse.yaml`: Recommended combined programming + text setup
+- `programming_assignments.yaml`: Legacy-format programming setup
+- `learning-logs.yaml`: Text submission grading
 - `example-template.yaml`: All available options
 
 ## Requirements

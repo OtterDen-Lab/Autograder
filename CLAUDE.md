@@ -77,7 +77,6 @@ flake8 Autograder/
 **Assignment Types** (`Autograder/assignment.py`):
 - `Assignment`: Abstract base class with `prepare()` and `finalize()` methods
 - `Assignment__ProgrammingAssignment`: Downloads student code, handles file renaming
-- `Assignment__Exam`: PDF processing with shuffling, redaction, and name extraction (AI-powered)
 - `Assignment_TextAssignment`: Canvas text submissions (learning logs, reflections)
 - All assignments are context managers that manage working directories
 
@@ -85,8 +84,7 @@ flake8 Autograder/
 - `Grader`: Abstract base class with `execute_grading()` and `score_grading()` methods
 - `docker_graders.py`: Template-based Docker grading (compiles, runs tests, diffs output)
 - `text_submission_grader.py`: AI-powered grading with rubric generation, clustering, batch processing
-- `manual.py`: CSV-based manual grading flow
-- `quiz_grader.py`: Canvas quiz grading support
+- `quiz_grader.py`: Placeholder only (disabled flow)
 - Each grader implements `can_grade_submission()` to validate submission types
 
 **Docker Infrastructure** (`Autograder/docker_utils.py`):
@@ -253,7 +251,7 @@ Settings merge priority: `type defaults → course → group → assignment`
 
 Use example files in `example_files/` as templates:
 - `programming_assignments.yaml`: Docker-based grading
-- `journal_assignments.yaml`: Text submission grading
+- `learning-logs.yaml`: Text submission grading
 - `example-template.yaml`: Shows all available options
 
 ### Working with Canvas

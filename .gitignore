@@ -13,3 +13,4 @@ debug.tex
 *.log
 records/
 dist/
+scratch.yaml

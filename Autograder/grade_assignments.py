@@ -16,7 +16,7 @@ import requests
 
 import yaml
 
-from lms_interface.canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment, CanvasQuiz
+from lms_interface.canvas_interface import CanvasInterface
 from Autograder.assignment import AssignmentRegistry
 from Autograder.grader import GraderRegistry
 from Autograder.registry import TypeRegistry
@@ -164,16 +164,9 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
         f"Assignment kind '{assignment_kind}' is intentionally disabled in this build."
       )
 
-    # Create assignment or quiz object based on type
-    if assignment_type.lower() == 'quiz':
-      lms_assignment = course.get_quiz(assignment_id)
-      assignment_name = lms_assignment.name
-      log.info(f"[Thread {thread_id}] Grading quiz \"{assignment_name}\"")
-    else:
-      lms_assignment = course.get_assignment(assignment_id)
-      assignment_name = lms_assignment.name
-      log.info(
-        f"[Thread {thread_id}] Grading assignment \"{assignment_name}\"")
+    lms_assignment = course.get_assignment(assignment_id)
+    assignment_name = lms_assignment.name
+    log.info(f"[Thread {thread_id}] Grading assignment \"{assignment_name}\"")
 
     # Get unified settings (new format uses 'settings', legacy uses 'kwargs')
     settings = merged_assignment.get('settings') or merged_assignment.get(
@@ -219,12 +212,6 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
 
       # If the grader doesn't need preparation, skip the prep step
       if grader.assignment_needs_preparation():
-        # For manual grading, we'll skip the interactive prompt in multi-threaded mode
-        if grader_name.lower() in ["manual"]:
-          log.warning(
-            f"[Thread {thread_id}] Manual grading detected for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode"
-          )
-
         grading_assignment.prepare(limit=args.limit,
                                    do_regrade=do_regrade,
                                    merge_only=args.merge_only,
@@ -253,10 +240,6 @@ def grade_single_assignment(assignment_data: Dict) -> Dict:
           log.info(f"{submission}")
 
         if grader.ready_to_finalize:
-          if grader_name.lower() in ["manual"]:
-            log.warning(
-              f"[Thread {thread_id}] Manual grading finalization for {lms_assignment.name} - skipping interactive prompts in multi-threaded mode"
-            )
           # Check for record retention setting (check both settings and top-level)
           record_retention = settings.get(
             'record_retention') or merged_assignment.get(

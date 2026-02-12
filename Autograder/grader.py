@@ -137,7 +137,7 @@ class Grader(abc.ABC):
   def prepare(self, *args, **kwargs) -> None:
     """
     Anything that is needed to take the assignment and prepare it for grading.
-    For example, making a CSV file from the submissions for manual grading
+    For example, building intermediate artifacts from submissions before grading
     :param args:
     :param kwargs:
     :return:
@@ -146,7 +146,7 @@ class Grader(abc.ABC):
   def finalize(self, *args, **kwargs) -> None:
     """
     anything that is needed to connect the grades/feedback to the submissions after grading.
-    For example, loading up the CSV and connecting grades to the submissions
+    For example, reconciling intermediate grading artifacts back to submissions
     :param args:
     :param kwargs:
     :return:

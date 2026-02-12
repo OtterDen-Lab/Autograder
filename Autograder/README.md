@@ -2,5 +2,5 @@
 
 ## todos:
 
-- [ ] Add in per-page output for two-part exam grading flow
-- [ ] Make a "manual" grading flow that the Exam flow can subclass
+- [ ] Expand tests around Canvas API failure/retry behavior
+- [ ] Improve anonymization pipeline for non-programming assignments

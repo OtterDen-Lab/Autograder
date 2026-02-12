@@ -44,7 +44,7 @@ def test_grade_single_assignment_blocks_exam_kind():
     "merged_assignment": {
       "type": "assignment",
       "kind": "Exam",
-      "grader": "Manual"
+      "grader": "Dummy"
     },
     "args": SimpleNamespace(
       do_regrade=False, merge_only=False, limit=None, test=False),
