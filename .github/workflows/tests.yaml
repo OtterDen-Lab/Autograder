@@ -21,5 +21,8 @@ jobs:
       - name: Sync dependencies
         run: uv sync --dev
 
+      - name: Run repository hygiene checks
+        run: bash scripts/check_repo_hygiene.sh
+
       - name: Run tests
         run: uv run pytest -q

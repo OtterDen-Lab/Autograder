@@ -6,7 +6,7 @@ import re
 import threading
 import tempfile
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Any
 import abc
 import os
 import json
@@ -73,7 +73,7 @@ class Assignment(abc.ABC):
     """
     pass
 
-  def finalize(self, *args, **kwargs) -> None:
+  def finalize(self, *args, **kwargs) -> Dict[str, Any]:
     """
     This function is intended to finalize any grading.  This could be reloading the grading CSV and matching names,
     or could just be a noop.
@@ -84,7 +84,15 @@ class Assignment(abc.ABC):
 
     # If we are only merging then we should exit right here
     if kwargs.get("merge_only", False):
-      return
+      return {
+        "push_enabled": False,
+        "merge_only": True,
+        "push_attempted": 0,
+        "push_succeeded": 0,
+        "push_failed": 0,
+        "push_skipped": 0,
+        "push_failed_students": [],
+      }
 
     push_enabled = bool(kwargs.get("push", False))
     idempotency_key = kwargs.get("idempotency_key")
@@ -99,9 +107,15 @@ class Assignment(abc.ABC):
       )
 
     log.debug("Pushing")
+    push_attempted = 0
+    push_succeeded = 0
+    push_failed = 0
+    push_skipped = 0
+    push_failed_students = []
     for submission in self.submissions:
       user_id = submission.student.user_id
       if push_enabled and processed_user_ids is not None and user_id in processed_user_ids:
+        push_skipped += 1
         log.info(
           f"Skipping push for {submission.student.name} (canvas_user_id={user_id}) due to idempotency key"
         )
@@ -116,23 +130,57 @@ class Assignment(abc.ABC):
 
       if push_enabled:
         log.info(f"Pushing feedback for: {submission}")
-        # Scale the score for Canvas submission
-        scaled_score = self.scale_score_for_canvas(
-          submission.feedback.percentage_score)
-        pushed = self.lms_assignment.push_feedback(
-          score=scaled_score,
-          comments=submission.feedback.comments,
-          attachments=submission.feedback.attachments,
-          user_id=user_id,
-          keep_previous_best=True,
-          clobber_feedback=False)
+        push_attempted += 1
+        try:
+          # Scale the score for Canvas submission
+          scaled_score = self.scale_score_for_canvas(
+            submission.feedback.percentage_score)
+          pushed = self.lms_assignment.push_feedback(
+            score=scaled_score,
+            comments=submission.feedback.comments,
+            attachments=submission.feedback.attachments,
+            user_id=user_id,
+            keep_previous_best=True,
+            clobber_feedback=False)
+        except Exception as e:
+          push_failed += 1
+          push_failed_students.append(str(submission.student.name))
+          log.exception(
+            f"Failed to push feedback for {submission.student.name} (canvas_user_id={user_id}): {e}. Continuing to next submission."
+          )
+          continue
+
+        if pushed:
+          push_succeeded += 1
+        else:
+          push_failed += 1
+          push_failed_students.append(str(submission.student.name))
+          log.warning(
+            f"Push feedback returned unsuccessful for {submission.student.name} (canvas_user_id={user_id}). Continuing to next submission."
+          )
+
         if pushed and processed_user_ids is not None:
           processed_user_ids.add(user_id)
           processed_dirty = True
 
+    if push_enabled:
+      log.info(
+        f"Push summary for {self.lms_assignment.name}: attempted={push_attempted}, succeeded={push_succeeded}, failed={push_failed}, skipped={push_skipped}"
+      )
+
     if processed_user_ids is not None and processed_dirty:
       self._save_idempotency_user_ids(
         idempotency_key, idempotency_state_dir, processed_user_ids)
+
+    return {
+      "push_enabled": push_enabled,
+      "merge_only": False,
+      "push_attempted": push_attempted,
+      "push_succeeded": push_succeeded,
+      "push_failed": push_failed,
+      "push_skipped": push_skipped,
+      "push_failed_students": push_failed_students,
+    }
 
   def _save_feedback_record(self, student: Student, comments: str,
                             records_dir: str, assignment_name: str) -> None:
@@ -332,7 +380,7 @@ class Assignment__ProgrammingAssignment(Assignment):
         )
 
   def finalize(self, *args, **kwargs):
-    super().finalize(*args, **kwargs)
+    return super().finalize(*args, **kwargs)
 
 
 @AssignmentRegistry.register("TextAssignment")
@@ -519,4 +567,4 @@ class Assignment_TextAssignment(Assignment):
     """
     Finalize grading by pushing scores and feedback to Canvas.
     """
-    super().finalize(*args, **kwargs)
+    return super().finalize(*args, **kwargs)

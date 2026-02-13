@@ -326,3 +326,62 @@ def test_resolve_records_dir_allows_repo_subpath_with_override(monkeypatch):
 
   resolved = grade_assignments.resolve_records_dir(records_path)
   assert resolved.endswith(os.path.join("records", "workhorse"))
+
+
+def test_collect_push_failure_lines_summarizes_results():
+  total, lines = grade_assignments.collect_push_failure_lines([
+    {
+      "success": True,
+      "course_name": "CST334",
+      "assignment_name": "PA1",
+      "finalize_summary": {
+        "push_failed": 2,
+        "push_failed_students": ["Student 10", "Student 11"]
+      }
+    },
+    {
+      "success": True,
+      "course_name": "CST334",
+      "assignment_name": "PA2",
+      "finalize_summary": {
+        "push_failed": 0
+      }
+    },
+  ])
+  assert total == 2
+  assert len(lines) == 1
+  assert "PA1" in lines[0]
+  assert "Student 10" in lines[0]
+
+
+def test_send_slack_run_summary_notifies_on_push_failures(monkeypatch):
+  monkeypatch.setenv("SLACK_BOT_TOKEN", "token")
+  sent = {}
+
+  class DummyResponse:
+    def json(self):
+      return {"ok": True}
+
+  def fake_post(url, headers=None, json=None, timeout=None):
+    sent["url"] = url
+    sent["json"] = json
+    return DummyResponse()
+
+  monkeypatch.setattr(grade_assignments.requests, "post", fake_post)
+
+  args = SimpleNamespace(error_slack_channel=None, yaml="config.yaml")
+  config = RunConfig(reporting={"slack_channel": "C123", "notify_on": "failures"})
+  results = [{
+    "success": True,
+    "course_name": "CST334",
+    "assignment_name": "PA1",
+    "finalize_summary": {
+      "push_failed": 1,
+      "push_failed_students": ["Student 10"]
+    }
+  }]
+
+  grade_assignments.send_slack_run_summary(results, args, config)
+
+  assert sent["url"].endswith("/chat.postMessage")
+  assert "Per-student push failures:" in sent["json"]["text"]

@@ -138,6 +138,16 @@ See the `example_files/` directory for complete configuration examples:
 - Canvas API access
 - Optional: OpenAI or Anthropic API keys for AI-powered features
 
+## Local Git Hygiene Hook (Recommended)
+
+Install the repository-managed pre-commit hook so hygiene checks run before each commit:
+
+```bash
+bash scripts/install_git_hooks.sh
+```
+
+This hook runs `scripts/check_repo_hygiene.sh` and blocks commits that include runtime artifacts (`records/`, `.autograder/`, `*.log`) or unsafe example paths.
+
 ## Documentation
 
 For detailed documentation, see [the documentation directory](https://github.com/OtterDen-Lab/Autograder/tree/main/documentation).

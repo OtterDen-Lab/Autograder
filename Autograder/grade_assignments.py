@@ -202,6 +202,35 @@ def format_submission_for_log(submission, reveal_identity: bool = False) -> str:
   return f"{type(submission).__name__}({format_student_label(student, reveal_identity)} : {feedback})"
 
 
+def collect_push_failure_lines(results: List[Dict]) -> tuple[int, List[str]]:
+  lines = []
+  total_failed_pushes = 0
+  for result in results:
+    summary = result.get("finalize_summary") or {}
+    failed_count = int(summary.get("push_failed", 0) or 0)
+    if failed_count <= 0:
+      continue
+
+    total_failed_pushes += failed_count
+    assignment_label = (result.get('assignment_name')
+                        or f"ID {result.get('assignment_id')}")
+    course_label = result.get('course_name') or "Unknown Course"
+    failed_students = summary.get("push_failed_students") or []
+    failed_students_preview = ", ".join(failed_students[:5])
+    if len(failed_students) > 5:
+      failed_students_preview += ", ..."
+    if failed_students_preview:
+      lines.append(
+        f"- {course_label} / {assignment_label}: {failed_count} push failure(s) [{failed_students_preview}]"
+      )
+    else:
+      lines.append(
+        f"- {course_label} / {assignment_label}: {failed_count} push failure(s)"
+      )
+
+  return total_failed_pushes, lines
+
+
 @contextlib.contextmanager
 def ensure_single_instance():
   """
@@ -335,6 +364,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
             format_submission_for_log(
               submission, reveal_identity=assignment_data.reveal_identity))
 
+        finalize_summary = None
         if grader.ready_to_finalize:
           finalize_kwargs = {
             "push": push_grades,
@@ -348,13 +378,15 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
               "record_retention": record_retention,
               "records_dir": records_dir
             })
-          grading_assignment.finalize(**finalize_kwargs)
+          finalize_summary = grading_assignment.finalize(**finalize_kwargs)
 
     return {
       'success': True,
       'assignment_name': lms_assignment.name,
       'assignment_id': assignment_id,
-      'thread_id': thread_id
+      'thread_id': thread_id,
+      'course_name': course_name,
+      'finalize_summary': finalize_summary,
     }
 
   except Exception as e:
@@ -566,6 +598,14 @@ def print_results_summary(results: List[Dict]) -> None:
       if not result['success']:
         log.error(f"  Assignment {result['assignment_id']}: {result['error']}")
 
+  push_failed_total, push_failure_lines = collect_push_failure_lines(results)
+  if push_failed_total > 0:
+    log.warning(
+      f"Detected {push_failed_total} per-student push failure(s) across successful assignments."
+    )
+    for line in push_failure_lines:
+      log.warning(line)
+
 
 def send_slack_run_summary(results: List[Dict], args: argparse.Namespace,
                            config: RunConfig) -> None:
@@ -584,8 +624,9 @@ def send_slack_run_summary(results: List[Dict], args: argparse.Namespace,
 
   successful = sum(1 for r in results if r['success'])
   failed = len(results) - successful
+  push_failed_total, push_failure_lines = collect_push_failure_lines(results)
   notify_on = reporting_config.get("notify_on", "failures").lower()
-  if notify_on == "failures" and failed == 0:
+  if notify_on == "failures" and failed == 0 and push_failed_total == 0:
     return
 
   failure_lines = []
@@ -599,12 +640,15 @@ def send_slack_run_summary(results: List[Dict], args: argparse.Namespace,
         f"- {course_label} / {assignment_label}: {error_msg}")
 
   message_lines = [
-    f":warning: Grading run completed with {failed} failure(s) ({successful} succeeded).",
+    f":warning: Grading run completed with {failed} assignment failure(s), {push_failed_total} per-student push failure(s) ({successful} assignment(s) succeeded).",
     f"Config: `{args.yaml}`",
   ]
   if failure_lines:
-    message_lines.append("Failures:")
+    message_lines.append("Assignment failures:")
     message_lines.extend(failure_lines)
+  if push_failure_lines:
+    message_lines.append("Per-student push failures:")
+    message_lines.extend(push_failure_lines)
 
   try:
     response = requests.post(
