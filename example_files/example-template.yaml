@@ -23,11 +23,11 @@ courses:
           - repo_path: PA1
             id: 506889
             record_retention: true
-            records_dir: "./records/example-template"
+            records_dir: "~/autograder-records/example-template"
           - repo_path: PA2
             id: 506890
             record_retention: true
-            records_dir: "./records/example-template"
+            records_dir: "~/autograder-records/example-template"
 
   - name: CS463
     id: 29740

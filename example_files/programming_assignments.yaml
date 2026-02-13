@@ -11,7 +11,7 @@ courses:
     id: 29978
     slack_channel: C09HR2J5EBF
     record_retention: true
-    records_dir: "./records/programming_assignments"
+    records_dir: "~/autograder-records/programming_assignments"
     assignment_groups:
       - type: programming
         settings:

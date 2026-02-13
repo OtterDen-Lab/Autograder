@@ -45,7 +45,7 @@ class RunConfig:
   privacy_mode: str = "id_only"
   reveal_identity: bool = False
   idempotency_key: Optional[str] = None
-  idempotency_state_dir: str = ".autograder/idempotency"
+  idempotency_state_dir: str = "~/.autograder/idempotency"
   reporting: Dict[str, Any] = field(default_factory=dict)
   error_slack_channel: Optional[str] = None
   assignment_types: Dict[str, AssignmentTypeConfig] = field(default_factory=dict)
@@ -69,7 +69,7 @@ class AssignmentRunRequest:
   reveal_identity: bool = False
   privacy_mode: str = "id_only"
   idempotency_key: Optional[str] = None
-  idempotency_state_dir: str = ".autograder/idempotency"
+  idempotency_state_dir: str = "~/.autograder/idempotency"
 
 
 def _require_dict(value: Any, label: str) -> Dict[str, Any]:
@@ -194,7 +194,7 @@ def parse_run_config(raw_config: Any) -> RunConfig:
   if idempotency_key is not None and not isinstance(idempotency_key, str):
     raise ValueError("idempotency_key must be a string when provided")
   idempotency_state_dir = config.get('idempotency_state_dir',
-                                     ".autograder/idempotency")
+                                     "~/.autograder/idempotency")
   if not isinstance(idempotency_state_dir, str):
     raise ValueError("idempotency_state_dir must be a string")
 

@@ -139,9 +139,44 @@ def resolve_idempotency_settings(
 
   state_dir = (getattr(args, "idempotency_state_dir", None)
                or config.idempotency_state_dir
-               or ".autograder/idempotency")
+               or "~/.autograder/idempotency")
   state_dir = os.path.abspath(os.path.expanduser(state_dir))
   return idempotency_key, state_dir
+
+
+def _repo_root_dir() -> str:
+  return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _is_subpath(path: str, parent: str) -> bool:
+  try:
+    return os.path.commonpath([path, parent]) == parent
+  except ValueError:
+    return False
+
+
+def resolve_records_dir(records_dir: str | None) -> str:
+  if not isinstance(records_dir, str) or not records_dir.strip():
+    raise ValueError(
+      "record_retention=true requires an explicit records_dir in config")
+
+  raw = records_dir.strip()
+  expanded = os.path.expanduser(raw)
+  if not os.path.isabs(expanded):
+    raise ValueError(
+      "records_dir must be an absolute path (or use ~/...) when record_retention=true"
+    )
+
+  resolved = os.path.realpath(os.path.abspath(expanded))
+  repo_root = _repo_root_dir()
+
+  if os.getenv("AUTOGRADER_ALLOW_IN_REPO_RECORDS") != "1" and _is_subpath(
+      resolved, repo_root):
+    raise ValueError(
+      f"records_dir must be outside the repository root ({repo_root}) to avoid accidental git history leakage. "
+      "Set AUTOGRADER_ALLOW_IN_REPO_RECORDS=1 only for local debugging.")
+
+  return resolved
 
 
 def format_student_label(student, reveal_identity: bool = False) -> str:
@@ -231,6 +266,13 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
     settings["slack_channel"] = assignment_data.slack_channel
 
     do_regrade = args.do_regrade
+    record_retention = bool(settings.get('record_retention'))
+    if record_retention:
+      settings["records_dir"] = resolve_records_dir(settings.get("records_dir"))
+    elif settings.get("records_dir") is not None and str(grader_name).lower(
+    ) == "textsubmissiongrader":
+      # TextSubmissionGrader can write optional reports/questions to records_dir
+      settings["records_dir"] = resolve_records_dir(settings.get("records_dir"))
 
     repo_path = assignment_data.repo_path
 
@@ -287,7 +329,6 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
               submission, reveal_identity=assignment_data.reveal_identity))
 
         if grader.ready_to_finalize:
-          record_retention = bool(settings.get('record_retention'))
           finalize_kwargs = {
             "push": push_grades,
             "merge_only": args.merge_only,
@@ -295,14 +336,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
             "idempotency_state_dir": assignment_data.idempotency_state_dir,
           }
           if record_retention:
-            # Determine where to save records
             records_dir = settings.get('records_dir')
-            if not records_dir:
-              raise ValueError(
-                "record_retention=true requires an explicit records_dir in config"
-              )
-            # Expand user paths (like ~/records)
-            records_dir = os.path.abspath(os.path.expanduser(records_dir))
             finalize_kwargs.update({
               "record_retention": record_retention,
               "records_dir": records_dir

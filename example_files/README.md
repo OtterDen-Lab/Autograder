@@ -20,5 +20,7 @@ This directory contains YAML examples for the currently supported grading flows.
 - Set `privacy_mode` to `id_only` (default), `blind`, or `none` at top level.
 - Set `reveal_identity: true` only for break-glass debugging and run with `AUTOGRADER_BREAK_GLASS=1`.
 - Set `idempotency_key` to avoid duplicate feedback pushes when rerunning the same grading job.
-- `record_retention: true` requires an explicit `records_dir`.
+- `idempotency_state_dir` defaults to `~/.autograder/idempotency`.
+- `record_retention: true` requires an explicit absolute `records_dir` (or `~/...`).
+- `records_dir` paths inside this repo are blocked unless `AUTOGRADER_ALLOW_IN_REPO_RECORDS=1`.
 - Each student programming submission is graded in a fresh Docker container.

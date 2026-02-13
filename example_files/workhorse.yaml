@@ -15,7 +15,7 @@ assignment_types:
     grader: template-grader
     settings:
       record_retention: true
-      records_dir: "./records/workhorse"
+      records_dir: "~/autograder-records/workhorse"
 
   text:
     kind: TextAssignment

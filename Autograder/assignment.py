@@ -178,7 +178,7 @@ class Assignment(abc.ABC):
   def _idempotency_state_path(self, idempotency_key: str,
                               idempotency_state_dir: str | None) -> str:
     key_safe = re.sub(r'[^A-Za-z0-9._-]', '_', idempotency_key)
-    state_dir = idempotency_state_dir or ".autograder/idempotency"
+    state_dir = idempotency_state_dir or "~/.autograder/idempotency"
     state_dir = os.path.abspath(os.path.expanduser(state_dir))
 
     course = getattr(self.lms_assignment, "canvas_course", None)

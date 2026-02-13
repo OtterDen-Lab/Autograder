@@ -8,7 +8,7 @@ assignment_types:
     grader: template-grader
     settings:
       record_retention: true
-      records_dir: "./records/algo"
+      records_dir: "~/autograder-records/algo"
 
 courses:
   - name: CST370

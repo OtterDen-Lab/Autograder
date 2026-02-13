@@ -27,6 +27,7 @@ Create a YAML file (e.g., `assignments.yaml`) defining your courses and assignme
 privacy_mode: id_only  # none | id_only | blind
 reveal_identity: false
 idempotency_key: null  # Optional: set to skip re-pushing already pushed feedback
+idempotency_state_dir: "~/.autograder/idempotency"  # Optional override
 
 assignment_types:
   programming:
@@ -34,6 +35,8 @@ assignment_types:
     grader: template-grader
     settings:
       base_image_name: "your-docker-image"
+      record_retention: true
+      records_dir: "~/autograder-records/your-course"  # required when record_retention=true
 
 courses:
   - name: "Your Course"
@@ -68,6 +71,12 @@ Idempotent push mode (safe rerun key):
 ```bash
 grade-assignments --yaml assignments.yaml --idempotency-key spring26-ll2
 ```
+
+Path safety defaults:
+
+- `record_retention: true` requires an explicit absolute `records_dir` (or `~/...`).
+- `records_dir` is blocked if it points inside this git repo unless `AUTOGRADER_ALLOW_IN_REPO_RECORDS=1`.
+- Idempotency state defaults to `~/.autograder/idempotency`.
 
 ## Features
 

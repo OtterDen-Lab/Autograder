@@ -188,6 +188,80 @@ def test_record_retention_requires_explicit_records_dir(monkeypatch):
   assert "explicit records_dir" in result["error"]
 
 
+def test_record_retention_false_does_not_validate_records_dir(monkeypatch):
+  class DummyAssignment:
+    def __init__(self):
+      self.submissions = [
+        Submission(student=Student(name="Student A", user_id=1, _inner=None),
+                   status=Submission.Status.UNGRADED)
+      ]
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+      return False
+
+    def prepare(self, *args, **kwargs):
+      return None
+
+    def finalize(self, *args, **kwargs):
+      return None
+
+  class DummyGrader:
+    ready_to_finalize = True
+
+    def assignment_needs_preparation(self):
+      return True
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+      return False
+
+    def grade_assignment(self, assignment, *args, **kwargs):
+      for submission in assignment.submissions:
+        submission.feedback = Feedback(percentage_score=100.0, comments="ok")
+
+    def cleanup(self):
+      return None
+
+  class DummyLmsAssignment:
+    name = "PA1"
+
+  class DummyCourse:
+    def get_assignment(self, assignment_id):
+      return DummyLmsAssignment()
+
+  monkeypatch.setattr(grade_assignments.GraderRegistry, "create",
+                      lambda *args, **kwargs: DummyGrader())
+  monkeypatch.setattr(grade_assignments.AssignmentRegistry, "create",
+                      lambda *args, **kwargs: DummyAssignment())
+
+  result = grade_assignments.grade_single_assignment(
+    AssignmentRunRequest(
+      course=DummyCourse(),
+      course_name="CST",
+      assignment_id=42,
+      assignment_type="assignment",
+      assignment_kind="ProgrammingAssignment",
+      grader_name="template-grader",
+      settings={
+        "record_retention": False,
+        "records_dir": "./records/local-debug-only"
+      },
+      repo_path=None,
+      assignment_name=None,
+      args=SimpleNamespace(
+        do_regrade=False, merge_only=False, limit=None, test=False),
+      push_grades=False,
+      slack_channel=None,
+    ))
+
+  assert result["success"] is True
+
+
 def test_resolve_reveal_identity_defaults_to_false():
   args = SimpleNamespace(reveal_identity=False)
   config = RunConfig(reveal_identity=False)
@@ -223,7 +297,32 @@ def test_resolve_idempotency_settings_uses_cli_over_config():
 def test_resolve_idempotency_settings_uses_config_defaults():
   args = SimpleNamespace(idempotency_key=None, idempotency_state_dir=None)
   config = RunConfig(idempotency_key="run-1",
-                     idempotency_state_dir=".autograder/idempotency")
+                     idempotency_state_dir="~/.autograder/idempotency")
   key, state_dir = grade_assignments.resolve_idempotency_settings(args, config)
   assert key == "run-1"
   assert state_dir.endswith(".autograder/idempotency")
+
+
+def test_resolve_records_dir_requires_absolute_path():
+  with pytest.raises(ValueError) as exc:
+    grade_assignments.resolve_records_dir("./records/local")
+  assert "absolute path" in str(exc.value)
+
+
+def test_resolve_records_dir_blocks_repo_subpath(monkeypatch):
+  monkeypatch.delenv("AUTOGRADER_ALLOW_IN_REPO_RECORDS", raising=False)
+  repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+  records_path = os.path.join(repo_root, "records", "workhorse")
+
+  with pytest.raises(ValueError) as exc:
+    grade_assignments.resolve_records_dir(records_path)
+  assert "outside the repository root" in str(exc.value)
+
+
+def test_resolve_records_dir_allows_repo_subpath_with_override(monkeypatch):
+  monkeypatch.setenv("AUTOGRADER_ALLOW_IN_REPO_RECORDS", "1")
+  repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+  records_path = os.path.join(repo_root, "records", "workhorse")
+
+  resolved = grade_assignments.resolve_records_dir(records_path)
+  assert resolved.endswith(os.path.join("records", "workhorse"))

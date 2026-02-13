@@ -12,5 +12,6 @@ debug.tex
 .claude
 *.log
 records/
+.autograder/
 dist/
 scratch.yaml
