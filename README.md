@@ -84,7 +84,6 @@ Path safety defaults:
 
 - **Programming Assignments**: Docker-based grading with template matching and test execution
 - **Text Submissions**: AI-powered grading with rubric generation and clustering analysis
-- **Quizzes**: Placeholder only (intentionally disabled)
 
 ### Key Capabilities
 

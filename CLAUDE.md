@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an autograding system for teaching, primarily focused on Canvas LMS integration. It supports automated grading of programming assignments (via Docker), text submissions (like learning logs), quizzes, and manual exam grading with AI assistance. The system includes both a CLI-based grading flow and a modern web-based interface for exam grading.
+This is an autograding system for teaching, primarily focused on Canvas LMS integration. It supports automated grading of programming assignments (via Docker) and text submissions (like learning logs) through a CLI-based grading flow.
 
 ## Key Commands
 
@@ -40,24 +40,11 @@ python grade_assignments.py --yaml <config.yaml> --max_workers 2
 python grade_assignments.py TEST
 ```
 
-### Web Grading Interface
-
-```bash
-# Start web grading server (for exam grading)
-cd Autograder/web_grading
-python -m web_api.main
-
-# Then open http://localhost:8000
-```
-
 ### Testing
 
 ```bash
 # Run tests
 pytest
-
-# Run tests for web grading
-pytest Autograder/web_grading/tests/
 
 # Code formatting
 black Autograder/
@@ -83,7 +70,6 @@ flake8 Autograder/
 - `Grader`: Abstract base class with `execute_grading()` and `score_grading()` methods
 - `docker_graders.py`: Template-based Docker grading (compiles, runs tests, diffs output)
 - `text_submission_grader.py`: AI-powered grading with rubric generation, clustering, batch processing
-- `quiz_grader.py`: Placeholder only (disabled flow)
 - Each grader implements `can_grade_submission()` to validate submission types
 
 **Docker Infrastructure** (`Autograder/docker_utils.py`):
@@ -145,30 +131,6 @@ Settings merge priority: `type defaults → course → group → assignment`
    - Call `grader.grade_assignment()` to grade all submissions
    - Call `assignment.finalize()` to push grades/feedback to Canvas
    - Cleanup Docker resources
-
-### Web Grading Interface
-
-**Purpose**: Modern web UI for grading scanned paper exams (replaces CSV workflow)
-
-**Architecture**:
-- Backend: FastAPI (`Autograder/web_grading/web_api/`)
-- Frontend: Vanilla JS SPA (`Autograder/web_grading/web_frontend/`)
-- Database: SQLite with automatic schema migrations (`~/.autograder/grading.db`)
-- AI Integration: Name extraction, blank detection, handwriting transcription
-
-**Key Features**:
-- Problem-first grading (all Q1, then Q2, etc.)
-- Anonymous grading by default
-- Session persistence with export/import
-- Duplicate detection via SHA256
-- Canvas environment switching (dev/prod)
-- Keyboard shortcuts for fast grading
-
-**Database Schema** (current version: 10):
-- `grading_sessions`: Session metadata (course, assignment, Canvas config)
-- `submissions`: Student submissions with file hash for deduplication
-- `problems`: Individual problem instances with blank detection metadata
-- `problem_metadata`: Per-session max_points storage
 
 ### AI Integration
 
@@ -267,33 +229,11 @@ docker rm $(docker ps -a -q --filter ancestor=samogden/cst334)
 
 The system tracks containers/images globally and cleans them up in `grade_assignments.py:main()` finally block.
 
-### Web Grading Development
-
-Backend changes (FastAPI):
-- Server auto-reloads with `uvicorn --reload`
-- Add routes in `web_api/routes/`
-- Register in `web_api/main.py`
-- API docs: http://localhost:8000/api/docs
-
-Frontend changes (JS):
-- No build step required (vanilla JS)
-- Edit files in `web_frontend/`
-- Hard refresh browser to see changes
-
-Database migrations:
-- Add migration function to `web_api/database.py`
-- Increment `CURRENT_SCHEMA_VERSION`
-- Add to `MIGRATIONS` dict
-- Migrations run automatically on startup
-
 ## Project Dependencies
 
 - **lms-interface**: Canvas API wrapper (local path dependency in `../LMSInterface`)
 - **Docker**: Required for programming assignment grading
-- **PyMuPDF (fitz)**: PDF processing for exam grading
 - **Anthropic/OpenAI**: AI-powered features (optional but recommended)
-- **FastAPI/uvicorn**: Web grading interface backend
-- **SQLite**: Web grading session storage (no setup required)
 
 ## Configuration Files
 
@@ -307,5 +247,3 @@ Database migrations:
 - Always test with `--test` flag or `limit` before grading full classes
 - Docker cleanup happens in finally block - don't skip with Ctrl+C repeatedly
 - File locking prevents multiple instances - remove `/tmp/TeachingTools.grade_assignments.lock` if stuck
-- Web interface database is at `~/.autograder/grading.db` - delete to reset
-- The system uses fuzzy matching (95% threshold) for student name matching in exams

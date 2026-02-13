@@ -17,7 +17,13 @@ from lms_interface.canvas_interface import CanvasInterface
 from Autograder.assignment import AssignmentRegistry
 from Autograder.grader import GraderRegistry
 from Autograder.docker_utils import DockerClient
-from Autograder.config_models import RunConfig, AssignmentRunRequest, parse_run_config
+from Autograder.config_models import (
+  ACTIVE_ASSIGNMENT_KINDS,
+  ACTIVE_GRADERS_BY_KIND,
+  RunConfig,
+  AssignmentRunRequest,
+  parse_run_config,
+)
 
 import logging
 
@@ -240,19 +246,20 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
     push_grades = assignment_data.push_grades
 
     assignment_id = assignment_data.assignment_id
-    assignment_type = assignment_data.assignment_type
     grader_name = assignment_data.grader_name
     assignment_kind = assignment_data.assignment_kind
 
-    # Explicitly block unsupported/vestigial flows.
-    if assignment_type.lower() == 'quiz' or str(grader_name).lower(
-    ) == "quizgrader":
-      raise NotImplementedError(
-        "Quiz grading flow is intentionally disabled in this build.")
-    if assignment_kind in {"Exam", "ExamCST231", "QuizAssignment"}:
-      raise NotImplementedError(
-        f"Assignment kind '{assignment_kind}' is intentionally disabled in this build."
-      )
+    if assignment_kind not in ACTIVE_ASSIGNMENT_KINDS:
+      supported = ", ".join(sorted(ACTIVE_ASSIGNMENT_KINDS))
+      raise ValueError(
+        f"Assignment kind '{assignment_kind}' is not supported in this build. "
+        f"Supported kinds: {supported}")
+    allowed_graders = ACTIVE_GRADERS_BY_KIND.get(assignment_kind, set())
+    if grader_name not in allowed_graders:
+      allowed = ", ".join(sorted(allowed_graders)) or "(none)"
+      raise ValueError(
+        f"Grader '{grader_name}' is not supported for kind '{assignment_kind}'. "
+        f"Allowed graders: {allowed}")
 
     lms_assignment = course.get_assignment(assignment_id)
     assignment_name = lms_assignment.name

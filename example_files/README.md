@@ -10,10 +10,6 @@ This directory contains YAML examples for the currently supported grading flows.
 - `example-template.yaml`: Programming template with detailed `template-grader` options.
 - `algo.yaml`: Programming assignment with custom file mapping and Docker setup.
 
-## Unsupported placeholder examples
-
-- `quiz_assignments.yaml`: Quiz flow placeholder only. Quiz grading is intentionally disabled.
-
 ## Notes
 
 - Prefer `workhorse.yaml` for new setups.

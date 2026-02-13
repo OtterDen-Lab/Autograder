@@ -141,3 +141,68 @@ def test_parse_run_config_rejects_invalid_privacy_mode():
         }]
       }]
     })
+
+
+def test_parse_run_config_rejects_unsupported_assignment_kind():
+  with pytest.raises(ValueError) as exc:
+    parse_run_config({
+      "assignment_types": {
+        "legacy": {
+          "kind": "LegacyAssignment",
+          "grader": "LegacyGrader"
+        }
+      },
+      "courses": [{
+        "id": 1,
+        "assignment_groups": [{
+          "type": "legacy",
+          "assignments": [{
+            "id": 2
+          }]
+        }]
+      }]
+    })
+  assert "not supported" in str(exc.value)
+
+
+def test_parse_run_config_rejects_missing_grader():
+  with pytest.raises(ValueError) as exc:
+    parse_run_config({
+      "assignment_types": {
+        "programming": {
+          "kind": "ProgrammingAssignment"
+        }
+      },
+      "courses": [{
+        "id": 1,
+        "assignment_groups": [{
+          "type": "programming",
+          "assignments": [{
+            "id": 2
+          }]
+        }]
+      }]
+    })
+  assert "missing required key 'grader'" in str(exc.value)
+
+
+def test_parse_run_config_rejects_grader_not_allowed_for_kind():
+  with pytest.raises(ValueError) as exc:
+    parse_run_config({
+      "assignment_types": {
+        "programming": {
+          "kind": "ProgrammingAssignment",
+          "grader": "TextSubmissionGrader"
+        }
+      },
+      "courses": [{
+        "id": 1,
+        "assignment_groups": [{
+          "type": "programming",
+          "assignments": [{
+            "id": 2
+          }]
+        }]
+      }]
+    })
+  assert "not supported for kind" in str(exc.value)

@@ -3,6 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+ACTIVE_ASSIGNMENT_KINDS = {"ProgrammingAssignment", "TextAssignment"}
+ACTIVE_GRADERS_BY_KIND = {
+  "ProgrammingAssignment": {"template-grader"},
+  "TextAssignment": {"TextSubmissionGrader"},
+}
+
 
 @dataclass
 class AssignmentTypeConfig:
@@ -162,11 +168,28 @@ def _parse_assignment_types(
     if not kind:
       raise ValueError(
         f"assignment_types.{name} is missing required key 'kind'")
+    if kind not in ACTIVE_ASSIGNMENT_KINDS:
+      supported = ", ".join(sorted(ACTIVE_ASSIGNMENT_KINDS))
+      raise ValueError(
+        f"assignment_types.{name}.kind '{kind}' is not supported in this build. "
+        f"Supported kinds: {supported}")
+
+    grader = type_config.get('grader')
+    if not grader:
+      raise ValueError(
+        f"assignment_types.{name} is missing required key 'grader'")
+
+    allowed_graders = ACTIVE_GRADERS_BY_KIND.get(kind, set())
+    if grader not in allowed_graders:
+      allowed = ", ".join(sorted(allowed_graders)) or "(none)"
+      raise ValueError(
+        f"assignment_types.{name}.grader '{grader}' is not supported for kind '{kind}'. "
+        f"Allowed graders: {allowed}")
 
     parsed[name] = AssignmentTypeConfig(
       name=name,
       kind=kind,
-      grader=type_config.get('grader', 'Dummy'),
+      grader=grader,
       settings=dict(type_config.get('settings', {})),
     )
 

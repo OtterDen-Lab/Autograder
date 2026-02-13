@@ -14,15 +14,15 @@ def test_execute_grading_returns_empty_list_for_no_assignments():
   assert grade_assignments.execute_grading([], args) == []
 
 
-def test_grade_single_assignment_blocks_quiz_flow():
+def test_grade_single_assignment_rejects_unsupported_assignment_kind():
   result = grade_assignments.grade_single_assignment(
     AssignmentRunRequest(
       course=None,
       course_name="CST",
       assignment_id=1,
-      assignment_type="quiz",
-      assignment_kind="QuizAssignment",
-      grader_name="QuizGrader",
+      assignment_type="legacy",
+      assignment_kind="LegacyAssignment",
+      grader_name="template-grader",
       settings={},
       repo_path=None,
       assignment_name=None,
@@ -33,18 +33,18 @@ def test_grade_single_assignment_blocks_quiz_flow():
     ))
 
   assert result["success"] is False
-  assert "disabled" in result["error"].lower()
+  assert "not supported" in result["error"].lower()
 
 
-def test_grade_single_assignment_blocks_exam_kind():
+def test_grade_single_assignment_rejects_unsupported_grader_for_kind():
   result = grade_assignments.grade_single_assignment(
     AssignmentRunRequest(
       course=None,
       course_name="CST",
       assignment_id=2,
       assignment_type="assignment",
-      assignment_kind="Exam",
-      grader_name="Dummy",
+      assignment_kind="ProgrammingAssignment",
+      grader_name="LegacyGrader",
       settings={},
       repo_path=None,
       assignment_name=None,
@@ -55,7 +55,7 @@ def test_grade_single_assignment_blocks_exam_kind():
     ))
 
   assert result["success"] is False
-  assert "disabled" in result["error"].lower()
+  assert "not supported" in result["error"].lower()
 
 
 def test_parse_args_requires_yaml_when_not_using_test(monkeypatch):
