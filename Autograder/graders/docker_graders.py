@@ -686,8 +686,8 @@ class Grader__template_grader(Grader__docker):
         f"Matched files: {[(f[0].name if hasattr(f[0], 'name') else 'unknown', f[1]) for f in submission_files]}"
       )
     else:
-      # Use legacy student_code_path behavior (backward compatibility)
-      log.info("Using legacy student_code_path for file organization")
+      # Use student_code_path file organization when regex mapping is not configured.
+      log.info("Using student_code_path for file organization")
       submission_files = []
       for f in submission.files:
         # Copy each file into the target directory using its own filename.

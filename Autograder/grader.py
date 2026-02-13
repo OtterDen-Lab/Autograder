@@ -167,7 +167,7 @@ class Grader(abc.ABC):
 class FileBasedGrader(Grader):
   """
   Base class for graders that work with file submissions (e.g., programming assignments).
-  This maintains the original behavior of the Grader class for backward compatibility.
+  This class applies file-specific validation while preserving the base grading flow.
   """
 
   def can_grade_submission(self, submission: Submission) -> bool:

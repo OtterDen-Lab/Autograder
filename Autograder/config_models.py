@@ -127,7 +127,7 @@ def _parse_course(raw_course: Any) -> CourseConfig:
   raw_groups = course.get('assignment_groups')
   if raw_groups is None:
     raise ValueError(
-      "legacy course format is no longer supported; use assignment_groups")
+      "course config must define assignment_groups")
   if not isinstance(raw_groups, list):
     raise ValueError("course.assignment_groups must be a list")
 

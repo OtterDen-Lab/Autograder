@@ -35,7 +35,6 @@ def parse_args() -> argparse.Namespace:
     "TEST", help="Test text submission flow with learning-logs.yaml")
   test_parser.add_argument("--limit", default=None, type=int)
 
-  # Keep existing arguments for backward compatibility when no subcommand is used
   parser.add_argument(
     "--yaml",
     default=None,

@@ -11,7 +11,7 @@ def test_parse_run_config_requires_assignment_types():
     parse_run_config({"courses": []})
 
 
-def test_parse_run_config_rejects_legacy_course_format():
+def test_parse_run_config_rejects_course_without_assignment_groups():
   with pytest.raises(ValueError):
     parse_run_config({
       "assignment_types": {

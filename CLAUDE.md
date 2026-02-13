@@ -71,7 +71,6 @@ flake8 Autograder/
 **Registry System** (`Autograder/registry.py`):
 - `GraderRegistry`: Factory for grader implementations (auto-discovers from `Autograder/graders/`)
 - `AssignmentRegistry`: Factory for assignment types (from `Autograder/assignment.py`)
-- `TypeRegistry`: Manages assignment type configurations from YAML (new config format)
 - All use decorator pattern: `@GraderRegistry.register("name")`
 
 **Assignment Types** (`Autograder/assignment.py`):
@@ -102,23 +101,7 @@ flake8 Autograder/
 
 ### YAML Configuration
 
-**Legacy Format** (still supported):
-```yaml
-courses:
-  - name: CST334
-    id: 29978
-    grader: template-grader
-    assignment_defaults:
-      kind: ProgrammingAssignment
-      kwargs:
-        base_image_name: "samogden/cst334"
-        source_repo: "https://github.com/..."
-    assignments:
-      - repo_path: PA1
-        id: 506889
-```
-
-**New Format** (preferred):
+**Format**:
 ```yaml
 assignment_types:
   programming:

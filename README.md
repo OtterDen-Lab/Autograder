@@ -101,7 +101,7 @@ grade-assignments --yaml config.yaml --max_workers 2
 See the `example_files/` directory for complete configuration examples:
 
 - `workhorse.yaml`: Recommended combined programming + text setup
-- `programming_assignments.yaml`: Legacy-format programming setup
+- `programming_assignments.yaml`: Programming-only setup
 - `learning-logs.yaml`: Text submission grading
 - `example-template.yaml`: All available options
 

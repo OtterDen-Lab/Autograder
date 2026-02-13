@@ -12,7 +12,7 @@ def _make_file(name: str, content: bytes = b"data") -> io.BytesIO:
   return buffer
 
 
-def test_template_grader_legacy_student_code_path_keeps_original_filenames(
+def test_template_grader_student_code_path_keeps_original_filenames(
     monkeypatch):
   captured = {}
 
