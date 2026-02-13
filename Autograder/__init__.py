@@ -40,7 +40,10 @@ def setup_logging() -> None:
     logging.config.dictConfig(config)
   else:
     # Fallback to basic configuration if logging.yaml is not found
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+      level=logging.INFO,
+      format='%(asctime)s [T%(thread)d] - %(name)s - %(levelname)s - %(message)s',
+      datefmt='%Y-%m-%d %H:%M:%S')
 
 
 # Call this once when your application starts
