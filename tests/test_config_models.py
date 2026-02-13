@@ -50,7 +50,12 @@ def test_collect_assignments_to_grade_builds_typed_requests(monkeypatch):
         "grader": "template-grader",
         "settings": {
           "record_retention": False,
-          "base_image_name": "base"
+          "base_image_name": "base",
+          "additional_repos": [{
+            "source_repo": "https://example.com/tests.git",
+            "container_path": "/repo/tests",
+          }],
+          "container_repo_path": "/repo/programming-assignments"
         }
       }
     },
@@ -87,6 +92,12 @@ def test_collect_assignments_to_grade_builds_typed_requests(monkeypatch):
   assert request.privacy_mode == "blind"
   assert request.reveal_identity is False
   assert request.settings["base_image_name"] == "group-base"
+  assert request.settings["additional_repos"] == [{
+    "source_repo": "https://example.com/tests.git",
+    "container_path": "/repo/tests",
+    "depth": 1,
+  }]
+  assert request.settings["container_repo_path"] == "/repo/programming-assignments"
   assert request.settings["record_retention"] is False
   assert request.settings["records_dir"] == "/tmp/records"
   assert captured_init["privacy_mode"] == "blind"
@@ -339,6 +350,135 @@ def test_collect_assignments_rejects_unknown_template_setting(monkeypatch):
     grade_assignments.collect_assignments_to_grade(run_config,
                                                    SimpleNamespace(env=None))
   assert "unsupported template-grader setting" in str(exc.value)
+
+
+def test_collect_assignments_rejects_invalid_container_repo_path(monkeypatch):
+  class DummyCourse:
+    name = "CST"
+
+  class DummyCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      pass
+
+    def get_course(self, _):
+      return DummyCourse()
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface", DummyCanvasInterface)
+
+  run_config = parse_run_config({
+    "assignment_types": {
+      "programming": {
+        "kind": "ProgrammingAssignment",
+        "grader": "template-grader",
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "programming",
+        "settings": {
+          "container_repo_path": "programming-assignments"
+        },
+        "assignments": [{
+          "id": 99
+        }]
+      }]
+    }]
+  })
+
+  with pytest.raises(ValueError) as exc:
+    grade_assignments.collect_assignments_to_grade(run_config,
+                                                   SimpleNamespace(env=None))
+  assert "container_repo_path" in str(exc.value)
+
+
+def test_collect_assignments_rejects_invalid_additional_repo_path(monkeypatch):
+  class DummyCourse:
+    name = "CST"
+
+  class DummyCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      pass
+
+    def get_course(self, _):
+      return DummyCourse()
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface", DummyCanvasInterface)
+
+  run_config = parse_run_config({
+    "assignment_types": {
+      "programming": {
+        "kind": "ProgrammingAssignment",
+        "grader": "template-grader",
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "programming",
+        "settings": {
+          "additional_repos": [{
+            "source_repo": "https://example.com/tools.git",
+            "container_path": "repo/tools"
+          }]
+        },
+        "assignments": [{
+          "id": 99
+        }]
+      }]
+    }]
+  })
+
+  with pytest.raises(ValueError) as exc:
+    grade_assignments.collect_assignments_to_grade(run_config,
+                                                   SimpleNamespace(env=None))
+  assert "additional_repos[0].container_path" in str(exc.value)
+
+
+def test_collect_assignments_rejects_overlapping_additional_repos(monkeypatch):
+  class DummyCourse:
+    name = "CST"
+
+  class DummyCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      pass
+
+    def get_course(self, _):
+      return DummyCourse()
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface", DummyCanvasInterface)
+
+  run_config = parse_run_config({
+    "assignment_types": {
+      "programming": {
+        "kind": "ProgrammingAssignment",
+        "grader": "template-grader",
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "programming",
+        "settings": {
+          "additional_repos": [{
+            "source_repo": "https://example.com/a.git",
+            "container_path": "/repo/tools"
+          }, {
+            "source_repo": "https://example.com/b.git",
+            "container_path": "/repo/tools/sub"
+          }]
+        },
+        "assignments": [{
+          "id": 99
+        }]
+      }]
+    }]
+  })
+
+  with pytest.raises(ValueError) as exc:
+    grade_assignments.collect_assignments_to_grade(run_config,
+                                                   SimpleNamespace(env=None))
+  assert "overlapping container_path" in str(exc.value)
 
 
 def test_collect_assignments_rejects_invalid_text_tier(monkeypatch):

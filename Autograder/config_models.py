@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import posixpath
 from typing import Any, Dict, List, Optional
 
 ACTIVE_ASSIGNMENT_KINDS = {"ProgrammingAssignment", "TextAssignment"}
@@ -85,9 +86,18 @@ class FilePathTargetConfig:
 
 
 @dataclass
+class AdditionalRepoConfig:
+  source_repo: str
+  container_path: str
+  depth: Optional[int] = 1
+
+
+@dataclass
 class TemplateGraderSettings:
   base_image_name: str = "python:3.11-slim"
   source_repo: str = "https://github.com/CSUMB-SCD-instructors/course-template"
+  additional_repos: List[AdditionalRepoConfig] = field(default_factory=list)
+  container_repo_path: str = "/repo/programming-assignments"
   student_code_path: str = ""
   extra_installs: List[str] = field(default_factory=list)
   extra_dockerfile_lines: List[str] = field(default_factory=list)
@@ -110,9 +120,19 @@ class TemplateGraderSettings:
         entry["name"] = target.name
       file_paths[pattern] = entry
 
+    additional_repos: List[Dict[str, Any]] = []
+    for repo in self.additional_repos:
+      additional_repos.append({
+        "source_repo": repo.source_repo,
+        "container_path": repo.container_path,
+        "depth": repo.depth,
+      })
+
     return {
       "base_image_name": self.base_image_name,
       "source_repo": self.source_repo,
+      "additional_repos": additional_repos,
+      "container_repo_path": self.container_repo_path,
       "student_code_path": self.student_code_path,
       "extra_installs": self.extra_installs,
       "extra_dockerfile_lines": self.extra_dockerfile_lines,
@@ -213,6 +233,23 @@ def _require_tier(value: Any, label: str) -> str:
   return normalized
 
 
+def _require_container_repo_path(value: Any, label: str) -> str:
+  if value is None:
+    return "/repo/programming-assignments"
+  if not isinstance(value, str):
+    raise _config_error(f"{label} must be a string")
+  raw = value.strip()
+  if not raw:
+    raise _config_error(f"{label} cannot be empty")
+
+  normalized = posixpath.normpath(raw)
+  if not normalized.startswith("/"):
+    raise _config_error(f"{label} must be an absolute path under /repo")
+  if normalized != "/repo" and not normalized.startswith("/repo/"):
+    raise _config_error(f"{label} must be within /repo")
+  return normalized
+
+
 def _normalize_template_grader_settings(
     settings: Dict[str, Any], context_label: str) -> Dict[str, Any]:
   raw = dict(settings)
@@ -224,6 +261,8 @@ def _normalize_template_grader_settings(
   allowed = {
     "base_image_name",
     "source_repo",
+    "additional_repos",
+    "container_repo_path",
     "student_code_path",
     "extra_installs",
     "extra_dockerfile_lines",
@@ -269,11 +308,57 @@ def _normalize_template_grader_settings(
         f"{context_label}.file_paths['{pattern}'].name must be a string")
     file_paths[pattern] = FilePathTargetConfig(path=path, name=name)
 
+  additional_repos_raw = raw.get("additional_repos", [])
+  if not isinstance(additional_repos_raw, list):
+    raise _config_error(f"{context_label}.additional_repos must be a list")
+  additional_repos: List[AdditionalRepoConfig] = []
+  for i, repo_entry in enumerate(additional_repos_raw):
+    label = f"{context_label}.additional_repos[{i}]"
+    if not isinstance(repo_entry, dict):
+      raise _config_error(f"{label} must be a mapping")
+    repo_unknown = sorted(
+      k for k in repo_entry.keys() if k not in {"source_repo", "container_path", "depth"})
+    if repo_unknown:
+      raise _config_error(
+        f"{label} has unsupported key(s): {', '.join(repo_unknown)}")
+
+    source_repo = _require_optional_str(repo_entry.get("source_repo"),
+                                        f"{label}.source_repo")
+    if source_repo is None or not source_repo.strip():
+      raise _config_error(f"{label}.source_repo is required")
+
+    container_path = _require_container_repo_path(
+      repo_entry.get("container_path"), f"{label}.container_path")
+    if container_path == "/repo":
+      raise _config_error(
+        f"{label}.container_path cannot be /repo (reserved for source_repo)")
+
+    depth = _require_optional_int(repo_entry.get("depth", 1),
+                                  f"{label}.depth")
+    if depth is not None and depth <= 0:
+      raise _config_error(f"{label}.depth must be >= 1 when provided")
+
+    additional_repos.append(
+      AdditionalRepoConfig(source_repo=source_repo,
+                           container_path=container_path,
+                           depth=depth))
+
+  additional_paths = sorted(r.container_path for r in additional_repos)
+  for i, path_i in enumerate(additional_paths):
+    for path_j in additional_paths[i + 1:]:
+      if path_j.startswith(f"{path_i}/") or path_i.startswith(f"{path_j}/"):
+        raise _config_error(
+          f"{context_label}.additional_repos contain overlapping container_path values: '{path_i}' and '{path_j}'"
+        )
+
   settings_obj = TemplateGraderSettings(
     base_image_name=str(raw.get("base_image_name", "python:3.11-slim")),
     source_repo=str(
       raw.get("source_repo",
               "https://github.com/CSUMB-SCD-instructors/course-template")),
+    additional_repos=additional_repos,
+    container_repo_path=_require_container_repo_path(
+      raw.get("container_repo_path"), f"{context_label}.container_repo_path"),
     student_code_path=str(raw.get("student_code_path", "")),
     extra_installs=_require_str_list(raw.get("extra_installs"),
                                      f"{context_label}.extra_installs"),

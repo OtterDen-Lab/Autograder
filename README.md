@@ -35,6 +35,11 @@ assignment_types:
     grader: template-grader
     settings:
       base_image_name: "your-docker-image"
+      # Optional: mount extra repositories into specific container paths
+      # additional_repos:
+      #   - source_repo: "https://github.com/your-org/shared-tests"
+      #     container_path: "/repo/shared-tests"
+      container_repo_path: "/repo/programming-assignments"  # optional override; default shown
       record_retention: true
       records_dir: "~/autograder-records/your-course"  # required when record_retention=true
 

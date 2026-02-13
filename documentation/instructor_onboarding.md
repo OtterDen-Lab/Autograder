@@ -38,6 +38,7 @@ courses:
       - type: programming
         settings:
           base_image_name: "python:3.11-slim"
+          container_repo_path: "/repo/programming-assignments"
           student_code_path: "src"
         assignments:
           - id: 67890
@@ -93,6 +94,10 @@ grade-assignments --yaml your_config.yaml --idempotency-key your-run-key --idemp
   - Use `extra_dockerfile_lines` under programming settings.
 - Map uploaded filenames to target locations:
   - Use `file_paths` regex mapping under programming settings.
+- Use a non-default template repo layout:
+  - Set `container_repo_path` (must be under `/repo`; default is `/repo/programming-assignments`).
+- Mount multiple template/helper repos in one grading image:
+  - Use `additional_repos` with `source_repo` + `container_path` (paths must be under `/repo`).
 - Tune text-grading cost/performance:
   - Adjust `phase1_tier`, `phase2_tier`, `phase25_tier` (`small|medium|large`).
 - Control privacy in logs:
