@@ -15,3 +15,5 @@ records/
 .autograder/
 dist/
 scratch.yaml
+
+todo.md
