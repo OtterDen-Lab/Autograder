@@ -159,6 +159,7 @@ This hook runs `scripts/check_repo_hygiene.sh` and blocks commits that include r
 For detailed documentation, see:
 
 - `documentation/operations_runbook.md` (failure autopsy + rerun procedures)
+- `documentation/archives/step_by_step_grader_reference.md` (archived grader concept for future redesign)
 - [documentation directory on GitHub](https://github.com/OtterDen-Lab/Autograder/tree/main/documentation)
 
 ## License
