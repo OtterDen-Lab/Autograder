@@ -1,12 +1,12 @@
 """
 LMS integration for Otter-Autograder
 
-Vendored from LMSInterface v0.2.2 (2026-02-10)
+Vendored from LMSInterface v0.2.2 (2026-02-12)
 """
 
 __version__ = "0.2.2"
 __vendored_from__ = "LMSInterface"
-__vendored_date__ = "2026-02-10"
+__vendored_date__ = "2026-02-12"
 
 try:
   from importlib.metadata import PackageNotFoundError, version

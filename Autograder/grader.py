@@ -51,25 +51,40 @@ class Grader(abc.ABC):
 
     log.info(
       f"[{assignment_id}] Starting to grade {total_submissions} submissions")
+    reveal_identity = kwargs.get("reveal_identity", False)
 
     for i, submission in enumerate(assignment.submissions, 1):
-      log.info(
-        f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {submission.student.name})"
+      student_name = getattr(getattr(submission, "student", None), "name",
+                             "Unknown Student")
+      user_id = getattr(getattr(submission, "student", None), "user_id", None)
+      if reveal_identity and user_id is not None and str(user_id) not in str(
+          student_name):
+        student_name = f"{student_name} [canvas_user_id={user_id}]"
+      log.debug(
+        f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {student_name})"
       )
 
-      # Check if this grader can handle this submission type
-      if not self.can_grade_submission(submission):
+      try:
+        # Check if this grader can handle this submission type
+        if not self.can_grade_submission(submission):
+          submission.feedback = Feedback(
+            0.0,
+            f"Cannot grade {type(submission).__name__} with {type(self).__name__}"
+          )
+          continue
+
+        if submission.status == Submission.Status.GRADED and not kwargs.get(
+            'do_regrade', False):
+          continue
+
+        submission.feedback = self.grade_submission(submission, **kwargs)
+      except Exception as e:
+        log.exception(
+          f"[{assignment_id}] Failed to grade submission for {student_name}: {e}"
+        )
         submission.feedback = Feedback(
           0.0,
-          f"Cannot grade {type(submission).__name__} with {type(self).__name__}"
-        )
-        continue
-
-      if submission.status == Submission.Status.GRADED and not kwargs.get(
-          'do_regrade', False):
-        continue
-
-      submission.feedback = self.grade_submission(submission, **kwargs)
+          "Autograder internal error while grading this submission.")
 
     log.info(
       f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions"
@@ -83,8 +98,11 @@ class Grader(abc.ABC):
     :param kwargs:
     :return: returns a Feedback object for the submission
     """
-    execution_results = self.execute_grading(*args, **kwargs)
-    return self.score_grading(execution_results, *args, **kwargs)
+    grading_kwargs = dict(kwargs)
+    # Ensure graders receive the concrete submission without requiring global state.
+    grading_kwargs.setdefault("submission", submission)
+    execution_results = self.execute_grading(*args, **grading_kwargs)
+    return self.score_grading(execution_results, *args, **grading_kwargs)
 
   @abc.abstractmethod
   def execute_grading(self, *args, **kwargs) -> any:
@@ -124,7 +142,7 @@ class Grader(abc.ABC):
   def prepare(self, *args, **kwargs) -> None:
     """
     Anything that is needed to take the assignment and prepare it for grading.
-    For example, making a CSV file from the submissions for manual grading
+    For example, building intermediate artifacts from submissions before grading
     :param args:
     :param kwargs:
     :return:
@@ -133,7 +151,7 @@ class Grader(abc.ABC):
   def finalize(self, *args, **kwargs) -> None:
     """
     anything that is needed to connect the grades/feedback to the submissions after grading.
-    For example, loading up the CSV and connecting grades to the submissions
+    For example, reconciling intermediate grading artifacts back to submissions
     :param args:
     :param kwargs:
     :return:
@@ -154,7 +172,7 @@ class Grader(abc.ABC):
 class FileBasedGrader(Grader):
   """
   Base class for graders that work with file submissions (e.g., programming assignments).
-  This maintains the original behavior of the Grader class for backward compatibility.
+  This class applies file-specific validation while preserving the base grading flow.
   """
 
   def can_grade_submission(self, submission: Submission) -> bool:
@@ -172,29 +190,44 @@ class FileBasedGrader(Grader):
 
     log.info(
       f"[{assignment_id}] Starting to grade {total_submissions} submissions")
+    reveal_identity = kwargs.get("reveal_identity", False)
 
     for i, submission in enumerate(assignment.submissions, 1):
-      log.info(
-        f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {submission.student.name})"
+      student_name = getattr(getattr(submission, "student", None), "name",
+                             "Unknown Student")
+      user_id = getattr(getattr(submission, "student", None), "user_id", None)
+      if reveal_identity and user_id is not None and str(user_id) not in str(
+          student_name):
+        student_name = f"{student_name} [canvas_user_id={user_id}]"
+      log.debug(
+        f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {student_name})"
       )
 
-      # Check if this grader can handle this submission type
-      if not self.can_grade_submission(submission):
-        if isinstance(submission, FileSubmission) and not submission.files:
-          submission.feedback = Feedback(
-            0.0, "Assignment submission files missing")
-        else:
-          submission.feedback = Feedback(
-            0.0,
-            f"Cannot grade {type(submission).__name__} with {type(self).__name__}"
-          )
-        continue
+      try:
+        # Check if this grader can handle this submission type
+        if not self.can_grade_submission(submission):
+          if isinstance(submission, FileSubmission) and not submission.files:
+            submission.feedback = Feedback(
+              0.0, "Assignment submission files missing")
+          else:
+            submission.feedback = Feedback(
+              0.0,
+              f"Cannot grade {type(submission).__name__} with {type(self).__name__}"
+            )
+          continue
 
-      if submission.status == Submission.Status.GRADED and not kwargs.get(
-          'do_regrade', False):
-        continue
+        if submission.status == Submission.Status.GRADED and not kwargs.get(
+            'do_regrade', False):
+          continue
 
-      submission.feedback = self.grade_submission(submission, **kwargs)
+        submission.feedback = self.grade_submission(submission, **kwargs)
+      except Exception as e:
+        log.exception(
+          f"[{assignment_id}] Failed to grade submission for {student_name}: {e}"
+        )
+        submission.feedback = Feedback(
+          0.0,
+          "Autograder internal error while grading this submission.")
 
     log.info(
       f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions"

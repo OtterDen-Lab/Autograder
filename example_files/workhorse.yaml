@@ -1,5 +1,8 @@
 prod: False
 push: False
+privacy_mode: id_only
+# reveal_identity: false  # Requires AUTOGRADER_BREAK_GLASS=1 at runtime
+# idempotency_key: "cst334-pa1-2026-02-13"
 
 reporting:
   slack_channel: C0AAD94FX5K
@@ -12,6 +15,7 @@ assignment_types:
     grader: template-grader
     settings:
       record_retention: true
+      records_dir: "~/autograder-records/workhorse"
 
   text:
     kind: TextAssignment
@@ -34,7 +38,7 @@ courses:
         type: programming
         settings:
           base_image_name: "samogden/cst334"
-          extra_install_lines:
+          extra_dockerfile_lines:
             - "RUN apt install clang"
           source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
           golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"

@@ -1,49 +1,49 @@
 prod: False
 push: False
 
+assignment_types:
+  text:
+    kind: TextAssignment
+    grader: TextSubmissionGrader
+    settings:
+      prefer_anthropic: true
+      grade_after_lock_date: true
+
 courses:
   - name: CST334
     id: 29978
-    grader: TextSubmissionGrader
-    slack_channel: "C09HR2J5EBF"  # Your private channel ID
-    assignment_defaults:
-      kind: TextAssignment
-      prefer_anthropic: true  # Try Claude first (cheaper, some prefer it)
-      kwargs:
-        grade_after_lock_date: true  # Only grade after assignment lock date
-    assignments:
-      - id: 506883 # LL5
-      - id: 506884 # LL6
-      - id: 506885 # LL7
-      - id: 506886 # LL8
-      - id: 506887 # LL9
-      - id: 506875 # LL10
-      - id: 506876 # LL11
-      - id: 506877 # LL12
-      - id: 506879 # LL13
-      - id: 506884 # LL14
+    slack_channel: "C09HR2J5EBF"
+    assignment_groups:
+      - type: text
+        assignments:
+          - id: 506883 # LL5
+          - id: 506884 # LL6
+          - id: 506885 # LL7
+          - id: 506886 # LL8
+          - id: 506887 # LL9
+          - id: 506875 # LL10
+          - id: 506876 # LL11
+          - id: 506877 # LL12
+          - id: 506879 # LL13
+          - id: 506878 # LL14
+
   - name: CST463
     id: 29740
-    grader: TextSubmissionGrader
-    slack_channel: "C09HR2J5EBF"  # Your private channel ID
-    assignment_defaults:
-      kind: TextAssignment
-      prefer_anthropic: true  # Try Claude first (cheaper, some prefer it)
-      kwargs:
-        grade_after_lock_date: true  # Only grade after assignment lock date
-    assignments:
-      - id: 520123 # LL1
-      - id: 520129 # LL2
-      - id: 520130 # LL3
-      - id: 520131 # LL4
-      - id: 520132 # LL5
-      - id: 520133 # LL6
-      - id: 520134 # LL7
-      - id: 520135 # LL8
-      - id: 520136 # LL9
-      - id: 520124 # LL10
-      - id: 520125 # LL11
-      - id: 520126 # LL12
-      - id: 520127 # LL13
-      - id: 520128 # LL14
-
+    slack_channel: "C09HR2J5EBF"
+    assignment_groups:
+      - type: text
+        assignments:
+          - id: 520123 # LL1
+          - id: 520129 # LL2
+          - id: 520130 # LL3
+          - id: 520131 # LL4
+          - id: 520132 # LL5
+          - id: 520133 # LL6
+          - id: 520134 # LL7
+          - id: 520135 # LL8
+          - id: 520136 # LL9
+          - id: 520124 # LL10
+          - id: 520125 # LL11
+          - id: 520126 # LL12
+          - id: 520127 # LL13
+          - id: 520128 # LL14

@@ -9,18 +9,15 @@ import os
 import pathlib
 import shutil
 import tempfile
-import shutil
-import os
 import subprocess
 import uuid
 
 import yaml
-from collections import defaultdict
 from typing import Tuple, Optional, List
 
 from Autograder.registry import GraderRegistry
 from lms_interface.classes import Feedback
-from Autograder.docker_utils import DockerClient, DockerContainer, DockerError, DockerContainerManager
+from Autograder.docker_utils import DockerClient, DockerContainer, DockerError
 import Autograder.exceptions
 from Autograder.grader import FileBasedGrader
 
@@ -515,7 +512,21 @@ class Grader__template_grader(Grader__docker):
         cmd[2:2] = ["--depth", str(depth)
                     ]  # insert after "clone" (optional shallow clone)
 
-      subprocess.run(cmd, check=True, env=env)
+      run_kwargs = {"check": True, "env": env}
+      if not log.isEnabledFor(logging.DEBUG):
+        run_kwargs.update({
+          "stdout": subprocess.DEVNULL,
+          "stderr": subprocess.PIPE,
+          "text": True,
+        })
+
+      try:
+        subprocess.run(cmd, **run_kwargs)
+      except subprocess.CalledProcessError as e:
+        stderr = (getattr(e, "stderr", None) or "").strip()
+        if stderr:
+          raise RuntimeError(f"git clone failed for {repo_path}: {stderr}") from e
+        raise RuntimeError(f"git clone failed for {repo_path}") from e
 
   def _match_files_to_paths(self,
                             submission) -> Tuple[List[Tuple], Optional[str]]:
@@ -591,7 +602,7 @@ class Grader__template_grader(Grader__docker):
       if not matched_this_file:
         log.debug(f"  No pattern matched (will be skipped)")
 
-    log.info(f"Matched {len(files_to_copy)} files using file_paths patterns")
+    log.debug(f"Matched {len(files_to_copy)} files using file_paths patterns")
     return files_to_copy, None
 
   def _get_image(self, **kwargs):
@@ -599,7 +610,7 @@ class Grader__template_grader(Grader__docker):
     # In this case that means we need to get the repo from either locally or remotely and then run `uv sync` in the right directory
 
     with tempfile.TemporaryDirectory() as temp_build_dir:
-      log.info(f"temp_build_dir: {temp_build_dir}")
+      log.debug(f"temp_build_dir: {temp_build_dir}")
 
       # Get the main repo
       self._get_repo(self.source_repo,
@@ -673,7 +684,7 @@ class Grader__template_grader(Grader__docker):
     # Determine which file organization strategy to use
     if self.file_paths:
       # Use new regex-based file matching
-      log.info("Using file_paths regex matching for file organization")
+      log.debug("Using file_paths regex matching for file organization")
       submission_files, error_msg = self._match_files_to_paths(submission)
 
       if error_msg:
@@ -686,16 +697,18 @@ class Grader__template_grader(Grader__docker):
         f"Matched files: {[(f[0].name if hasattr(f[0], 'name') else 'unknown', f[1]) for f in submission_files]}"
       )
     else:
-      # Use legacy student_code_path behavior (backward compatibility)
-      log.info("Using legacy student_code_path for file organization")
+      # Use student_code_path file organization when regex mapping is not configured.
+      log.debug("Using student_code_path for file organization")
       submission_files = []
       for f in submission.files:
-        # Copy all files to the working directory
+        # Copy each file into the target directory using its own filename.
+        # This avoids accidental overwrite when multiple files are submitted.
+        original_name = os.path.basename(getattr(f, "name", "submission_file"))
         submission_files.append(
           (f,
            os.path.join(
              f"/repo/programming-assignments/{self.assignment_name}",
-             self.student_code_path)))
+             self.student_code_path, original_name)))
       log.debug(f"submission.files: {submission.files}")
       log.debug(f"submission_files: {submission_files}")
 
@@ -757,140 +770,3 @@ class Grader__template_grader(Grader__docker):
     rc, stdout, stderr = self.execute_command_in_container(
       command=self.grading_script, workdir=self.working_dir)
     return rc, stdout.decode(), stderr.decode()
-
-
-@GraderRegistry.register("Step-by-step")
-class Grader_stepbystep(Grader__docker):
-  """
-  Step-by-step grader that compares student commands against golden commands.
-
-  Executes commands in parallel containers and compares outputs,
-  with rollback functionality when outputs don't match.
-  """
-
-  def __init__(self, rubric_file, *args, **kwargs):
-    super().__init__(*args, **kwargs)
-    self.rubric = self.parse_rubric(rubric_file)
-    self.container_manager = DockerContainerManager(self.docker_client)
-
-  def parse_rubric(self, rubric_file):
-    with open(rubric_file) as fid:
-      rubric = yaml.safe_load(fid)
-    if not isinstance(rubric["steps"], list):
-      rubric["steps"] = rubric["steps"].split('\n')
-    return rubric
-
-  def parse_student_file(self, student_file):
-    with open(student_file) as fid:
-      return [l.strip() for l in fid.readlines()]
-
-  def rollback(self):
-    """Rollback student container to match golden container state."""
-    # Stop student container
-    student = self.container_manager.get_container("student")
-    student.stop()
-
-    # Create image from golden container
-    golden = self.container_manager.get_container("golden")
-    rollback_image = golden.commit(repository="rollback", tag="latest")
-
-    # Create new student container from rollback image
-    self.container_manager.create_container("student",
-                                            rollback_image,
-                                            start_immediately=True)
-
-  def start(self, image):
-    """Start both golden and student containers."""
-    self.container_manager.create_container("golden",
-                                            image,
-                                            start_immediately=True)
-    self.container_manager.create_container("student",
-                                            image,
-                                            start_immediately=True)
-
-  def stop_container(self):
-    """Stop all containers."""
-    self.container_manager.stop_all()
-
-  def execute_grading(self,
-                      golden_lines=[],
-                      student_lines=[],
-                      rollback=True,
-                      *args,
-                      **kwargs):
-    golden_results = defaultdict(list)
-    student_results = defaultdict(list)
-
-    def add_results(results_dict, rc, stdout, stderr):
-      results_dict["rc"].append(rc)
-      results_dict["stdout"].append(stdout)
-      results_dict["stderr"].append(stderr)
-
-    for i, (golden, student) in enumerate(zip(golden_lines, student_lines)):
-      log.debug(f"commands: '{golden}' <-> '{student}'")
-
-      golden_container = self.container_manager.get_container("golden")
-      student_container = self.container_manager.get_container("student")
-
-      rc_g, stdout_g, stderr_g = golden_container.execute_command(golden)
-      rc_s, stdout_s, stderr_s = student_container.execute_command(student)
-
-      add_results(golden_results, rc_g, stdout_g, stderr_g)
-      add_results(student_results, rc_s, stdout_s, stderr_s)
-
-      if (not self.outputs_match(stdout_g, stdout_s, stderr_g, stderr_s, rc_g,
-                                 rc_s)) and rollback:
-        # Bring the student container up to date with our container
-        self.rollback()
-
-    return golden_results, student_results
-
-  @staticmethod
-  def outputs_match(stdout_g, stdout_s, stderr_g, stderr_s, rc_g,
-                    rc_s) -> bool:
-    if stdout_g != stdout_s:
-      return False
-    if stderr_g != stderr_s:
-      return False
-    if rc_g != rc_s:
-      return False
-    return True
-
-  def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
-    log.debug(f"execution_results: {execution_results}")
-    golden_results, student_results = execution_results
-    num_lines = len(golden_results["stdout"])
-    num_matches = 0
-    for i in range(num_lines):
-      if not self.outputs_match(
-          golden_results["stdout"][i], student_results["stdout"][i],
-          golden_results["stderr"][i], student_results["stderr"][i],
-          golden_results["rc"][i], student_results["rc"][i]):
-        continue
-      num_matches += 1
-
-    return Feedback(
-      percentage_score=(100.0 * num_matches / len(golden_results["stdout"])),
-      comments=f"Matched {num_matches} out of {len(golden_results['stdout'])}")
-
-  def grade_assignment(self, input_files: List[str], *args,
-                       **kwargs) -> Feedback:
-
-    golden_lines = self.rubric["steps"]
-    student_lines = self.parse_student_file(input_files[0])
-
-    # Start containers
-    self.start(self.image)
-
-    try:
-      results = self.execute_grading(golden_lines=golden_lines,
-                                     student_lines=student_lines,
-                                     *args,
-                                     **kwargs)
-      feedback = self.score_grading(results, *args, **kwargs)
-    finally:
-      # Clean up containers
-      self.stop_container()
-
-    log.debug(f"final results: {feedback}")
-    return feedback

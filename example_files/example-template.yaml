@@ -1,67 +1,71 @@
 prod: True
 push: False
 
+assignment_types:
+  programming:
+    kind: ProgrammingAssignment
+    grader: template-grader
+
 courses:
   - name: CST334
     id: 29978
-    # Course-level defaults
-    grader: template-grader
-    assignment_defaults:
-      kind: ProgrammingAssignment
-      kwargs:
-        base_image_name: "samogden/cst334"
-        source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
-        golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
-        files_from_golden:
-          - "tests/unittests_reserved.c"
-        student_code_path: "src"
-        num_repeats: 10
-    assignments:
-      - repo_path: PA1
-        id: 506889
-        record_retention: true
-      - repo_path: PA2
-        id: 506890
-        record_retention: true
+    assignment_groups:
+      - type: programming
+        settings:
+          base_image_name: "samogden/cst334"
+          source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
+          golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
+          files_from_golden:
+            - "tests/unittests_reserved.c"
+          student_code_path: "src"
+          num_repeats: 10
+        assignments:
+          - repo_path: PA1
+            id: 506889
+            record_retention: true
+            records_dir: "~/autograder-records/example-template"
+          - repo_path: PA2
+            id: 506890
+            record_retention: true
+            records_dir: "~/autograder-records/example-template"
 
   - name: CS463
     id: 29740
-    grader: template-grader
-    assignment_defaults:
-      kind: ProgrammingAssignment
-      kwargs:
-        source_repo: "https://github.com/CSUMB-SCD-instructors/CST463"
-        golden_repo: "https://github.com/CSUMB-SCD-instructors/CST463-golden"
-        files_from_golden:
-          - "tests-reserved.py" # relative to the programming assignment
-        # Example of extra_dockerfile_lines (can be a single string or list)
-        # These lines are inserted after FROM but before COPY repo /repo
-        extra_dockerfile_lines:
-          - "RUN apt-get update && apt-get install -y gcc build-essential"
-          - "RUN apt-get install -y sqlite3 libsqlite3-dev"
-          # Alternative: single string format
-          # extra_dockerfile_lines: "RUN apt-get update && apt-get install -y gcc"
-        # Example of file_paths with regex pattern matching (using single quotes for raw strings)
-        # Keys are regex patterns (case-sensitive), values specify target path and name
-        # Files matching each pattern are renamed and copied to specified location
-        file_paths:
-          '.*_1.*\.java':
-            path: "part1"      # Subdirectory within assignment folder
-            name: "hw3_1.java" # Target filename
-          '.*_2.*\.java':
-            path: "part2"
-            name: "hw3_2.java"
-          '.*_1.*\.cpp':
-            path: "part1"
-            name: "hw3_1.cpp"
-          '.*_2.*\.cpp':
-            path: "part2"
-            name: "hw3_2.cpp"
-        # Note: file_paths and student_code_path are mutually exclusive
-        # If file_paths is specified, student_code_path is ignored
-        # Files that don't match any pattern are silently skipped
-    assignments:
-      - repo_path: PA1
-        id: 527876
-      - repo_path: PA2
-        id: 529948
+    assignment_groups:
+      - type: programming
+        settings:
+          source_repo: "https://github.com/CSUMB-SCD-instructors/CST463"
+          golden_repo: "https://github.com/CSUMB-SCD-instructors/CST463-golden"
+          files_from_golden:
+            - "tests-reserved.py"
+          # Example of extra_dockerfile_lines (can be a single string or list)
+          # These lines are inserted after FROM but before COPY repo /repo
+          extra_dockerfile_lines:
+            - "RUN apt-get update && apt-get install -y gcc build-essential"
+            - "RUN apt-get install -y sqlite3 libsqlite3-dev"
+            # Alternative: single string format
+            # extra_dockerfile_lines: "RUN apt-get update && apt-get install -y gcc"
+          # Example of file_paths with regex pattern matching (using single quotes for raw strings)
+          # Keys are regex patterns (case-sensitive), values specify target path and name
+          # Files matching each pattern are renamed and copied to specified location
+          file_paths:
+            '.*_1.*\.java':
+              path: "part1"
+              name: "hw3_1.java"
+            '.*_2.*\.java':
+              path: "part2"
+              name: "hw3_2.java"
+            '.*_1.*\.cpp':
+              path: "part1"
+              name: "hw3_1.cpp"
+            '.*_2.*\.cpp':
+              path: "part2"
+              name: "hw3_2.cpp"
+          # Note: file_paths and student_code_path are mutually exclusive
+          # If file_paths is specified, student_code_path is ignored
+          # Files that don't match any pattern are silently skipped
+        assignments:
+          - repo_path: PA1
+            id: 527876
+          - repo_path: PA2
+            id: 529948

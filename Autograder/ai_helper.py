@@ -343,11 +343,10 @@ class AI_Helper__Ollama(AI_Helper):
     if images:
       msg_content['images'] = images
 
-    # Get model for the specified tier
-    # Also check legacy OLLAMA_MODEL env var for backward compatibility
-    legacy_model = os.getenv('OLLAMA_MODEL')
-    if legacy_model and tier is None:
-      model = legacy_model
+    # Get model for the specified tier, with optional explicit override.
+    override_model = os.getenv('OLLAMA_MODEL')
+    if override_model and tier is None:
+      model = override_model
     else:
       model = get_model_for_tier("ollama", tier)
 

@@ -116,47 +116,47 @@ Grade this student's weekly study notes. Students explain topics to help their f
 
 RUBRIC (8 points - length scored separately):
 
-• Engagement (4 pts): Genuine effort to process and explain material
+- Engagement (4 pts): Genuine effort to process and explain material
   - 4: Thorough - worked to understand and explain multiple topics in depth
   - 3: Solid effort - engaged meaningfully, even if some explanations incomplete
   - 2: Superficial - lists topics without real explanation
   - 1: Minimal - barely addresses material
   - 0: No meaningful content
 
-• Relevance (2 pts): Coverage of class material (core OR related topics both count)
+- Relevance (2 pts): Coverage of class material (core OR related topics both count)
   - 2: Covers 3+ topics from core or related lists
   - 1: Covers 1-2 topics
   - 0: Completely off-topic (discusses only unrelated material)
 
-• Explanation Quality (2 pts): Depth of explanation, not correctness
+- Explanation Quality (2 pts): Depth of explanation, not correctness
   - 2: Explains WHY concepts matter and HOW they connect
   - 1: Mostly surface-level definitions
   - 0: Just lists terms with no explanation
 
 SCORING EXAMPLES:
-• Score 4 engagement: Student covers multiple topics, explains concepts in own words, shows how ideas connect, gives examples or walks through scenarios. Minor gaps or confusion about details are fine.
+- Score 4 engagement: Student covers multiple topics, explains concepts in own words, shows how ideas connect, gives examples or walks through scenarios. Minor gaps or confusion about details are fine.
 
-• Score 3 engagement: "Round-robin gives each process equal time slices. I think this prevents starvation but causes more context switches. Not sure how the OS picks the time quantum though."
+- Score 3 engagement: "Round-robin gives each process equal time slices. I think this prevents starvation but causes more context switches. Not sure how the OS picks the time quantum though."
   → Engaged and trying to work through concepts, even if some details unclear
 
-• Score 2 engagement: "Round-robin is a scheduling algorithm. Context switching happens when processes change."
+- Score 2 engagement: "Round-robin is a scheduling algorithm. Context switching happens when processes change."
   → Technically correct but shallow, no evidence of processing the material
 
-• Score 1 engagement: "We learned about scheduling."
+- Score 1 engagement: "We learned about scheduling."
   → Minimal effort
 
 IMPORTANT SCORING GUIDANCE:
-• A good faith effort typically results in at least 6/10 overall
-• Excellent, thorough work should get 9-10/10 - don't be stingy with top scores for engaged students
-• Don't penalize confusion - penalize lack of effort
-• Verbosity is fine
-• Minor gaps in understanding are NORMAL and should not significantly lower scores
-• Students discussing RELATED topics should get full relevance credit - these connect to the material
+- A good faith effort typically results in at least 6/10 overall
+- Excellent, thorough work should get 9-10/10 - don't be stingy with top scores for engaged students
+- Don't penalize confusion - penalize lack of effort
+- Verbosity is fine
+- Minor gaps in understanding are NORMAL and should not significantly lower scores
+- Students discussing RELATED topics should get full relevance credit - these connect to the material
 
 For needs_support: Set to TRUE only for students who are:
-• Clearly disengaged or putting in minimal effort, OR
-• Fundamentally lost on most concepts (not just minor gaps), OR
-• Discussing completely unrelated material (suggests didn't attend class)
+- Clearly disengaged or putting in minimal effort, OR
+- Fundamentally lost on most concepts (not just minor gaps), OR
+- Discussing completely unrelated material (suggests didn't attend class)
 Do NOT flag students who are engaged but have some confusion - that's normal learning. Most students should NOT need support.
 
 Return JSON:
@@ -273,6 +273,7 @@ class TextSubmissionGrader(Grader):
     self.consolidated_questions = []
     self.slack_channel = kwargs.get('slack_channel')
     self.records_dir = None
+    self.reveal_identity = False
 
     # Model tier settings for each phase (small, medium, large)
     # Can be configured via grader settings in YAML
@@ -345,6 +346,7 @@ class TextSubmissionGrader(Grader):
     # Store AI provider preference and records directory
     self.prefer_anthropic = kwargs.get('prefer_anthropic', False)
     self.records_dir = kwargs.get('records_dir')
+    self.reveal_identity = kwargs.get('reveal_identity', False)
 
     # Initialize token tracking
     self.total_tokens = 0
@@ -389,16 +391,12 @@ class TextSubmissionGrader(Grader):
     )
 
     # Phase 1: Aggregate Analysis
-    log.info("=" * 60)
-    log.info("PHASE 1: AGGREGATE ANALYSIS")
-    log.info("=" * 60)
+    log.info("Phase 1/3: Aggregate analysis")
     self.aggregate_results = self.phase_1_aggregate_analysis(
       truncated_texts, assignment_name, self.course_name)
 
     # Phase 2: Individual Grading
-    log.info("=" * 60)
-    log.info("PHASE 2: INDIVIDUAL GRADING")
-    log.info("=" * 60)
+    log.info("Phase 2/3: Individual grading")
     self.individual_results = self.phase_2_individual_grading(
       submission_data, self.core_topics)
 
@@ -407,9 +405,7 @@ class TextSubmissionGrader(Grader):
                                       self.individual_results)
 
     # Phase 3: Report Generation
-    log.info("=" * 60)
-    log.info("PHASE 3: REPORT GENERATION")
-    log.info("=" * 60)
+    log.info("Phase 3/3: Report generation")
     self.phase_3_generate_report(self.aggregate_results,
                                  self.individual_results)
 
@@ -482,7 +478,7 @@ class TextSubmissionGrader(Grader):
         self._store_topics_from_result(result)
 
         log.info(
-          f"✅ Aggregate analysis completed (Anthropic). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
+          f"Aggregate analysis completed (Anthropic). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
         )
 
         return result
@@ -505,7 +501,7 @@ class TextSubmissionGrader(Grader):
       self._store_topics_from_result(result)
 
       log.info(
-        f"✅ Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
+        f"Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
       )
 
       return result
@@ -544,7 +540,7 @@ class TextSubmissionGrader(Grader):
           self._store_topics_from_result(result)
 
           log.info(
-            f"✅ Aggregate analysis completed (Anthropic fallback). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
+            f"Aggregate analysis completed (Anthropic fallback). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
           )
 
           return result
@@ -589,9 +585,13 @@ class TextSubmissionGrader(Grader):
       student_name = submission_info.get('student_name', 'Unknown')
       submission_text = submission_info.get('text', '')
       word_count = submission_info.get('word_count', 0)
+      display_name = student_name
+      if self.reveal_identity and student_id is not None and str(
+          student_id) not in str(student_name):
+        display_name = f"{student_name} [canvas_user_id={student_id}]"
 
-      log.info(
-        f"   Grading {i}/{len(submission_data)}: {student_name} ({word_count} words)"
+      log.debug(
+        f"   Grading {i}/{len(submission_data)}: {display_name} ({word_count} words)"
       )
 
       if not submission_text.strip():
@@ -647,13 +647,11 @@ class TextSubmissionGrader(Grader):
       individual_results.append(result)
 
     log.info(
-      f"✅ Individual grading completed. {len(self.support_needed_students)} students may need support."
+      f"Individual grading completed. {len(self.support_needed_students)} students may need support."
     )
 
     # Phase 2.5: Consolidate questions (using questions from aggregate analysis)
-    log.info("=" * 60)
-    log.info("PHASE 2.5: QUESTION CONSOLIDATION")
-    log.info("=" * 60)
+    log.info("Phase 2.5/3: Question consolidation")
     student_questions = self.aggregate_results.get("student_questions", [])
     self.consolidated_questions = self._consolidate_questions(student_questions)
 
@@ -701,7 +699,7 @@ class TextSubmissionGrader(Grader):
           result = json.loads(json_match.group())
           consolidated = result.get("consolidated_questions", [])
           log.info(
-            f"✅ Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+            f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
           )
           return consolidated
         else:
@@ -724,7 +722,7 @@ class TextSubmissionGrader(Grader):
 
       consolidated = result.get("consolidated_questions", [])
       log.info(
-        f"✅ Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+        f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
       )
       return consolidated
 
@@ -750,7 +748,7 @@ class TextSubmissionGrader(Grader):
             result = json.loads(json_match.group())
             consolidated = result.get("consolidated_questions", [])
             log.info(
-              f"✅ Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+              f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
             )
             return consolidated
           else:
@@ -918,7 +916,7 @@ class TextSubmissionGrader(Grader):
     # Use output hook for custom delivery
     self.output_report_hook(report_data)
 
-    log.info("✅ Report generation completed!")
+    log.info("Report generation completed.")
 
   def _compile_report_data(self, aggregate_results: Dict,
                            individual_results: List[Dict]) -> Dict:
@@ -1008,32 +1006,32 @@ class TextSubmissionGrader(Grader):
     """Display aggregate analysis insights."""
     insights = report_data.get("aggregate_insights", {})
 
-    log.debug("\n" + "📊 CLASS-WIDE INSIGHTS")
+    log.debug("\nCLASS-WIDE INSIGHTS")
     log.debug("=" * 60)
 
     if insights.get("common_themes"):
-      log.debug(f"🎯 Common Themes:\n{insights['common_themes']}")
+      log.debug(f"Common themes:\n{insights['common_themes']}")
 
     if insights.get("key_insights"):
-      log.debug(f"\n💡 Key Learning Insights:\n{insights['key_insights']}")
+      log.debug(f"\nKey learning insights:\n{insights['key_insights']}")
 
     # Display commonly misunderstood topics
     misunderstood = insights.get("commonly_misunderstood_topics", [])
     if misunderstood:
-      log.debug(f"\n⚠️ Topics Needing Review ({len(misunderstood)}):")
+      log.debug(f"\nTopics needing review ({len(misunderstood)}):")
       for topic in misunderstood:
-        log.debug(f"   • {topic}")
+        log.debug(f"   - {topic}")
       if insights.get("misconception_details"):
         log.debug(f"   Details: {insights['misconception_details']}")
 
     if insights.get("teaching_feedback"):
       log.debug(
-        f"\n🎓 Teaching Recommendations:\n{insights['teaching_feedback']}")
+        f"\nTeaching recommendations:\n{insights['teaching_feedback']}")
 
     # Display core topics
     core_topics = report_data.get("core_topics", [])
     if core_topics:
-      log.debug(f"\n📝 Core Topics Identified ({len(core_topics)}):")
+      log.debug(f"\nCore topics identified ({len(core_topics)}):")
       for i, topic in enumerate(core_topics, 1):
         coverage = report_data["topic_coverage"].get(topic, {})
         coverage_pct = coverage.get("coverage_percentage", 0)
@@ -1043,7 +1041,7 @@ class TextSubmissionGrader(Grader):
     """Display grade summary statistics."""
     stats = report_data.get("grade_statistics", {})
 
-    log.debug("\n" + "📈 GRADE SUMMARY")
+    log.debug("\nGRADE SUMMARY")
     log.debug("=" * 60)
 
     log.debug(f"Total Students: {stats.get('total_students', 0)}")
@@ -1060,7 +1058,7 @@ class TextSubmissionGrader(Grader):
 
     below_70 = stats.get("students_below_70", 0)
     if below_70 > 0:
-      log.debug(f"\n⚠️  {below_70} students scored below 70%")
+      log.debug(f"\n{below_70} students scored below 70%")
 
   def _display_support_recommendations(self, report_data: Dict) -> None:
     """Display support recommendations for students."""
@@ -1068,16 +1066,16 @@ class TextSubmissionGrader(Grader):
     students_needing_support = support.get("students_needing_support", 0)
 
     if students_needing_support > 0:
-      log.debug("\n" + "🆘 STUDENTS WHO MAY BENEFIT FROM OFFICE HOURS")
+      log.debug("\nSTUDENTS WHO MAY BENEFIT FROM OFFICE HOURS")
       log.debug("=" * 60)
 
       for student_info in support.get("support_details", []):
         student_id = student_info.get("student_id", "Unknown")
         reason = student_info.get("reason", "No reason provided")
-        log.debug(f"• {student_id}: {reason}")
+        log.debug(f"- {student_id}: {reason}")
     else:
       log.debug(
-        "\n📈 All students appear to be engaging well with the material!")
+        "\nAll students appear to be engaging well with the material.")
 
   def _apply_grades_to_submissions(self, submissions: List[Submission],
                                    individual_results: List[Dict]) -> None:
@@ -1131,10 +1129,10 @@ class TextSubmissionGrader(Grader):
 
     feedback_lines = [
       "Study Notes Feedback", "=" * 50, "", "GRADE BREAKDOWN:",
-      f"• Engagement (4 pts): {engagement_score}/4 - Effort to process and explain material",
-      f"• Length (2 pts): {length_score}/2 - {'✓ Met 250+ word requirement' if length_score == 2 else '✗ Under 250 words required'}",
-      f"• Relevance (2 pts): {relevance_score}/2 - Coverage of class topics",
-      f"• Explanation Quality (2 pts): {quality_score}/2 - Depth of explanation",
+      f"- Engagement (4 pts): {engagement_score}/4 - Effort to process and explain material",
+      f"- Length (2 pts): {length_score}/2 - {'Met 250+ word requirement' if length_score == 2 else 'Under 250 words required'}",
+      f"- Relevance (2 pts): {relevance_score}/2 - Coverage of class topics",
+      f"- Explanation Quality (2 pts): {quality_score}/2 - Depth of explanation",
       "", f"TOTAL SCORE: {total_score}/10 ({(total_score/10)*100:.0f}%)",
       f"Word Count: {word_count} words"
     ]
@@ -1144,7 +1142,7 @@ class TextSubmissionGrader(Grader):
       feedback_lines.append("")
       feedback_lines.append("TOPICS TO REVIEW:")
       for topic in topics_needing_review:
-        feedback_lines.append(f"• {topic}")
+        feedback_lines.append(f"- {topic}")
 
     feedback_lines.extend(["", "FEEDBACK:", ai_feedback])
 
@@ -1463,8 +1461,8 @@ class TextSubmissionGrader(Grader):
     lines.extend([
       "",
       "*Summary:*",
-      f"• {stats.get('total_students', 0)} students graded",
-      f"• Average: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)",
+      f"- {stats.get('total_students', 0)} students graded",
+      f"- Average: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)",
     ])
 
     # Add grade distribution summary
@@ -1473,7 +1471,7 @@ class TextSubmissionGrader(Grader):
       a_b_count = distribution.get("A", 0) + distribution.get("B", 0)
       c_d_f_count = distribution.get("C", 0) + distribution.get(
         "D", 0) + distribution.get("F", 0)
-      lines.append(f"• Grades: {a_b_count} A/B, {c_d_f_count} C/D/F")
+      lines.append(f"- Grades: {a_b_count} A/B, {c_d_f_count} C/D/F")
 
     # Add support needs - show ALL students with better formatting
     support_count = support.get("students_needing_support", 0)
@@ -1495,21 +1493,21 @@ class TextSubmissionGrader(Grader):
     if topics:
       lines.append(f"\n*Core Topics:*")
       for topic in topics:
-        lines.append(f"• {topic}")
+        lines.append(f"- {topic}")
 
     # Add related topics if any
     related = insights.get("related_topics", [])
     if related:
       lines.append(f"\n*Related Topics (also valid):*")
       for topic in related:
-        lines.append(f"• {topic}")
+        lines.append(f"- {topic}")
 
     # Add commonly misunderstood topics
     misunderstood = insights.get("commonly_misunderstood_topics", [])
     if misunderstood:
       lines.append(f"\n*Topics Needing Review (common confusion):*")
       for topic in misunderstood:
-        lines.append(f"• {topic}")
+        lines.append(f"- {topic}")
       misconception_details = insights.get("misconception_details", "").strip()
       if misconception_details:
         lines.append(f"_{misconception_details}_")
@@ -1524,7 +1522,7 @@ class TextSubmissionGrader(Grader):
       ]
       for sentence in sentences:
         lines.append(
-          f"• {sentence}")  # Don't add period since we split on periods
+          f"- {sentence}")  # Don't add period since we split on periods
 
     # Add consolidated questions section
     if self.consolidated_questions:
@@ -1538,11 +1536,11 @@ class TextSubmissionGrader(Grader):
 
         if topic:
           lines.append(
-            f"• *{topic}*: {canonical} ({original_count} student{'s' if original_count > 1 else ''})"
+            f"- *{topic}*: {canonical} ({original_count} student{'s' if original_count > 1 else ''})"
           )
         else:
           lines.append(
-            f"• {canonical} ({original_count} student{'s' if original_count > 1 else ''})"
+            f"- {canonical} ({original_count} student{'s' if original_count > 1 else ''})"
           )
 
     return "\n".join(lines)

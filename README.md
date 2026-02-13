@@ -1,6 +1,6 @@
 # Otter-Autograder
 
-An autograding system for teaching, primarily focused on Canvas LMS integration. Supports automated grading of programming assignments (via Docker), text submissions (like learning logs), quizzes, and manual exam grading with AI assistance.
+An autograding system for teaching, primarily focused on Canvas LMS integration. Supports automated grading of programming assignments (via Docker) and text submissions (like learning logs).
 
 ## Installation
 
@@ -24,12 +24,19 @@ CANVAS_API_URL=https://your-institution.instructure.com
 Create a YAML file (e.g., `assignments.yaml`) defining your courses and assignments:
 
 ```yaml
+privacy_mode: id_only  # none | id_only | blind
+reveal_identity: false
+idempotency_key: null  # Optional: set to skip re-pushing already pushed feedback
+idempotency_state_dir: "~/.autograder/idempotency"  # Optional override
+
 assignment_types:
   programming:
     kind: ProgrammingAssignment
     grader: template-grader
     settings:
       base_image_name: "your-docker-image"
+      record_retention: true
+      records_dir: "~/autograder-records/your-course"  # required when record_retention=true
 
 courses:
   - name: "Your Course"
@@ -53,19 +60,36 @@ Use a specific env file:
 grade-assignments --yaml assignments.yaml --env /path/to/.env
 ```
 
+Temporarily include Canvas numeric IDs in logs (break-glass):
+
+```bash
+AUTOGRADER_BREAK_GLASS=1 grade-assignments --yaml assignments.yaml --reveal-identity
+```
+
+Idempotent push mode (safe rerun key):
+
+```bash
+grade-assignments --yaml assignments.yaml --idempotency-key spring26-ll2
+```
+
+Path safety defaults:
+
+- `record_retention: true` requires an explicit absolute `records_dir` (or `~/...`).
+- `records_dir` is blocked if it points inside this git repo unless `AUTOGRADER_ALLOW_IN_REPO_RECORDS=1`.
+- Idempotency state defaults to `~/.autograder/idempotency`.
+
 ## Features
 
 ### Supported Assignment Types
 
 - **Programming Assignments**: Docker-based grading with template matching and test execution
 - **Text Submissions**: AI-powered grading with rubric generation and clustering analysis
-- **Quizzes**: Canvas quiz grading support
-- **Exams**: Manual grading with AI-assisted name extraction and handwriting recognition
-- **Web-based Grading UI**: Modern interface for problem-first exam grading
 
 ### Key Capabilities
 
 - Parallel execution with configurable worker threads
+- Privacy modes: `none`, `id_only`, `blind`
+- Optional idempotent feedback push via `idempotency_key`
 - Automatic score scaling to Canvas points
 - Slack notifications for grading errors
 - Record retention for audit trails
@@ -98,13 +122,19 @@ grade-assignments --yaml config.yaml --test
 grade-assignments --yaml config.yaml --max_workers 2
 ```
 
+### Show stage timings and push aggregates
+
+```bash
+grade-assignments --yaml config.yaml --show-stage-timings
+```
+
 ## Configuration
 
 See the `example_files/` directory for complete configuration examples:
 
-- `example-programming_assignments.yaml`: Docker-based grading
-- `journal_assignments.yaml`: Text submission grading
-- `example-exams.yaml`: Exam grading setup
+- `workhorse.yaml`: Recommended combined programming + text setup
+- `programming_assignments.yaml`: Programming-only setup
+- `learning-logs.yaml`: Text submission grading
 - `example-template.yaml`: All available options
 
 ## Requirements
@@ -114,9 +144,24 @@ See the `example_files/` directory for complete configuration examples:
 - Canvas API access
 - Optional: OpenAI or Anthropic API keys for AI-powered features
 
+## Local Git Hygiene Hook (Recommended)
+
+Install the repository-managed pre-commit hook so hygiene checks run before each commit:
+
+```bash
+bash scripts/install_git_hooks.sh
+```
+
+This hook runs `scripts/check_repo_hygiene.sh` and blocks commits that include runtime artifacts (`records/`, `.autograder/`, `*.log`) or unsafe example paths.
+
 ## Documentation
 
-For detailed documentation, see [the documentation directory](https://github.com/OtterDen-Lab/Autograder/tree/main/documentation).
+For detailed documentation, see:
+
+- `documentation/instructor_onboarding.md` (minimal setup + common customizations)
+- `documentation/operations_runbook.md` (failure autopsy + rerun procedures)
+- `documentation/archives/step_by_step_grader_reference.md` (archived grader concept for future redesign)
+- [documentation directory on GitHub](https://github.com/OtterDen-Lab/Autograder/tree/main/documentation)
 
 ## License
 
