@@ -92,6 +92,11 @@ def parse_args() -> argparse.Namespace:
     action="store_true",
     help=
     "Print effective merged assignment configuration before execution")
+  parser.add_argument(
+    "--dry-run",
+    action="store_true",
+    help=
+    "Validate config and Canvas access, then list assignments without downloading or grading submissions")
 
   args = parser.parse_args()
 
@@ -738,6 +743,22 @@ def dump_effective_config(config: RunConfig,
   print(json.dumps(payload, indent=2))
 
 
+def print_dry_run_summary(
+    assignments_to_grade: List[AssignmentRunRequest]) -> None:
+  log.info(
+    "Dry-run mode enabled: validating config and Canvas access only. No submissions will be downloaded, graded, or pushed."
+  )
+  log.info(
+    f"Dry-run plan includes {len(assignments_to_grade)} assignment(s).")
+  for assignment in assignments_to_grade:
+    assignment_label = (assignment.assignment_name or assignment.repo_path
+                        or f"ID {assignment.assignment_id}")
+    log.info(
+      f"  {assignment.course_name} / {assignment_label} "
+      f"(ID: {assignment.assignment_id}, kind={assignment.assignment_kind}, "
+      f"grader={assignment.grader_name}, push={assignment.push_grades})")
+
+
 def execute_grading(assignments_to_grade: List[AssignmentRunRequest],
                     args: argparse.Namespace) -> List[Dict]:
   """
@@ -1006,6 +1027,9 @@ def main() -> int:
       assignments_to_grade = collect_assignments_to_grade(config, args)
       if args.dump_config:
         dump_effective_config(config, assignments_to_grade, args)
+      if args.dry_run:
+        print_dry_run_summary(assignments_to_grade)
+        return 0
       results = execute_grading(assignments_to_grade, args)
 
       print_results_summary(results)

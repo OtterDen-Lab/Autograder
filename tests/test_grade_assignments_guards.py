@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import logging
+import contextlib
 from types import SimpleNamespace
 
 import pytest
@@ -134,6 +135,18 @@ def test_parse_args_accepts_dump_config(monkeypatch, tmp_path):
      str(yaml_file), "--dump-config"])
   args = grade_assignments.parse_args()
   assert args.dump_config is True
+
+
+def test_parse_args_accepts_dry_run(monkeypatch, tmp_path):
+  yaml_file = tmp_path / "config.yaml"
+  yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
+
+  monkeypatch.setattr(
+    sys, "argv",
+    ["grade-assignments", "--yaml",
+     str(yaml_file), "--dry-run"])
+  args = grade_assignments.parse_args()
+  assert args.dry_run is True
 
 
 def test_parse_args_rejects_non_positive_max_workers(monkeypatch, tmp_path):
@@ -603,6 +616,104 @@ def test_build_dump_config_payload_includes_effective_assignment_settings():
   assert payload["assignments"][0]["assignment_id"] == 123
   assert payload["assignments"][0]["push_grades"] is True
   assert payload["assignments"][0]["settings"]["base_image_name"] == "python:3.12"
+
+
+def test_print_dry_run_summary_logs_plan(monkeypatch):
+  messages = []
+
+  monkeypatch.setattr(grade_assignments.log, "info",
+                      lambda msg: messages.append(msg))
+  assignment = AssignmentRunRequest(
+    course=None,
+    course_name="CST334",
+    assignment_id=123,
+    assignment_type="programming",
+    assignment_kind="ProgrammingAssignment",
+    grader_name="template-grader",
+    settings={},
+    repo_path="PA1",
+    assignment_name="PA1",
+    args=SimpleNamespace(),
+    push_grades=True,
+    slack_channel=None,
+  )
+
+  grade_assignments.print_dry_run_summary([assignment])
+
+  rendered = "\n".join(messages)
+  assert "Dry-run mode enabled" in rendered
+  assert "CST334 / PA1" in rendered
+  assert "kind=ProgrammingAssignment" in rendered
+  assert "grader=template-grader" in rendered
+
+
+def test_main_dry_run_skips_execute_grading(monkeypatch):
+  args = SimpleNamespace(
+    yaml="config.yaml",
+    env=None,
+    limit=None,
+    do_regrade=False,
+    merge_only=False,
+    max_workers=None,
+    test=False,
+    report=None,
+    error_slack_channel=None,
+    debug=False,
+    show_stage_timings=False,
+    reveal_identity=False,
+    idempotency_key=None,
+    idempotency_state_dir=None,
+    dump_config=False,
+    dry_run=True,
+  )
+  cleaned = {"called": False}
+  dry_run_called = {"called": False}
+  execute_called = {"called": False}
+  assignments = [
+    AssignmentRunRequest(
+      course=None,
+      course_name="CST334",
+      assignment_id=123,
+      assignment_type="programming",
+      assignment_kind="ProgrammingAssignment",
+      grader_name="template-grader",
+      settings={},
+      repo_path="PA1",
+      assignment_name="PA1",
+      args=args,
+      push_grades=False,
+      slack_channel=None,
+    )
+  ]
+
+  @contextlib.contextmanager
+  def fake_lock():
+    yield
+
+  def fake_execute(assignments_to_grade, parsed_args):
+    execute_called["called"] = True
+    return []
+
+  monkeypatch.setattr(grade_assignments, "parse_args", lambda: args)
+  monkeypatch.setattr(grade_assignments, "ensure_single_instance", fake_lock)
+  monkeypatch.setattr(grade_assignments, "load_and_validate_config",
+                      lambda _: RunConfig())
+  monkeypatch.setattr(grade_assignments, "collect_assignments_to_grade",
+                      lambda _config, _args: assignments)
+  monkeypatch.setattr(grade_assignments, "execute_grading", fake_execute)
+  monkeypatch.setattr(
+    grade_assignments, "print_dry_run_summary",
+    lambda _assignments: dry_run_called.__setitem__("called", True))
+  monkeypatch.setattr(
+    grade_assignments.DockerClient, "cleanup",
+    lambda: cleaned.__setitem__("called", True))
+
+  exit_code = grade_assignments.main()
+
+  assert exit_code == 0
+  assert dry_run_called["called"] is True
+  assert execute_called["called"] is False
+  assert cleaned["called"] is True
 
 
 def test_send_slack_run_summary_notifies_on_push_failures(monkeypatch):
