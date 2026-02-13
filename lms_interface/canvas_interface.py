@@ -772,7 +772,10 @@ class CanvasAssignment(LMSWrapper):
     
     def upload_buffer_as_file(buffer: bytes, name: str):
       suffix = os.path.splitext(name)[1]  # keep extension if needed
-      with tempfile.NamedTemporaryFile(mode="wb", delete=False, dir=".", prefix="feedback_", suffix=suffix) as tmp:
+      with tempfile.NamedTemporaryFile(mode="wb",
+                                       delete=False,
+                                       prefix="autograder_feedback_upload_",
+                                       suffix=suffix) as tmp:
         tmp.write(buffer)
         tmp.flush()
         os.fsync(tmp.fileno())

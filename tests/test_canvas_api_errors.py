@@ -13,6 +13,7 @@ Covers:
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 import time
+from types import SimpleNamespace
 
 from lms_interface import canvas_interface
 from lms_interface.canvas_interface import (
@@ -455,6 +456,75 @@ class TestCanvasAssignmentSubmissions:
 
         result = course.get_assignment(99999)
         assert result is None
+
+
+class TestCanvasAssignmentPushFeedback:
+    """Tests for push_feedback temp file handling."""
+
+    def test_push_feedback_uses_system_temp_not_repo_dir(self, monkeypatch):
+        interface = CanvasInterface(
+            canvas_url="https://canvas.example.edu",
+            canvas_key="token",
+        )
+
+        mock_canvasapi_course = MagicMock()
+        mock_canvasapi_course.course = SimpleNamespace(id=123)
+
+        mock_submission = MagicMock()
+        mock_submission.score = None
+        mock_submission.submission_comments = []
+
+        mock_canvasapi_assignment = MagicMock()
+        mock_canvasapi_assignment.id = 456
+        mock_canvasapi_assignment.get_submission.return_value = mock_submission
+
+        assignment = CanvasAssignment(
+            canvasapi_interface=interface,
+            canvasapi_course=mock_canvasapi_course,
+            canvasapi_assignment=mock_canvasapi_assignment,
+        )
+
+        captured_kwargs = {}
+        removed_paths = []
+
+        class FakeTmpFile:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                self.name = "/tmp/autograder_feedback_upload_test.txt"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def write(self, _buffer):
+                return None
+
+            def flush(self):
+                return None
+
+            def fileno(self):
+                return 1
+
+        monkeypatch.setattr(
+            canvas_interface.tempfile,
+            "NamedTemporaryFile",
+            lambda **kwargs: FakeTmpFile(**kwargs),
+        )
+        monkeypatch.setattr(canvas_interface.os, "fsync", lambda _fd: None)
+        monkeypatch.setattr(canvas_interface.os, "remove",
+                            lambda path: removed_paths.append(path))
+
+        ok = assignment.push_feedback(user_id=42, score=10.0, comments="hello")
+
+        assert ok is True
+        assert captured_kwargs["prefix"] == "autograder_feedback_upload_"
+        assert "dir" not in captured_kwargs
+        mock_submission.upload_comment.assert_called_once_with(
+            "/tmp/autograder_feedback_upload_test.txt"
+        )
+        assert removed_paths == ["/tmp/autograder_feedback_upload_test.txt"]
 
 
 class TestBackoffController:

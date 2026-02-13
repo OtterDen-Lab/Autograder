@@ -11,6 +11,7 @@ imgs/
 debug.tex
 .claude
 *.log
+autograder_feedback_upload_*
 records/
 .autograder/
 dist/
