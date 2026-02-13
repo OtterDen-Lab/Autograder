@@ -5,6 +5,7 @@ import fcntl
 import os
 import threading
 import traceback
+from dataclasses import dataclass, asdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List
 import json
@@ -232,6 +233,92 @@ def collect_push_failure_lines(results: List[Dict]) -> tuple[int, List[str]]:
   return total_failed_pushes, lines
 
 
+@dataclass
+class PrepareStageResult:
+  needed_preparation: bool
+  submission_count: int
+  has_submissions: bool
+  skipped_reason: str | None = None
+
+
+@dataclass
+class GradeStageResult:
+  submission_count: int
+  graded_count: int
+
+
+@dataclass
+class PublishStageResult:
+  finalized: bool
+  finalize_summary: Dict | None = None
+  skipped_reason: str | None = None
+
+
+def run_prepare_stage(grader, grading_assignment, args, settings,
+                      do_regrade: bool) -> PrepareStageResult:
+  needed_preparation = grader.assignment_needs_preparation()
+  if needed_preparation:
+    grading_assignment.prepare(limit=args.limit,
+                               do_regrade=do_regrade,
+                               merge_only=args.merge_only,
+                               test=args.test,
+                               **settings)
+
+  submission_count = len(grading_assignment.submissions)
+  has_submissions = submission_count > 0
+  return PrepareStageResult(
+    needed_preparation=needed_preparation,
+    submission_count=submission_count,
+    has_submissions=has_submissions,
+    skipped_reason=None if has_submissions else "no_submissions",
+  )
+
+
+def run_grade_stage(grader, grading_assignment, settings, assignment_data,
+                    args, do_regrade: bool) -> GradeStageResult:
+  grader.grade_assignment(grading_assignment,
+                          **settings,
+                          reveal_identity=assignment_data.reveal_identity,
+                          privacy_mode=assignment_data.privacy_mode,
+                          merge_only=args.merge_only,
+                          do_regrade=do_regrade)
+
+  for submission in grading_assignment.submissions:
+    log.info(
+      format_submission_for_log(
+        submission, reveal_identity=assignment_data.reveal_identity))
+
+  graded_count = sum(1 for s in grading_assignment.submissions
+                     if getattr(s, "feedback", None) is not None)
+  return GradeStageResult(submission_count=len(grading_assignment.submissions),
+                          graded_count=graded_count)
+
+
+def run_publish_stage(grader, grading_assignment, args, push_grades: bool,
+                      assignment_data, record_retention: bool,
+                      settings: Dict) -> PublishStageResult:
+  if not grader.ready_to_finalize:
+    return PublishStageResult(finalized=False,
+                              finalize_summary=None,
+                              skipped_reason="grader_not_ready")
+
+  finalize_kwargs = {
+    "push": push_grades,
+    "merge_only": args.merge_only,
+    "idempotency_key": assignment_data.idempotency_key,
+    "idempotency_state_dir": assignment_data.idempotency_state_dir,
+  }
+  if record_retention:
+    records_dir = settings.get('records_dir')
+    finalize_kwargs.update({
+      "record_retention": record_retention,
+      "records_dir": records_dir
+    })
+
+  finalize_summary = grading_assignment.finalize(**finalize_kwargs)
+  return PublishStageResult(finalized=True, finalize_summary=finalize_summary)
+
+
 @contextlib.contextmanager
 def ensure_single_instance():
   """
@@ -332,15 +419,15 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
         lms_assignment=lms_assignment,
         grading_root_dir=None) as grading_assignment:
 
-      # If the grader doesn't need preparation, skip the prep step
-      if grader.assignment_needs_preparation():
-        grading_assignment.prepare(limit=args.limit,
-                                   do_regrade=do_regrade,
-                                   merge_only=args.merge_only,
-                                   test=args.test,
-                                   **settings)
+      prepare_result = run_prepare_stage(grader, grading_assignment, args,
+                                         settings, do_regrade)
+      stage_contract = {
+        "prepare": asdict(prepare_result),
+        "grade": None,
+        "publish": None,
+      }
 
-      if not grading_assignment.submissions:
+      if not prepare_result.has_submissions:
         log.info(
           f"[Thread {thread_id}] No submissions for {lms_assignment.name}; skipping grading."
         )
@@ -349,37 +436,18 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
           'assignment_name': assignment_name,
           'course_name': course_name,
           'assignment_id': assignment_id,
-          'thread_id': thread_id
+          'thread_id': thread_id,
+          'stage_contract': stage_contract,
         }
 
       with grader:
-        grader.grade_assignment(grading_assignment,
-                                **settings,
-                                reveal_identity=assignment_data.reveal_identity,
-                                privacy_mode=assignment_data.privacy_mode,
-                                merge_only=args.merge_only,
-                                do_regrade=do_regrade)
-
-        for submission in grading_assignment.submissions:
-          log.info(
-            format_submission_for_log(
-              submission, reveal_identity=assignment_data.reveal_identity))
-
-        finalize_summary = None
-        if grader.ready_to_finalize:
-          finalize_kwargs = {
-            "push": push_grades,
-            "merge_only": args.merge_only,
-            "idempotency_key": assignment_data.idempotency_key,
-            "idempotency_state_dir": assignment_data.idempotency_state_dir,
-          }
-          if record_retention:
-            records_dir = settings.get('records_dir')
-            finalize_kwargs.update({
-              "record_retention": record_retention,
-              "records_dir": records_dir
-            })
-          finalize_summary = grading_assignment.finalize(**finalize_kwargs)
+        grade_result = run_grade_stage(grader, grading_assignment, settings,
+                                       assignment_data, args, do_regrade)
+        stage_contract["grade"] = asdict(grade_result)
+        publish_result = run_publish_stage(grader, grading_assignment, args,
+                                           push_grades, assignment_data,
+                                           record_retention, settings)
+        stage_contract["publish"] = asdict(publish_result)
 
     return {
       'success': True,
@@ -387,7 +455,8 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
       'assignment_id': assignment_id,
       'thread_id': thread_id,
       'course_name': course_name,
-      'finalize_summary': finalize_summary,
+      'finalize_summary': publish_result.finalize_summary,
+      'stage_contract': stage_contract,
     }
 
   except Exception as e:

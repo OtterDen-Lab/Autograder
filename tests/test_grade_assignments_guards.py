@@ -262,6 +262,151 @@ def test_record_retention_false_does_not_validate_records_dir(monkeypatch):
   assert result["success"] is True
 
 
+def test_grade_single_assignment_emits_stage_contract_on_success(monkeypatch):
+  class DummyAssignment:
+    def __init__(self):
+      self.submissions = [
+        Submission(student=Student(name="Student A", user_id=1, _inner=None),
+                   status=Submission.Status.UNGRADED)
+      ]
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+      return False
+
+    def prepare(self, *args, **kwargs):
+      return None
+
+    def finalize(self, *args, **kwargs):
+      return {"push_failed": 0, "push_succeeded": 1}
+
+  class DummyGrader:
+    ready_to_finalize = True
+
+    def assignment_needs_preparation(self):
+      return True
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+      return False
+
+    def grade_assignment(self, assignment, *args, **kwargs):
+      for submission in assignment.submissions:
+        submission.feedback = Feedback(percentage_score=100.0, comments="ok")
+
+    def cleanup(self):
+      return None
+
+  class DummyLmsAssignment:
+    name = "PA1"
+
+  class DummyCourse:
+    def get_assignment(self, assignment_id):
+      return DummyLmsAssignment()
+
+  monkeypatch.setattr(grade_assignments.GraderRegistry, "create",
+                      lambda *args, **kwargs: DummyGrader())
+  monkeypatch.setattr(grade_assignments.AssignmentRegistry, "create",
+                      lambda *args, **kwargs: DummyAssignment())
+
+  result = grade_assignments.grade_single_assignment(
+    AssignmentRunRequest(
+      course=DummyCourse(),
+      course_name="CST",
+      assignment_id=42,
+      assignment_type="assignment",
+      assignment_kind="ProgrammingAssignment",
+      grader_name="template-grader",
+      settings={},
+      repo_path=None,
+      assignment_name=None,
+      args=SimpleNamespace(
+        do_regrade=False, merge_only=False, limit=None, test=False),
+      push_grades=False,
+      slack_channel=None,
+    ))
+
+  assert result["success"] is True
+  assert result["stage_contract"]["prepare"]["has_submissions"] is True
+  assert result["stage_contract"]["grade"]["graded_count"] == 1
+  assert result["stage_contract"]["publish"]["finalized"] is True
+
+
+def test_grade_single_assignment_no_submissions_stage_contract(monkeypatch):
+  class DummyAssignment:
+    def __init__(self):
+      self.submissions = []
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+      return False
+
+    def prepare(self, *args, **kwargs):
+      return None
+
+    def finalize(self, *args, **kwargs):
+      raise AssertionError("finalize should not be called")
+
+  class DummyGrader:
+    ready_to_finalize = True
+
+    def assignment_needs_preparation(self):
+      return True
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+      return False
+
+    def grade_assignment(self, assignment, *args, **kwargs):
+      raise AssertionError("grade_assignment should not be called")
+
+    def cleanup(self):
+      return None
+
+  class DummyLmsAssignment:
+    name = "PA1"
+
+  class DummyCourse:
+    def get_assignment(self, assignment_id):
+      return DummyLmsAssignment()
+
+  monkeypatch.setattr(grade_assignments.GraderRegistry, "create",
+                      lambda *args, **kwargs: DummyGrader())
+  monkeypatch.setattr(grade_assignments.AssignmentRegistry, "create",
+                      lambda *args, **kwargs: DummyAssignment())
+
+  result = grade_assignments.grade_single_assignment(
+    AssignmentRunRequest(
+      course=DummyCourse(),
+      course_name="CST",
+      assignment_id=42,
+      assignment_type="assignment",
+      assignment_kind="ProgrammingAssignment",
+      grader_name="template-grader",
+      settings={},
+      repo_path=None,
+      assignment_name=None,
+      args=SimpleNamespace(
+        do_regrade=False, merge_only=False, limit=None, test=False),
+      push_grades=False,
+      slack_channel=None,
+    ))
+
+  assert result["success"] is True
+  assert result["stage_contract"]["prepare"]["has_submissions"] is False
+  assert result["stage_contract"]["prepare"]["skipped_reason"] == "no_submissions"
+  assert result["stage_contract"]["grade"] is None
+  assert result["stage_contract"]["publish"] is None
+
+
 def test_resolve_reveal_identity_defaults_to_false():
   args = SimpleNamespace(reveal_identity=False)
   config = RunConfig(reveal_identity=False)
