@@ -60,7 +60,7 @@ class Grader(abc.ABC):
       if reveal_identity and user_id is not None and str(user_id) not in str(
           student_name):
         student_name = f"{student_name} [canvas_user_id={user_id}]"
-      log.info(
+      log.debug(
         f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {student_name})"
       )
 
@@ -199,7 +199,7 @@ class FileBasedGrader(Grader):
       if reveal_identity and user_id is not None and str(user_id) not in str(
           student_name):
         student_name = f"{student_name} [canvas_user_id={user_id}]"
-      log.info(
+      log.debug(
         f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {student_name})"
       )
 

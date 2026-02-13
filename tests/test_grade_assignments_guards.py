@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -134,6 +135,34 @@ def test_parse_args_rejects_non_positive_max_workers(monkeypatch, tmp_path):
   with pytest.raises(SystemExit) as exc:
     grade_assignments.parse_args()
   assert exc.value.code == 2
+
+
+def test_configure_logging_suppresses_external_loggers_by_default():
+  grade_assignments.configure_logging(debug=False)
+
+  assert logging.getLogger("httpx").level == logging.WARNING
+  assert logging.getLogger("httpcore").level == logging.WARNING
+  assert logging.getLogger("urllib3").level == logging.WARNING
+
+
+def test_configure_logging_allows_external_info_in_debug():
+  grade_assignments.configure_logging(debug=True)
+
+  assert logging.getLogger("httpx").level == logging.INFO
+  assert logging.getLogger("httpcore").level == logging.INFO
+  assert logging.getLogger("urllib3").level == logging.INFO
+
+
+def test_load_and_validate_config_error_includes_path_and_docs(tmp_path):
+  yaml_file = tmp_path / "broken.yaml"
+  yaml_file.write_text("courses: []\n", encoding="utf-8")
+
+  with pytest.raises(SystemExit) as exc:
+    grade_assignments.load_and_validate_config(str(yaml_file))
+
+  message = str(exc.value)
+  assert str(yaml_file) in message
+  assert "documentation/instructor_onboarding.md" in message
 
 
 def test_record_retention_requires_explicit_records_dir(monkeypatch):

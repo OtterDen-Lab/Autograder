@@ -512,7 +512,21 @@ class Grader__template_grader(Grader__docker):
         cmd[2:2] = ["--depth", str(depth)
                     ]  # insert after "clone" (optional shallow clone)
 
-      subprocess.run(cmd, check=True, env=env)
+      run_kwargs = {"check": True, "env": env}
+      if not log.isEnabledFor(logging.DEBUG):
+        run_kwargs.update({
+          "stdout": subprocess.DEVNULL,
+          "stderr": subprocess.PIPE,
+          "text": True,
+        })
+
+      try:
+        subprocess.run(cmd, **run_kwargs)
+      except subprocess.CalledProcessError as e:
+        stderr = (getattr(e, "stderr", None) or "").strip()
+        if stderr:
+          raise RuntimeError(f"git clone failed for {repo_path}: {stderr}") from e
+        raise RuntimeError(f"git clone failed for {repo_path}") from e
 
   def _match_files_to_paths(self,
                             submission) -> Tuple[List[Tuple], Optional[str]]:
@@ -588,7 +602,7 @@ class Grader__template_grader(Grader__docker):
       if not matched_this_file:
         log.debug(f"  No pattern matched (will be skipped)")
 
-    log.info(f"Matched {len(files_to_copy)} files using file_paths patterns")
+    log.debug(f"Matched {len(files_to_copy)} files using file_paths patterns")
     return files_to_copy, None
 
   def _get_image(self, **kwargs):
@@ -596,7 +610,7 @@ class Grader__template_grader(Grader__docker):
     # In this case that means we need to get the repo from either locally or remotely and then run `uv sync` in the right directory
 
     with tempfile.TemporaryDirectory() as temp_build_dir:
-      log.info(f"temp_build_dir: {temp_build_dir}")
+      log.debug(f"temp_build_dir: {temp_build_dir}")
 
       # Get the main repo
       self._get_repo(self.source_repo,
@@ -670,7 +684,7 @@ class Grader__template_grader(Grader__docker):
     # Determine which file organization strategy to use
     if self.file_paths:
       # Use new regex-based file matching
-      log.info("Using file_paths regex matching for file organization")
+      log.debug("Using file_paths regex matching for file organization")
       submission_files, error_msg = self._match_files_to_paths(submission)
 
       if error_msg:
@@ -684,7 +698,7 @@ class Grader__template_grader(Grader__docker):
       )
     else:
       # Use student_code_path file organization when regex mapping is not configured.
-      log.info("Using student_code_path for file organization")
+      log.debug("Using student_code_path for file organization")
       submission_files = []
       for f in submission.files:
         # Copy each file into the target directory using its own filename.

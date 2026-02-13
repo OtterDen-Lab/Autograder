@@ -159,9 +159,13 @@ class TextSubmissionGraderSettings:
     }
 
 
+def _config_error(message: str) -> ValueError:
+  return ValueError(f"Config error: {message}")
+
+
 def _require_dict(value: Any, label: str) -> Dict[str, Any]:
   if not isinstance(value, dict):
-    raise ValueError(f"{label} must be a mapping")
+    raise _config_error(f"{label} must be a mapping")
   return value
 
 
@@ -169,13 +173,13 @@ def _require_optional_str(value: Any, label: str) -> Optional[str]:
   if value is None:
     return None
   if not isinstance(value, str):
-    raise ValueError(f"{label} must be a string")
+    raise _config_error(f"{label} must be a string")
   return value
 
 
 def _require_bool(value: Any, label: str) -> bool:
   if not isinstance(value, bool):
-    raise ValueError(f"{label} must be a boolean")
+    raise _config_error(f"{label} must be a boolean")
   return value
 
 
@@ -183,7 +187,7 @@ def _require_optional_int(value: Any, label: str) -> Optional[int]:
   if value is None:
     return None
   if not isinstance(value, int):
-    raise ValueError(f"{label} must be an integer")
+    raise _config_error(f"{label} must be an integer")
   return value
 
 
@@ -193,19 +197,19 @@ def _require_str_list(value: Any, label: str) -> List[str]:
   if isinstance(value, str):
     return [value]
   if not isinstance(value, list):
-    raise ValueError(f"{label} must be a list of strings")
+    raise _config_error(f"{label} must be a list of strings")
   for i, item in enumerate(value):
     if not isinstance(item, str):
-      raise ValueError(f"{label}[{i}] must be a string")
+      raise _config_error(f"{label}[{i}] must be a string")
   return value
 
 
 def _require_tier(value: Any, label: str) -> str:
   if not isinstance(value, str):
-    raise ValueError(f"{label} must be one of: small, medium, large")
+    raise _config_error(f"{label} must be one of: small, medium, large")
   normalized = value.strip().lower()
   if normalized not in {"small", "medium", "large"}:
-    raise ValueError(f"{label} must be one of: small, medium, large")
+    raise _config_error(f"{label} must be one of: small, medium, large")
   return normalized
 
 
@@ -213,7 +217,7 @@ def _normalize_template_grader_settings(
     settings: Dict[str, Any], context_label: str) -> Dict[str, Any]:
   raw = dict(settings)
   if "extra_install_lines" in raw:
-    raise ValueError(
+    raise _config_error(
       f"{context_label}.extra_install_lines is not supported; use extra_dockerfile_lines"
     )
 
@@ -236,32 +240,32 @@ def _normalize_template_grader_settings(
   }
   unknown = sorted(k for k in raw.keys() if k not in allowed)
   if unknown:
-    raise ValueError(
+    raise _config_error(
       f"{context_label} contains unsupported template-grader setting(s): {', '.join(unknown)}"
     )
 
   file_paths_raw = raw.get("file_paths", {})
   if not isinstance(file_paths_raw, dict):
-    raise ValueError(f"{context_label}.file_paths must be a mapping")
+    raise _config_error(f"{context_label}.file_paths must be a mapping")
   file_paths: Dict[str, FilePathTargetConfig] = {}
   for pattern, target in file_paths_raw.items():
     if not isinstance(pattern, str):
-      raise ValueError(f"{context_label}.file_paths keys must be strings")
+      raise _config_error(f"{context_label}.file_paths keys must be strings")
     if not isinstance(target, dict):
-      raise ValueError(
+      raise _config_error(
         f"{context_label}.file_paths['{pattern}'] must be a mapping")
     target_unknown = sorted(k for k in target.keys() if k not in {"path", "name"})
     if target_unknown:
-      raise ValueError(
+      raise _config_error(
         f"{context_label}.file_paths['{pattern}'] has unsupported key(s): {', '.join(target_unknown)}"
       )
     path = target.get("path", "")
     name = target.get("name")
     if not isinstance(path, str):
-      raise ValueError(
+      raise _config_error(
         f"{context_label}.file_paths['{pattern}'].path must be a string")
     if name is not None and not isinstance(name, str):
-      raise ValueError(
+      raise _config_error(
         f"{context_label}.file_paths['{pattern}'].name must be a string")
     file_paths[pattern] = FilePathTargetConfig(path=path, name=name)
 
@@ -317,7 +321,7 @@ def _normalize_text_submission_grader_settings(
   }
   unknown = sorted(k for k in raw.keys() if k not in allowed)
   if unknown:
-    raise ValueError(
+    raise _config_error(
       f"{context_label} contains unsupported TextSubmissionGrader setting(s): {', '.join(unknown)}"
     )
 
@@ -356,7 +360,7 @@ def normalize_grader_settings(grader_name: str,
   if grader_name == "TextSubmissionGrader":
     return _normalize_text_submission_grader_settings(settings, context_label)
 
-  raise ValueError(f"Unsupported grader for settings validation: {grader_name}")
+  raise _config_error(f"Unsupported grader for settings validation: {grader_name}")
 
 
 def _extract_settings(source: Dict[str, Any], reserved_keys: set[str]) -> Dict[str, Any]:
@@ -369,7 +373,7 @@ def _parse_assignment(raw_assignment: Any) -> AssignmentConfig:
 
   assignment = _require_dict(raw_assignment, "assignment")
   if 'id' not in assignment:
-    raise ValueError(f"assignment is missing required key 'id': {assignment}")
+    raise _config_error(f"assignment is missing required key 'id': {assignment}")
 
   assignment_settings = _extract_settings(
     assignment,
@@ -389,7 +393,7 @@ def _parse_assignment_group(raw_group: Any) -> AssignmentGroupConfig:
   group = _require_dict(raw_group, "assignment_group")
   group_type = group.get('type')
   if not group_type:
-    raise ValueError(f"assignment_group is missing required key 'type': {group}")
+    raise _config_error(f"assignment_group is missing required key 'type': {group}")
 
   group_settings = _extract_settings(group,
                                      {'name', 'type', 'assignments', 'settings'})
@@ -397,7 +401,7 @@ def _parse_assignment_group(raw_group: Any) -> AssignmentGroupConfig:
 
   raw_assignments = group.get('assignments', [])
   if not isinstance(raw_assignments, list):
-    raise ValueError(
+    raise _config_error(
       f"assignment_group.assignments must be a list for type '{group_type}'")
 
   return AssignmentGroupConfig(
@@ -411,14 +415,14 @@ def _parse_assignment_group(raw_group: Any) -> AssignmentGroupConfig:
 def _parse_course(raw_course: Any) -> CourseConfig:
   course = _require_dict(raw_course, "course")
   if 'id' not in course:
-    raise ValueError(f"course is missing required key 'id': {course}")
+    raise _config_error(f"course is missing required key 'id': {course}")
 
   raw_groups = course.get('assignment_groups')
   if raw_groups is None:
-    raise ValueError(
+    raise _config_error(
       "course config must define assignment_groups")
   if not isinstance(raw_groups, list):
-    raise ValueError("course.assignment_groups must be a list")
+    raise _config_error("course.assignment_groups must be a list")
 
   course_settings = _extract_settings(
     course, {'id', 'name', 'slack_channel', 'assignment_groups'})
@@ -441,23 +445,23 @@ def _parse_assignment_types(
     type_config = _require_dict(raw_type, f"assignment_types.{name}")
     kind = type_config.get('kind')
     if not kind:
-      raise ValueError(
+      raise _config_error(
         f"assignment_types.{name} is missing required key 'kind'")
     if kind not in ACTIVE_ASSIGNMENT_KINDS:
       supported = ", ".join(sorted(ACTIVE_ASSIGNMENT_KINDS))
-      raise ValueError(
+      raise _config_error(
         f"assignment_types.{name}.kind '{kind}' is not supported in this build. "
         f"Supported kinds: {supported}")
 
     grader = type_config.get('grader')
     if not grader:
-      raise ValueError(
+      raise _config_error(
         f"assignment_types.{name} is missing required key 'grader'")
 
     allowed_graders = ACTIVE_GRADERS_BY_KIND.get(kind, set())
     if grader not in allowed_graders:
       allowed = ", ".join(sorted(allowed_graders)) or "(none)"
-      raise ValueError(
+      raise _config_error(
         f"assignment_types.{name}.grader '{grader}' is not supported for kind '{kind}'. "
         f"Allowed graders: {allowed}")
 
@@ -475,31 +479,31 @@ def parse_run_config(raw_config: Any) -> RunConfig:
   config = _require_dict(raw_config, "config")
 
   if 'assignment_types' not in config:
-    raise ValueError("assignment_types is required")
+    raise _config_error("assignment_types is required")
 
   raw_courses = config.get('courses', [])
   if not isinstance(raw_courses, list):
-    raise ValueError("courses must be a list")
+    raise _config_error("courses must be a list")
 
   assignment_types = _parse_assignment_types(config['assignment_types'])
   courses = [_parse_course(c) for c in raw_courses]
   privacy_mode = config.get('privacy_mode', 'id_only')
   if privacy_mode not in {"none", "id_only", "blind"}:
-    raise ValueError(
+    raise _config_error(
       "privacy_mode must be one of: none, id_only, blind")
 
   idempotency_key = config.get('idempotency_key')
   if idempotency_key is not None and not isinstance(idempotency_key, str):
-    raise ValueError("idempotency_key must be a string when provided")
+    raise _config_error("idempotency_key must be a string when provided")
   idempotency_state_dir = config.get('idempotency_state_dir',
                                      "~/.autograder/idempotency")
   if not isinstance(idempotency_state_dir, str):
-    raise ValueError("idempotency_state_dir must be a string")
+    raise _config_error("idempotency_state_dir must be a string")
 
   for course in courses:
     for group in course.assignment_groups:
       if group.type_name not in assignment_types:
-        raise ValueError(
+        raise _config_error(
           f"unknown assignment group type '{group.type_name}' in course {course.id}")
 
       seen_assignment_ids = set()
@@ -516,7 +520,7 @@ def parse_run_config(raw_config: Any) -> RunConfig:
           str(assignment_id)
           for assignment_id in sorted(duplicate_assignment_ids))
         group_label = group.name or group.type_name
-        raise ValueError(
+        raise _config_error(
           f"duplicate assignment id(s) in course {course.id}, "
           f"group '{group_label}' ({group.type_name}): {duplicates}")
 

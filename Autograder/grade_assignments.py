@@ -4,7 +4,6 @@ import contextlib
 import fcntl
 import os
 import threading
-import traceback
 import time
 from dataclasses import dataclass, asdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -112,6 +111,16 @@ def configure_logging(debug: bool) -> None:
   level = logging.DEBUG if debug else logging.INFO
   logging.getLogger("Autograder").setLevel(level)
   logging.getLogger(__name__).setLevel(level)
+  external_level = logging.INFO if debug else logging.WARNING
+  for logger_name in (
+      "httpx",
+      "httpcore",
+      "openai",
+      "anthropic",
+      "urllib3",
+      "docker",
+  ):
+    logging.getLogger(logger_name).setLevel(external_level)
 
 
 def resolve_reveal_identity(args: argparse.Namespace,
@@ -123,7 +132,8 @@ def resolve_reveal_identity(args: argparse.Namespace,
 
   if os.getenv("AUTOGRADER_BREAK_GLASS") != "1":
     raise SystemExit(
-      "Identity reveal requested but AUTOGRADER_BREAK_GLASS is not set to 1.")
+      "Identity reveal requested, but AUTOGRADER_BREAK_GLASS=1 is not set. "
+      "Set AUTOGRADER_BREAK_GLASS=1 for this run, or disable --reveal-identity/reveal_identity.")
 
   log.warning(
     "Break-glass identity reveal is enabled; Canvas numeric IDs may appear in logs."
@@ -160,13 +170,14 @@ def _is_subpath(path: str, parent: str) -> bool:
 def resolve_records_dir(records_dir: str | None) -> str:
   if not isinstance(records_dir, str) or not records_dir.strip():
     raise ValueError(
-      "record_retention=true requires an explicit records_dir in config")
+      "Config error: record_retention=true requires an explicit records_dir in config "
+      "(use an absolute path or ~/...).")
 
   raw = records_dir.strip()
   expanded = os.path.expanduser(raw)
   if not os.path.isabs(expanded):
     raise ValueError(
-      "records_dir must be an absolute path (or use ~/...) when record_retention=true"
+      "Config error: records_dir must be an absolute path (or use ~/...) when record_retention=true."
     )
 
   resolved = os.path.realpath(os.path.abspath(expanded))
@@ -175,7 +186,7 @@ def resolve_records_dir(records_dir: str | None) -> str:
   if os.getenv("AUTOGRADER_ALLOW_IN_REPO_RECORDS") != "1" and _is_subpath(
       resolved, repo_root):
     raise ValueError(
-      f"records_dir must be outside the repository root ({repo_root}) to avoid accidental git history leakage. "
+      f"Config error: records_dir must be outside the repository root ({repo_root}) to avoid accidental git history leakage. "
       "Set AUTOGRADER_ALLOW_IN_REPO_RECORDS=1 only for local debugging.")
 
   return resolved
@@ -349,7 +360,7 @@ def run_grade_stage(grader, grading_assignment, settings, assignment_data,
                           do_regrade=do_regrade)
 
   for submission in grading_assignment.submissions:
-    log.info(
+    log.debug(
       format_submission_for_log(
         submission, reveal_identity=assignment_data.reveal_identity))
 
@@ -398,8 +409,8 @@ def ensure_single_instance():
     fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     yield
   except IOError as e:
-    log.warning("Early exiting because another instance is already running")
-    log.warning(e)
+    log.info("Early exiting because another grading instance is already running")
+    log.debug(f"Lock acquisition details: {e}")
     raise SystemExit(0)
   finally:
     try:
@@ -457,11 +468,21 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
     do_regrade = args.do_regrade
     record_retention = bool(settings.get('record_retention'))
     if record_retention:
-      settings["records_dir"] = resolve_records_dir(settings.get("records_dir"))
+      try:
+        settings["records_dir"] = resolve_records_dir(settings.get("records_dir"))
+      except ValueError as e:
+        raise ValueError(
+          f"Invalid records configuration for assignment {assignment_id} "
+          f"('{assignment_name or 'unknown'}'): {e}") from e
     elif settings.get("records_dir") is not None and str(grader_name).lower(
     ) == "textsubmissiongrader":
       # TextSubmissionGrader can write optional reports/questions to records_dir
-      settings["records_dir"] = resolve_records_dir(settings.get("records_dir"))
+      try:
+        settings["records_dir"] = resolve_records_dir(settings.get("records_dir"))
+      except ValueError as e:
+        raise ValueError(
+          f"Invalid records configuration for assignment {assignment_id} "
+          f"('{assignment_name or 'unknown'}'): {e}") from e
 
     repo_path = assignment_data.repo_path
 
@@ -534,10 +555,9 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
     }
 
   except Exception as e:
-    log.error(
+    log.exception(
       f"[Thread {thread_id}] Error grading assignment {assignment_id or 'unknown'}: {e}"
     )
-    log.error(f"[Thread {thread_id}] Traceback: {traceback.format_exc()}")
     return {
       'success': False,
       'assignment_id': assignment_id,
@@ -574,7 +594,10 @@ def load_and_validate_config(yaml_path: str) -> RunConfig:
   try:
     run_config = parse_run_config(raw_config)
   except ValueError as e:
-    raise SystemExit(f"Invalid config: {e}") from e
+    raise SystemExit(
+      f"Invalid config file '{yaml_path}': {e}. "
+      "See documentation/instructor_onboarding.md for supported schema/examples."
+    ) from e
 
   log.debug(f"run_config: {run_config}")
   return run_config

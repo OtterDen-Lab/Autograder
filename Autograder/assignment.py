@@ -102,7 +102,7 @@ class Assignment(abc.ABC):
     if push_enabled and idempotency_key:
       processed_user_ids = self._load_idempotency_user_ids(
         idempotency_key, idempotency_state_dir)
-      log.info(
+      log.debug(
         f"Idempotency tracking enabled for assignment {self.lms_assignment.name}: {len(processed_user_ids)} previously pushed submission(s)"
       )
 
@@ -116,7 +116,7 @@ class Assignment(abc.ABC):
       user_id = submission.student.user_id
       if push_enabled and processed_user_ids is not None and user_id in processed_user_ids:
         push_skipped += 1
-        log.info(
+        log.debug(
           f"Skipping push for {submission.student.name} (canvas_user_id={user_id}) due to idempotency key"
         )
         continue
@@ -129,7 +129,7 @@ class Assignment(abc.ABC):
                                    self.lms_assignment.name)
 
       if push_enabled:
-        log.info(f"Pushing feedback for: {submission}")
+        log.debug(f"Pushing feedback for: {submission}")
         push_attempted += 1
         try:
           # Scale the score for Canvas submission
@@ -207,7 +207,7 @@ class Assignment(abc.ABC):
       # Ensure records directory exists
       if not os.path.exists(records_dir):
         os.makedirs(records_dir)
-        log.info(f"Created records directory: {records_dir}")
+        log.debug(f"Created records directory: {records_dir}")
 
       # Create filename: [timestamp].[assignment_name].[student_name].log
       filename = f"{timestamp}.{assignment_safe}.{student_name}.log"
@@ -217,7 +217,7 @@ class Assignment(abc.ABC):
       with open(filepath, 'w', encoding='utf-8') as f:
         f.write(comments)
 
-      log.info(f"Saved feedback record: {filepath}")
+      log.debug(f"Saved feedback record: {filepath}")
 
     except Exception as e:
       log.error(
@@ -362,7 +362,7 @@ class Assignment__ProgrammingAssignment(Assignment):
 
     log.info(f"Total students to grade: {len(self.submissions)}")
     if limit is not None:
-      log.warning(f"Limiting to {limit} students")
+      log.info(f"Limiting to {limit} students")
       self.submissions = self.submissions[:limit]
     for i, submission in enumerate(self.submissions):
       try:
@@ -440,7 +440,7 @@ class Assignment_TextAssignment(Assignment):
 
     # Apply limit if specified
     if limit is not None:
-      log.warning(f"Limiting to {limit} students")
+      log.info(f"Limiting to {limit} students")
       self.submissions = self.submissions[:limit]
 
     # Process and structure the submission data

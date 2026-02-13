@@ -7,8 +7,9 @@ from Autograder.config_models import parse_run_config
 
 
 def test_parse_run_config_requires_assignment_types():
-  with pytest.raises(ValueError):
+  with pytest.raises(ValueError) as exc:
     parse_run_config({"courses": []})
+  assert str(exc.value).startswith("Config error:")
 
 
 def test_parse_run_config_rejects_course_without_assignment_groups():

@@ -596,7 +596,7 @@ class TextSubmissionGrader(Grader):
           student_id) not in str(student_name):
         display_name = f"{student_name} [canvas_user_id={student_id}]"
 
-      log.info(
+      log.debug(
         f"   Grading {i}/{len(submission_data)}: {display_name} ({word_count} words)"
       )
 
