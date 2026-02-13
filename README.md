@@ -128,6 +128,42 @@ grade-assignments --yaml config.yaml --max_workers 2
 grade-assignments --yaml config.yaml --show-stage-timings
 ```
 
+### Dry-run preflight (no grading)
+
+```bash
+grade-assignments --yaml config.yaml --dry-run
+```
+
+### Dump effective merged assignment config
+
+```bash
+grade-assignments --yaml config.yaml --dump-config
+```
+
+### Write a run report JSON
+
+```bash
+grade-assignments --yaml config.yaml --report ./run-report.json
+```
+
+### Override Slack channel for run-level failure summaries
+
+```bash
+grade-assignments --yaml config.yaml --error-slack-channel C0123456789
+```
+
+### Set custom idempotency state directory
+
+```bash
+grade-assignments --yaml config.yaml --idempotency-key spring26-ll2 --idempotency-state-dir ~/.autograder/state
+```
+
+### Enable debug logging
+
+```bash
+grade-assignments --yaml config.yaml --debug
+```
+
 ## Configuration
 
 See the `example_files/` directory for complete configuration examples:

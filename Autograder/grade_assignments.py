@@ -49,7 +49,6 @@ def parse_args() -> argparse.Namespace:
                       "--do_regrade",
                       dest="do_regrade",
                       action="store_true")
-  parser.add_argument("--merge_only", dest="merge_only", action="store_true")
   parser.add_argument(
     "--max_workers",
     default=None,
@@ -346,7 +345,6 @@ def run_prepare_stage(grader, grading_assignment, args, settings,
   if needed_preparation:
     grading_assignment.prepare(limit=args.limit,
                                do_regrade=do_regrade,
-                               merge_only=args.merge_only,
                                test=args.test,
                                **settings)
 
@@ -366,7 +364,6 @@ def run_grade_stage(grader, grading_assignment, settings, assignment_data,
                           **settings,
                           reveal_identity=assignment_data.reveal_identity,
                           privacy_mode=assignment_data.privacy_mode,
-                          merge_only=args.merge_only,
                           do_regrade=do_regrade)
 
   for submission in grading_assignment.submissions:
@@ -390,7 +387,6 @@ def run_publish_stage(grader, grading_assignment, args, push_grades: bool,
 
   finalize_kwargs = {
     "push": push_grades,
-    "merge_only": args.merge_only,
     "idempotency_key": assignment_data.idempotency_key,
     "idempotency_state_dir": assignment_data.idempotency_state_dir,
   }

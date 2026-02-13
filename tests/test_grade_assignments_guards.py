@@ -30,7 +30,7 @@ def test_grade_single_assignment_rejects_unsupported_assignment_kind():
       repo_path=None,
       assignment_name=None,
       args=SimpleNamespace(
-        do_regrade=False, merge_only=False, limit=None, test=False),
+        do_regrade=False, limit=None, test=False),
       push_grades=False,
       slack_channel=None,
     ))
@@ -52,7 +52,7 @@ def test_grade_single_assignment_rejects_unsupported_grader_for_kind():
       repo_path=None,
       assignment_name=None,
       args=SimpleNamespace(
-        do_regrade=False, merge_only=False, limit=None, test=False),
+        do_regrade=False, limit=None, test=False),
       push_grades=False,
       slack_channel=None,
     ))
@@ -70,6 +70,19 @@ def test_parse_args_requires_yaml(monkeypatch):
 
 def test_parse_args_rejects_legacy_test_subcommand(monkeypatch):
   monkeypatch.setattr(sys, "argv", ["grade-assignments", "TEST"])
+  with pytest.raises(SystemExit) as exc:
+    grade_assignments.parse_args()
+  assert exc.value.code == 2
+
+
+def test_parse_args_rejects_removed_merge_only_flag(monkeypatch, tmp_path):
+  yaml_file = tmp_path / "config.yaml"
+  yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
+
+  monkeypatch.setattr(
+    sys, "argv",
+    ["grade-assignments", "--yaml",
+     str(yaml_file), "--merge_only"])
   with pytest.raises(SystemExit) as exc:
     grade_assignments.parse_args()
   assert exc.value.code == 2
@@ -255,7 +268,7 @@ def test_record_retention_requires_explicit_records_dir(monkeypatch):
       repo_path=None,
       assignment_name=None,
       args=SimpleNamespace(
-        do_regrade=False, merge_only=False, limit=None, test=False),
+        do_regrade=False, limit=None, test=False),
       push_grades=False,
       slack_channel=None,
     ))
@@ -330,7 +343,7 @@ def test_record_retention_false_does_not_validate_records_dir(monkeypatch):
       repo_path=None,
       assignment_name=None,
       args=SimpleNamespace(
-        do_regrade=False, merge_only=False, limit=None, test=False),
+        do_regrade=False, limit=None, test=False),
       push_grades=False,
       slack_channel=None,
     ))
@@ -401,7 +414,7 @@ def test_grade_single_assignment_emits_stage_contract_on_success(monkeypatch):
       repo_path=None,
       assignment_name=None,
       args=SimpleNamespace(
-        do_regrade=False, merge_only=False, limit=None, test=False),
+        do_regrade=False, limit=None, test=False),
       push_grades=False,
       slack_channel=None,
     ))
@@ -474,7 +487,7 @@ def test_grade_single_assignment_no_submissions_stage_contract(monkeypatch):
       repo_path=None,
       assignment_name=None,
       args=SimpleNamespace(
-        do_regrade=False, merge_only=False, limit=None, test=False),
+        do_regrade=False, limit=None, test=False),
       push_grades=False,
       slack_channel=None,
     ))
@@ -653,7 +666,6 @@ def test_main_dry_run_skips_execute_grading(monkeypatch):
     env=None,
     limit=None,
     do_regrade=False,
-    merge_only=False,
     max_workers=None,
     test=False,
     report=None,

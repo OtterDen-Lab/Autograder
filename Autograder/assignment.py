@@ -82,18 +82,6 @@ class Assignment(abc.ABC):
     :return:
     """
 
-    # If we are only merging then we should exit right here
-    if kwargs.get("merge_only", False):
-      return {
-        "push_enabled": False,
-        "merge_only": True,
-        "push_attempted": 0,
-        "push_succeeded": 0,
-        "push_failed": 0,
-        "push_skipped": 0,
-        "push_failed_students": [],
-      }
-
     push_enabled = bool(kwargs.get("push", False))
     idempotency_key = kwargs.get("idempotency_key")
     idempotency_state_dir = kwargs.get("idempotency_state_dir")
@@ -174,7 +162,6 @@ class Assignment(abc.ABC):
 
     return {
       "push_enabled": push_enabled,
-      "merge_only": False,
       "push_attempted": push_attempted,
       "push_succeeded": push_succeeded,
       "push_failed": push_failed,

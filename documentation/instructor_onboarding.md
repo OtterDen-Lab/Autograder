@@ -49,6 +49,12 @@ courses:
 
 ## 2) First Safe Run
 
+Start with a preflight check:
+
+```bash
+grade-assignments --yaml your_config.yaml --dry-run
+```
+
 Run in non-push mode first:
 
 ```bash
@@ -65,6 +71,20 @@ Optional idempotent rerun protection:
 
 ```bash
 grade-assignments --yaml your_config.yaml --idempotency-key your-run-key
+```
+
+Useful diagnostics:
+
+```bash
+grade-assignments --yaml your_config.yaml --dump-config
+grade-assignments --yaml your_config.yaml --report ./run-report.json
+grade-assignments --yaml your_config.yaml --debug
+```
+
+If you need run-specific idempotency state location:
+
+```bash
+grade-assignments --yaml your_config.yaml --idempotency-key your-run-key --idempotency-state-dir ~/.autograder/state
 ```
 
 ## 3) Common Customizations

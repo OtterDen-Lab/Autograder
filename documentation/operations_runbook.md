@@ -6,9 +6,11 @@ This runbook covers how to diagnose and recover from failed or partial grading r
 
 1. Start with a limited run:
    - `grade-assignments --yaml <config.yaml> --limit 5`
+   - Optional preflight: `grade-assignments --yaml <config.yaml> --dry-run`
 2. Confirm privacy mode in logs (`privacy_mode=id_only` or `blind`).
 3. For any run where retry safety matters, set an idempotency key:
    - `grade-assignments --yaml <config.yaml> --idempotency-key <stable-key>`
+   - optional custom state dir: `grade-assignments --yaml <config.yaml> --idempotency-key <stable-key> --idempotency-state-dir <state-dir>`
 
 ## During/After Run: Fast Triage
 
@@ -68,6 +70,24 @@ grade-assignments --yaml <config.yaml> --regrade --idempotency-key <same-key>
 
 ```bash
 grade-assignments --yaml <config.yaml> --test --limit 5
+```
+
+### Dry-run preflight (no download, no grading, no push)
+
+```bash
+grade-assignments --yaml <config.yaml> --dry-run
+```
+
+### Capture machine-readable run report
+
+```bash
+grade-assignments --yaml <config.yaml> --report ./run-report.json
+```
+
+### Force run summary Slack destination
+
+```bash
+grade-assignments --yaml <config.yaml> --error-slack-channel <channel-id>
 ```
 
 ## Notes on Idempotency vs Ungraded Filtering
