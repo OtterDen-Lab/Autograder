@@ -5,6 +5,7 @@ Provides common Docker operations like client management, container lifecycle,
 file operations, and command execution in a reusable way.
 """
 import io
+import json
 import os
 import pathlib
 import tarfile
@@ -65,6 +66,42 @@ def _default_seccomp_profile_path() -> str | None:
   if packaged_profile.exists():
     return str(packaged_profile)
   return None
+
+
+def _normalize_seccomp_profile(seccomp_profile: str | None) -> str | None:
+  """
+  Normalize seccomp config for Docker API usage.
+
+  Docker CLI accepts seccomp file paths, but the Docker API expects either
+  "unconfined" or JSON profile content.
+  """
+  if seccomp_profile is None:
+    return None
+
+  profile_value = seccomp_profile.strip()
+  if profile_value == "":
+    return None
+  if profile_value == "unconfined":
+    return "unconfined"
+
+  profile_path = pathlib.Path(profile_value)
+  if profile_path.exists():
+    try:
+      profile_json = json.loads(profile_path.read_text(encoding="utf-8"))
+      return json.dumps(profile_json, separators=(",", ":"))
+    except (OSError, json.JSONDecodeError) as e:
+      log.warning(
+        f"Unable to read Docker seccomp profile at {profile_value}: {e}")
+      return None
+
+  try:
+    profile_json = json.loads(profile_value)
+    return json.dumps(profile_json, separators=(",", ":"))
+  except json.JSONDecodeError:
+    log.warning(
+      f"Invalid Docker seccomp profile value {profile_value!r}; expected 'unconfined', JSON content, or a path to a JSON file."
+    )
+    return None
 
 
 DEFAULT_DOCKER_MEMORY_LIMIT = _parse_str_env("AUTOGRADER_DOCKER_MEMORY_LIMIT",
@@ -295,8 +332,13 @@ class DockerContainer:
   def start(self) -> None:
     """Start the container."""
     security_opt = ["no-new-privileges:true"]
-    if self.seccomp_profile:
-      security_opt.append(f"seccomp={self.seccomp_profile}")
+    normalized_seccomp = _normalize_seccomp_profile(self.seccomp_profile)
+    if normalized_seccomp:
+      security_opt.append(f"seccomp={normalized_seccomp}")
+    elif self.seccomp_profile:
+      log.warning(
+        "Docker seccomp profile is invalid; using daemon default seccomp policy."
+      )
     else:
       log.warning(
         "No Docker seccomp profile configured; set AUTOGRADER_DOCKER_SECCOMP_PROFILE to enforce one."

@@ -13,6 +13,7 @@ Note: These tests mock the Docker API to avoid requiring a running Docker daemon
 """
 
 import io
+import json
 import pytest
 import tarfile
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -177,8 +178,13 @@ class TestDockerContainerLifecycle:
         mock_docker_client.client.containers.run.assert_called_once()
         assert container.container is not None
 
-    def test_container_start_applies_security_defaults(self, mock_docker_client):
+    def test_container_start_applies_security_defaults(self, mock_docker_client, tmp_path):
         mock_docker_client.client.containers.run.return_value = MagicMock()
+        seccomp_file = tmp_path / "seccomp.json"
+        seccomp_file.write_text(
+            '{"defaultAction":"SCMP_ACT_ALLOW","syscalls":[]}',
+            encoding="utf-8",
+        )
 
         container = DockerContainer(
             mock_docker_client,
@@ -186,7 +192,7 @@ class TestDockerContainerLifecycle:
             memory_limit="512m",
             nano_cpus=1_000_000_000,
             pids_limit=128,
-            seccomp_profile="/tmp/seccomp.json",
+            seccomp_profile=str(seccomp_file),
             read_only_root_fs=True,
         )
         container.start()
@@ -199,7 +205,13 @@ class TestDockerContainerLifecycle:
         assert kwargs["read_only"] is True
         assert kwargs["tmpfs"]["/tmp"].startswith("rw,noexec,nosuid")
         assert "no-new-privileges:true" in kwargs["security_opt"]
-        assert "seccomp=/tmp/seccomp.json" in kwargs["security_opt"]
+        seccomp_opt = next(
+            opt for opt in kwargs["security_opt"] if opt.startswith("seccomp=")
+        )
+        assert json.loads(seccomp_opt.split("=", 1)[1]) == {
+            "defaultAction": "SCMP_ACT_ALLOW",
+            "syscalls": [],
+        }
 
     def test_container_start_with_context_manager(self, mock_docker_client):
         mock_docker_client.client.containers.run.return_value = MagicMock()

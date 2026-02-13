@@ -423,7 +423,8 @@ class TextSubmissionGrader(Grader):
     Returns:
         Dictionary containing aggregate analysis results
     """
-    from Autograder.ai_helper import AI_Helper__OpenAI, AI_Helper__Anthropic
+    from Autograder.ai_helper import (AI_Helper__OpenAI, AI_Helper__Anthropic,
+                                      validate_response_payload)
     import json
     import re
 
