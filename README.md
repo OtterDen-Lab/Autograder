@@ -144,6 +144,27 @@ See the `example_files/` directory for complete configuration examples:
 - Canvas API access
 - Optional: OpenAI or Anthropic API keys for AI-powered features
 
+## Docker Security Boundaries
+
+Programming submissions run in ephemeral Docker containers with baseline hardening:
+
+- `no-new-privileges:true`
+- explicit seccomp profile (`Autograder/seccomp/autograder-seccomp.json` by default)
+- resource limits (`mem_limit`, `nano_cpus`, `pids_limit`)
+
+Optional hardened mode:
+
+- set `AUTOGRADER_DOCKER_READ_ONLY_ROOT_FS=1` to use a read-only root filesystem (with writable tmpfs at `/tmp` and `/var/tmp`).
+
+Override knobs (when needed for compatibility/performance):
+
+- `AUTOGRADER_DOCKER_SECCOMP_PROFILE` (path to seccomp profile)
+- `AUTOGRADER_DOCKER_MEMORY_LIMIT` (example: `1g`)
+- `AUTOGRADER_DOCKER_NANO_CPUS` (example: `2000000000` for 2 CPUs)
+- `AUTOGRADER_DOCKER_PIDS_LIMIT` (example: `256`)
+
+Security note: this reduces risk but is not a complete sandbox against all kernel/container escape classes. Keep Docker and host OS patched.
+
 ## Local Git Hygiene Hook (Recommended)
 
 Install the repository-managed pre-commit hook so hygiene checks run before each commit:

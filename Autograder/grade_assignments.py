@@ -87,6 +87,11 @@ def parse_args() -> argparse.Namespace:
     "--idempotency-state-dir",
     default=None,
     help="Directory for idempotency state files (default from config)")
+  parser.add_argument(
+    "--dump-config",
+    action="store_true",
+    help=
+    "Print effective merged assignment configuration before execution")
 
   args = parser.parse_args()
 
@@ -680,6 +685,59 @@ def collect_assignments_to_grade(config: RunConfig,
   return assignments_to_grade
 
 
+def build_dump_config_payload(
+    config: RunConfig,
+    assignments_to_grade: List[AssignmentRunRequest],
+    args: argparse.Namespace) -> Dict:
+  assignments_payload = []
+  for assignment in assignments_to_grade:
+    course_name = assignment.course_name
+    if not course_name and assignment.course is not None:
+      course_name = getattr(assignment.course, "name", None)
+
+    assignments_payload.append({
+      "course_name": course_name,
+      "assignment_id": assignment.assignment_id,
+      "assignment_name": assignment.assignment_name,
+      "assignment_type": assignment.assignment_type,
+      "assignment_kind": assignment.assignment_kind,
+      "grader_name": assignment.grader_name,
+      "repo_path": assignment.repo_path,
+      "push_grades": assignment.push_grades,
+      "privacy_mode": assignment.privacy_mode,
+      "reveal_identity": assignment.reveal_identity,
+      "idempotency_key": assignment.idempotency_key,
+      "idempotency_state_dir": assignment.idempotency_state_dir,
+      "slack_channel": assignment.slack_channel,
+      "settings": assignment.settings,
+    })
+
+  return {
+    "yaml_path": args.yaml,
+    "run": {
+      "prod": config.prod,
+      "push": config.push,
+      "privacy_mode": config.privacy_mode,
+      "reveal_identity": bool(assignments_to_grade[0].reveal_identity)
+      if assignments_to_grade else bool(config.reveal_identity),
+      "idempotency_key": (assignments_to_grade[0].idempotency_key
+                           if assignments_to_grade else config.idempotency_key),
+      "idempotency_state_dir":
+      (assignments_to_grade[0].idempotency_state_dir if assignments_to_grade
+       else config.idempotency_state_dir),
+      "assignment_count": len(assignments_to_grade),
+    },
+    "assignments": assignments_payload,
+  }
+
+
+def dump_effective_config(config: RunConfig,
+                          assignments_to_grade: List[AssignmentRunRequest],
+                          args: argparse.Namespace) -> None:
+  payload = build_dump_config_payload(config, assignments_to_grade, args)
+  print(json.dumps(payload, indent=2))
+
+
 def execute_grading(assignments_to_grade: List[AssignmentRunRequest],
                     args: argparse.Namespace) -> List[Dict]:
   """
@@ -946,6 +1004,8 @@ def main() -> int:
       config = load_and_validate_config(args.yaml)
 
       assignments_to_grade = collect_assignments_to_grade(config, args)
+      if args.dump_config:
+        dump_effective_config(config, assignments_to_grade, args)
       results = execute_grading(assignments_to_grade, args)
 
       print_results_summary(results)

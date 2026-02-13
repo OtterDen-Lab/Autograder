@@ -124,6 +124,18 @@ def test_parse_args_accepts_show_stage_timings(monkeypatch, tmp_path):
   assert args.show_stage_timings is True
 
 
+def test_parse_args_accepts_dump_config(monkeypatch, tmp_path):
+  yaml_file = tmp_path / "config.yaml"
+  yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
+
+  monkeypatch.setattr(
+    sys, "argv",
+    ["grade-assignments", "--yaml",
+     str(yaml_file), "--dump-config"])
+  args = grade_assignments.parse_args()
+  assert args.dump_config is True
+
+
 def test_parse_args_rejects_non_positive_max_workers(monkeypatch, tmp_path):
   yaml_file = tmp_path / "config.yaml"
   yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
@@ -551,6 +563,46 @@ def test_collect_push_failure_lines_summarizes_results():
   assert len(lines) == 1
   assert "PA1" in lines[0]
   assert "Student 10" in lines[0]
+
+
+def test_build_dump_config_payload_includes_effective_assignment_settings():
+  args = SimpleNamespace(yaml="/tmp/config.yaml")
+  config = RunConfig(
+    prod=True,
+    push=True,
+    privacy_mode="blind",
+    reveal_identity=False,
+    idempotency_key=None,
+    idempotency_state_dir="~/.autograder/idempotency",
+  )
+
+  assignment = AssignmentRunRequest(
+    course=SimpleNamespace(name="CST334"),
+    course_name="CST334",
+    assignment_id=123,
+    assignment_type="programming",
+    assignment_kind="ProgrammingAssignment",
+    grader_name="template-grader",
+    settings={"base_image_name": "python:3.12"},
+    repo_path="PA1",
+    assignment_name="PA1",
+    args=SimpleNamespace(),
+    push_grades=True,
+    slack_channel="C123",
+    reveal_identity=True,
+    privacy_mode="blind",
+    idempotency_key="run-42",
+    idempotency_state_dir="/tmp/idempotency",
+  )
+
+  payload = grade_assignments.build_dump_config_payload(config, [assignment], args)
+  assert payload["yaml_path"] == "/tmp/config.yaml"
+  assert payload["run"]["assignment_count"] == 1
+  assert payload["run"]["privacy_mode"] == "blind"
+  assert payload["run"]["reveal_identity"] is True
+  assert payload["assignments"][0]["assignment_id"] == 123
+  assert payload["assignments"][0]["push_grades"] is True
+  assert payload["assignments"][0]["settings"]["base_image_name"] == "python:3.12"
 
 
 def test_send_slack_run_summary_notifies_on_push_failures(monkeypatch):

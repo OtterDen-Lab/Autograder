@@ -5,6 +5,8 @@ Provides common Docker operations like client management, container lifecycle,
 file operations, and command execution in a reusable way.
 """
 import io
+import os
+import pathlib
 import tarfile
 import time
 import threading
@@ -24,6 +26,61 @@ _image_usage_lock = threading.Lock()
 
 # Lazy import docker to avoid import errors when docker is not available
 docker = None
+
+
+def _parse_bool_env(name: str, default: bool) -> bool:
+  raw = os.getenv(name)
+  if raw is None:
+    return default
+  return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_int_env(name: str, default: int | None) -> int | None:
+  raw = os.getenv(name)
+  if raw is None or raw.strip() == "":
+    return default
+  try:
+    value = int(raw)
+  except ValueError:
+    log.warning(f"Invalid integer for {name}={raw!r}; using default {default!r}")
+    return default
+  if value <= 0:
+    return None
+  return value
+
+
+def _parse_str_env(name: str, default: str | None) -> str | None:
+  raw = os.getenv(name)
+  if raw is None:
+    return default
+  value = raw.strip()
+  if value == "":
+    return None
+  return value
+
+
+def _default_seccomp_profile_path() -> str | None:
+  packaged_profile = (pathlib.Path(__file__).resolve().parent / "seccomp" /
+                      "autograder-seccomp.json")
+  if packaged_profile.exists():
+    return str(packaged_profile)
+  return None
+
+
+DEFAULT_DOCKER_MEMORY_LIMIT = _parse_str_env("AUTOGRADER_DOCKER_MEMORY_LIMIT",
+                                              "1g")
+DEFAULT_DOCKER_NANO_CPUS = _parse_int_env("AUTOGRADER_DOCKER_NANO_CPUS",
+                                           2_000_000_000)
+DEFAULT_DOCKER_PIDS_LIMIT = _parse_int_env("AUTOGRADER_DOCKER_PIDS_LIMIT",
+                                           256)
+DEFAULT_DOCKER_READ_ONLY_ROOT_FS = _parse_bool_env(
+  "AUTOGRADER_DOCKER_READ_ONLY_ROOT_FS", False)
+DEFAULT_DOCKER_SECCOMP_PROFILE = _parse_str_env(
+  "AUTOGRADER_DOCKER_SECCOMP_PROFILE", _default_seccomp_profile_path())
+DEFAULT_DOCKER_TMPFS = {
+  "/tmp": "rw,noexec,nosuid,size=64m",
+  "/var/tmp": "rw,noexec,nosuid,size=64m",
+}
 
 
 def _import_docker() -> None:
@@ -214,11 +271,21 @@ class DockerContainer:
   def __init__(self,
                client: DockerClient,
                image: Union[str, 'docker.models.images.Image'],
-               name_prefix: str = "grader"):
+               name_prefix: str = "grader",
+               memory_limit: str | None = DEFAULT_DOCKER_MEMORY_LIMIT,
+               nano_cpus: int | None = DEFAULT_DOCKER_NANO_CPUS,
+               pids_limit: int | None = DEFAULT_DOCKER_PIDS_LIMIT,
+               read_only_root_fs: bool = DEFAULT_DOCKER_READ_ONLY_ROOT_FS,
+               seccomp_profile: str | None = DEFAULT_DOCKER_SECCOMP_PROFILE):
     self.client = client
     self.image = image
     self.container = None
     self.name_prefix = name_prefix
+    self.memory_limit = memory_limit
+    self.nano_cpus = nano_cpus
+    self.pids_limit = pids_limit
+    self.read_only_root_fs = read_only_root_fs
+    self.seccomp_profile = seccomp_profile
 
     # Generate unique container name for thread safety
     thread_id = threading.current_thread().ident
@@ -227,12 +294,35 @@ class DockerContainer:
 
   def start(self) -> None:
     """Start the container."""
+    security_opt = ["no-new-privileges:true"]
+    if self.seccomp_profile:
+      security_opt.append(f"seccomp={self.seccomp_profile}")
+    else:
+      log.warning(
+        "No Docker seccomp profile configured; set AUTOGRADER_DOCKER_SECCOMP_PROFILE to enforce one."
+      )
+
+    run_kwargs = {
+      "image": self.image,
+      "detach": True,
+      "tty": True,
+      "remove": True,
+      "name": self.container_name,
+      "security_opt": security_opt,
+    }
+    if self.memory_limit:
+      run_kwargs["mem_limit"] = self.memory_limit
+      run_kwargs["memswap_limit"] = self.memory_limit
+    if self.nano_cpus is not None:
+      run_kwargs["nano_cpus"] = self.nano_cpus
+    if self.pids_limit is not None:
+      run_kwargs["pids_limit"] = self.pids_limit
+    if self.read_only_root_fs:
+      run_kwargs["read_only"] = True
+      run_kwargs["tmpfs"] = dict(DEFAULT_DOCKER_TMPFS)
+
     try:
-      self.container = self.client.run_image(image=self.image,
-                                             detach=True,
-                                             tty=True,
-                                             remove=True,
-                                             name=self.container_name)
+      self.container = self.client.run_image(**run_kwargs)
       log.debug(f"Started container: {self.container_name}")
     except docker.errors.ContainerError as e:
       log.error(f"Container failed to start: {e}")

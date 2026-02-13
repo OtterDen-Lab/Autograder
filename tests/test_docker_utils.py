@@ -177,6 +177,30 @@ class TestDockerContainerLifecycle:
         mock_docker_client.client.containers.run.assert_called_once()
         assert container.container is not None
 
+    def test_container_start_applies_security_defaults(self, mock_docker_client):
+        mock_docker_client.client.containers.run.return_value = MagicMock()
+
+        container = DockerContainer(
+            mock_docker_client,
+            "test:image",
+            memory_limit="512m",
+            nano_cpus=1_000_000_000,
+            pids_limit=128,
+            seccomp_profile="/tmp/seccomp.json",
+            read_only_root_fs=True,
+        )
+        container.start()
+
+        kwargs = mock_docker_client.client.containers.run.call_args.kwargs
+        assert kwargs["mem_limit"] == "512m"
+        assert kwargs["memswap_limit"] == "512m"
+        assert kwargs["nano_cpus"] == 1_000_000_000
+        assert kwargs["pids_limit"] == 128
+        assert kwargs["read_only"] is True
+        assert kwargs["tmpfs"]["/tmp"].startswith("rw,noexec,nosuid")
+        assert "no-new-privileges:true" in kwargs["security_opt"]
+        assert "seccomp=/tmp/seccomp.json" in kwargs["security_opt"]
+
     def test_container_start_with_context_manager(self, mock_docker_client):
         mock_docker_client.client.containers.run.return_value = MagicMock()
 
