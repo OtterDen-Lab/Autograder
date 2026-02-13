@@ -5,6 +5,7 @@ import itertools
 import logging
 import os
 import queue
+import random
 import tempfile
 import threading
 import time
@@ -36,6 +37,8 @@ UPLOAD_MAX_WORKERS = 4
 UPLOAD_MAX_IN_FLIGHT = 8
 RETRY_BACKOFF_BASE = 1.0
 RETRY_BACKOFF_MAX = 10.0
+RETRY_BACKOFF_JITTER_RATIO = 0.2
+RETRY_TOTAL_TIMEOUT_SECONDS = 120.0
 
 
 def _canvas_exception_status(exc: Exception) -> int | None:
@@ -81,6 +84,23 @@ def _format_canvas_exception(exc: Exception) -> str:
       except Exception:
         pass
   return " | ".join(parts)
+
+
+def _compute_retry_delay_seconds(
+    attempt: int,
+    *,
+    retry_backoff_base: float,
+    retry_backoff_max: float,
+    retry_backoff_jitter_ratio: float,
+) -> float:
+  base_delay = min(retry_backoff_base * (2 ** (attempt - 1)),
+                   retry_backoff_max)
+  if retry_backoff_jitter_ratio <= 0:
+    return max(0.0, base_delay)
+
+  jitter_window = max(0.0, base_delay * retry_backoff_jitter_ratio)
+  jittered = base_delay + random.uniform(-jitter_window, jitter_window)
+  return max(0.0, min(jittered, retry_backoff_max))
 
 
 
@@ -537,34 +557,70 @@ class CanvasCourse(LMSWrapper):
       max_upload_retries: int,
       retry_backoff_base: float,
       retry_backoff_max: float,
-      backoff_controller: "_CanvasBackoffController | None"
+      backoff_controller: "_CanvasBackoffController | None",
+      retry_backoff_jitter_ratio: float = RETRY_BACKOFF_JITTER_RATIO,
+      retry_total_timeout_seconds: float | None = RETRY_TOTAL_TIMEOUT_SECONDS
   ) -> bool:
+    started_at = time.monotonic()
+    deadline = None
+    if (retry_total_timeout_seconds is not None
+        and retry_total_timeout_seconds > 0):
+      deadline = started_at + retry_total_timeout_seconds
+
     for attempt in range(1, max_upload_retries + 1):
       if backoff_controller is not None:
         backoff_controller.wait()
+      if deadline is not None and time.monotonic() >= deadline:
+        elapsed = time.monotonic() - started_at
+        log.error(
+          f"Exceeded retry duration ({elapsed:.1f}s, cap={retry_total_timeout_seconds:.1f}s); dropping question: {label}"
+        )
+        return False
       try:
         func()
         return True
       except canvasapi.exceptions.CanvasException as e:
-        log.warning("Encountered Canvas error.")
+        status = _canvas_exception_status(e)
+        retryable = _is_retryable_canvas_exception(e)
+        error_type = "transient" if retryable else "permanent"
+        log.warning(
+          f"Encountered {error_type} Canvas error for {label} "
+          f"(status={status}, attempt={attempt}/{max_upload_retries})."
+        )
         log.warning(e)
         extra = _format_canvas_exception(e)
         if extra:
           log.warning(extra)
-        if not _is_retryable_canvas_exception(e):
+        if not retryable:
           log.error(f"Non-retryable Canvas error; dropping question: {label}")
           return False
         if attempt >= max_upload_retries:
           log.error(f"Exceeded max retries ({max_upload_retries}); dropping question: {label}")
           return False
-        sleep_s = min(retry_backoff_base * (2 ** (attempt - 1)), retry_backoff_max)
-        if backoff_controller is not None and _canvas_exception_status(e) == 429:
+        sleep_s = _compute_retry_delay_seconds(
+          attempt,
+          retry_backoff_base=retry_backoff_base,
+          retry_backoff_max=retry_backoff_max,
+          retry_backoff_jitter_ratio=retry_backoff_jitter_ratio,
+        )
+        if deadline is not None:
+          remaining = deadline - time.monotonic()
+          if remaining <= 0:
+            elapsed = time.monotonic() - started_at
+            log.error(
+              f"Exceeded retry duration ({elapsed:.1f}s, cap={retry_total_timeout_seconds:.1f}s); dropping question: {label}"
+            )
+            return False
+          sleep_s = min(sleep_s, remaining)
+
+        if backoff_controller is not None and status == 429:
           backoff_controller.defer(sleep_s)
         log.warning(
-          f"Retrying {label} in {sleep_s:.1f}s "
+          f"Retrying {label} in {sleep_s:.2f}s "
           f"(attempt {attempt}/{max_upload_retries})"
         )
-        time.sleep(sleep_s)
+        if sleep_s > 0:
+          time.sleep(sleep_s)
     return False
 
   def get_assignment(self, assignment_id : int) -> CanvasAssignment | None:

@@ -22,6 +22,7 @@ from lms_interface.canvas_interface import (
     _is_retryable_canvas_exception,
     _canvas_exception_status,
     _format_canvas_exception,
+    _compute_retry_delay_seconds,
 )
 
 
@@ -337,6 +338,95 @@ class TestCanvasCourseRetry:
         assert result is False
         assert call_count[0] == 1  # Only tried once
 
+    def test_call_canvas_with_retry_uses_jittered_sleep(self):
+        """Retry delay should include jitter when enabled."""
+        interface = CanvasInterface(
+            canvas_url="https://canvas.example.edu",
+            canvas_key="token",
+        )
+        mock_canvasapi_course = MagicMock()
+        mock_canvasapi_course.id = 123
+        course = CanvasCourse(
+            canvas_interface=interface,
+            canvasapi_course=mock_canvasapi_course,
+        )
+
+        call_count = [0]
+
+        def flaky_once():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                import canvasapi.exceptions
+                raise canvasapi.exceptions.CanvasException("Server error")
+            return "ok"
+
+        with patch.object(canvas_interface, '_canvas_exception_status', return_value=500):
+            with patch.object(canvas_interface, '_is_retryable_canvas_exception', return_value=True):
+                with patch.object(canvas_interface.random, 'uniform', return_value=0.1):
+                    with patch.object(canvas_interface.time, 'sleep') as mock_sleep:
+                        result = course._call_canvas_with_retry(
+                            label="test",
+                            func=flaky_once,
+                            max_upload_retries=3,
+                            retry_backoff_base=1.0,
+                            retry_backoff_max=10.0,
+                            backoff_controller=None,
+                            retry_backoff_jitter_ratio=0.2,
+                        )
+
+        assert result is True
+        assert call_count[0] == 2
+        # base delay 1.0 with +0.1 jitter should sleep 1.1
+        assert mock_sleep.call_count == 1
+        assert mock_sleep.call_args.args[0] == pytest.approx(1.1, rel=1e-6)
+
+    def test_call_canvas_with_retry_caps_total_retry_duration(self):
+        """Retry loop should stop once total retry duration cap is reached."""
+        interface = CanvasInterface(
+            canvas_url="https://canvas.example.edu",
+            canvas_key="token",
+        )
+        mock_canvasapi_course = MagicMock()
+        mock_canvasapi_course.id = 123
+        course = CanvasCourse(
+            canvas_interface=interface,
+            canvasapi_course=mock_canvasapi_course,
+        )
+
+        call_count = [0]
+
+        def always_fails():
+            call_count[0] += 1
+            import canvasapi.exceptions
+            raise canvasapi.exceptions.CanvasException("Server error")
+
+        fake_clock = {"t": 0.0}
+
+        def fake_monotonic():
+            return fake_clock["t"]
+
+        def fake_sleep(seconds):
+            fake_clock["t"] += seconds
+
+        with patch.object(canvas_interface, '_canvas_exception_status', return_value=500):
+            with patch.object(canvas_interface, '_is_retryable_canvas_exception', return_value=True):
+                with patch.object(canvas_interface.time, 'monotonic', side_effect=fake_monotonic):
+                    with patch.object(canvas_interface.time, 'sleep', side_effect=fake_sleep):
+                        result = course._call_canvas_with_retry(
+                            label="test",
+                            func=always_fails,
+                            max_upload_retries=10,
+                            retry_backoff_base=0.1,
+                            retry_backoff_max=0.1,
+                            backoff_controller=None,
+                            retry_backoff_jitter_ratio=0.0,
+                            retry_total_timeout_seconds=0.15,
+                        )
+
+        assert result is False
+        # attempt 1 at t=0.0, sleep 0.1; attempt 2 at t=0.1, sleep 0.05; then cap reached
+        assert call_count[0] == 2
+
 
 class TestCanvasAssignmentSubmissions:
     """Tests for assignment submission handling."""
@@ -402,3 +492,27 @@ class TestBackoffController:
 
         # Should wait for the longer delay
         assert elapsed >= 0.05
+
+
+class TestRetryDelayCalculation:
+    """Tests for retry delay calculation with jitter."""
+
+    def test_compute_retry_delay_without_jitter(self):
+        delay = _compute_retry_delay_seconds(
+            3,
+            retry_backoff_base=1.0,
+            retry_backoff_max=10.0,
+            retry_backoff_jitter_ratio=0.0,
+        )
+        assert delay == pytest.approx(4.0)
+
+    def test_compute_retry_delay_with_jitter_and_cap(self):
+        with patch.object(canvas_interface.random, 'uniform', return_value=2.0):
+            delay = _compute_retry_delay_seconds(
+                4,
+                retry_backoff_base=1.0,
+                retry_backoff_max=5.0,
+                retry_backoff_jitter_ratio=0.5,
+            )
+        # base delay would be 5.0 after cap; jitter tries to push above max, should stay capped.
+        assert delay == pytest.approx(5.0)
