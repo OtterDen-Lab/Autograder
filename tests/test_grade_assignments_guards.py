@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from Autograder import grade_assignments
-from Autograder.config_models import AssignmentRunRequest
+from Autograder.config_models import AssignmentRunRequest, RunConfig
 from lms_interface.classes import Feedback, Submission, Student
 
 
@@ -87,6 +87,18 @@ def test_parse_args_accepts_explicit_yaml(monkeypatch, tmp_path):
   assert args.yaml == str(yaml_file)
 
 
+def test_parse_args_accepts_reveal_identity_flag(monkeypatch, tmp_path):
+  yaml_file = tmp_path / "config.yaml"
+  yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
+
+  monkeypatch.setattr(
+    sys, "argv",
+    ["grade-assignments", "--yaml",
+     str(yaml_file), "--reveal-identity"])
+  args = grade_assignments.parse_args()
+  assert args.reveal_identity is True
+
+
 def test_record_retention_requires_explicit_records_dir(monkeypatch):
   class DummyAssignment:
     def __init__(self):
@@ -159,3 +171,25 @@ def test_record_retention_requires_explicit_records_dir(monkeypatch):
 
   assert result["success"] is False
   assert "explicit records_dir" in result["error"]
+
+
+def test_resolve_reveal_identity_defaults_to_false():
+  args = SimpleNamespace(reveal_identity=False)
+  config = RunConfig(reveal_identity=False)
+  assert grade_assignments.resolve_reveal_identity(args, config) is False
+
+
+def test_resolve_reveal_identity_requires_break_glass(monkeypatch):
+  args = SimpleNamespace(reveal_identity=True)
+  config = RunConfig(reveal_identity=False)
+  monkeypatch.delenv("AUTOGRADER_BREAK_GLASS", raising=False)
+
+  with pytest.raises(SystemExit):
+    grade_assignments.resolve_reveal_identity(args, config)
+
+
+def test_resolve_reveal_identity_with_break_glass(monkeypatch):
+  args = SimpleNamespace(reveal_identity=False)
+  config = RunConfig(reveal_identity=True)
+  monkeypatch.setenv("AUTOGRADER_BREAK_GLASS", "1")
+  assert grade_assignments.resolve_reveal_identity(args, config) is True

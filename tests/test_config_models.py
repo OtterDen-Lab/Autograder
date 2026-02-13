@@ -25,12 +25,14 @@ def test_parse_run_config_rejects_course_without_assignment_groups():
 
 
 def test_collect_assignments_to_grade_builds_typed_requests(monkeypatch):
+  captured_init = {}
+
   class DummyCourse:
     name = "CST"
 
   class DummyCanvasInterface:
     def __init__(self, *args, **kwargs):
-      pass
+      captured_init.update(kwargs)
 
     def get_course(self, _):
       return DummyCourse()
@@ -40,6 +42,7 @@ def test_collect_assignments_to_grade_builds_typed_requests(monkeypatch):
   run_config = parse_run_config({
     "prod": False,
     "push": True,
+    "privacy_mode": "blind",
     "assignment_types": {
       "programming": {
         "kind": "ProgrammingAssignment",
@@ -80,6 +83,57 @@ def test_collect_assignments_to_grade_builds_typed_requests(monkeypatch):
   assert request.grader_name == "template-grader"
   assert request.repo_path == "PA1"
   assert request.push_grades is True
+  assert request.privacy_mode == "blind"
+  assert request.reveal_identity is False
   assert request.settings["base_image_name"] == "group-base"
   assert request.settings["record_retention"] is False
   assert request.settings["records_dir"] == "/tmp/records"
+  assert captured_init["privacy_mode"] == "blind"
+  assert captured_init["reveal_identity"] is False
+
+
+def test_parse_run_config_accepts_privacy_mode_and_reveal_identity():
+  run_config = parse_run_config({
+    "privacy_mode": "blind",
+    "reveal_identity": True,
+    "assignment_types": {
+      "text": {
+        "kind": "TextAssignment",
+        "grader": "TextSubmissionGrader"
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "text",
+        "assignments": [{
+          "id": 99
+        }]
+      }]
+    }]
+  })
+
+  assert run_config.privacy_mode == "blind"
+  assert run_config.reveal_identity is True
+
+
+def test_parse_run_config_rejects_invalid_privacy_mode():
+  with pytest.raises(ValueError):
+    parse_run_config({
+      "privacy_mode": "full",
+      "assignment_types": {
+        "programming": {
+          "kind": "ProgrammingAssignment",
+          "grader": "template-grader"
+        }
+      },
+      "courses": [{
+        "id": 1,
+        "assignment_groups": [{
+          "type": "programming",
+          "assignments": [{
+            "id": 2
+          }]
+        }]
+      }]
+    })

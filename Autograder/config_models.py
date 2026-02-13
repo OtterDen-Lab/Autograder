@@ -42,6 +42,8 @@ class CourseConfig:
 class RunConfig:
   prod: bool = False
   push: bool = False
+  privacy_mode: str = "id_only"
+  reveal_identity: bool = False
   reporting: Dict[str, Any] = field(default_factory=dict)
   error_slack_channel: Optional[str] = None
   assignment_types: Dict[str, AssignmentTypeConfig] = field(default_factory=dict)
@@ -62,6 +64,8 @@ class AssignmentRunRequest:
   args: Any
   push_grades: bool
   slack_channel: Optional[str]
+  reveal_identity: bool = False
+  privacy_mode: str = "id_only"
 
 
 def _require_dict(value: Any, label: str) -> Dict[str, Any]:
@@ -177,6 +181,10 @@ def parse_run_config(raw_config: Any) -> RunConfig:
 
   assignment_types = _parse_assignment_types(config['assignment_types'])
   courses = [_parse_course(c) for c in raw_courses]
+  privacy_mode = config.get('privacy_mode', 'id_only')
+  if privacy_mode not in {"none", "id_only", "blind"}:
+    raise ValueError(
+      "privacy_mode must be one of: none, id_only, blind")
 
   for course in courses:
     for group in course.assignment_groups:
@@ -187,6 +195,8 @@ def parse_run_config(raw_config: Any) -> RunConfig:
   return RunConfig(
     prod=bool(config.get('prod', False)),
     push=bool(config.get('push', False)),
+    privacy_mode=privacy_mode,
+    reveal_identity=bool(config.get('reveal_identity', False)),
     reporting=dict(config.get('reporting', {})),
     error_slack_channel=config.get('error_slack_channel'),
     assignment_types=assignment_types,

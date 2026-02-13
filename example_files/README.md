@@ -17,5 +17,7 @@ This directory contains YAML examples for the currently supported grading flows.
 ## Notes
 
 - Prefer `workhorse.yaml` for new setups.
+- Set `privacy_mode` to `id_only` (default), `blind`, or `none` at top level.
+- Set `reveal_identity: true` only for break-glass debugging and run with `AUTOGRADER_BREAK_GLASS=1`.
 - `record_retention: true` requires an explicit `records_dir`.
 - Each student programming submission is graded in a fresh Docker container.

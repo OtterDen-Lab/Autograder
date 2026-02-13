@@ -24,6 +24,9 @@ CANVAS_API_URL=https://your-institution.instructure.com
 Create a YAML file (e.g., `assignments.yaml`) defining your courses and assignments:
 
 ```yaml
+privacy_mode: id_only  # none | id_only | blind
+reveal_identity: false
+
 assignment_types:
   programming:
     kind: ProgrammingAssignment
@@ -53,6 +56,12 @@ Use a specific env file:
 grade-assignments --yaml assignments.yaml --env /path/to/.env
 ```
 
+Temporarily include Canvas numeric IDs in logs (break-glass):
+
+```bash
+AUTOGRADER_BREAK_GLASS=1 grade-assignments --yaml assignments.yaml --reveal-identity
+```
+
 ## Features
 
 ### Supported Assignment Types
@@ -64,6 +73,7 @@ grade-assignments --yaml assignments.yaml --env /path/to/.env
 ### Key Capabilities
 
 - Parallel execution with configurable worker threads
+- Privacy modes: `none`, `id_only`, `blind`
 - Automatic score scaling to Canvas points
 - Slack notifications for grading errors
 - Record retention for audit trails

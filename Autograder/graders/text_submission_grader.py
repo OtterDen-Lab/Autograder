@@ -273,6 +273,7 @@ class TextSubmissionGrader(Grader):
     self.consolidated_questions = []
     self.slack_channel = kwargs.get('slack_channel')
     self.records_dir = None
+    self.reveal_identity = False
 
     # Model tier settings for each phase (small, medium, large)
     # Can be configured via grader settings in YAML
@@ -345,6 +346,7 @@ class TextSubmissionGrader(Grader):
     # Store AI provider preference and records directory
     self.prefer_anthropic = kwargs.get('prefer_anthropic', False)
     self.records_dir = kwargs.get('records_dir')
+    self.reveal_identity = kwargs.get('reveal_identity', False)
 
     # Initialize token tracking
     self.total_tokens = 0
@@ -589,9 +591,13 @@ class TextSubmissionGrader(Grader):
       student_name = submission_info.get('student_name', 'Unknown')
       submission_text = submission_info.get('text', '')
       word_count = submission_info.get('word_count', 0)
+      display_name = student_name
+      if self.reveal_identity and student_id is not None and str(
+          student_id) not in str(student_name):
+        display_name = f"{student_name} [canvas_user_id={student_id}]"
 
       log.info(
-        f"   Grading {i}/{len(submission_data)}: {student_name} ({word_count} words)"
+        f"   Grading {i}/{len(submission_data)}: {display_name} ({word_count} words)"
       )
 
       if not submission_text.strip():

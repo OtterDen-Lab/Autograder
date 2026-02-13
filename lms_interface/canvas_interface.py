@@ -92,7 +92,8 @@ class CanvasInterface:
       env_path: str | None = None,
       canvas_url: str | None = None,
       canvas_key: str | None = None,
-      privacy_mode: str | None = None
+      privacy_mode: str | None = None,
+      reveal_identity: bool = False
   ):
     self.env_path = env_path
     if canvas_url is not None or canvas_key is not None:
@@ -107,9 +108,12 @@ class CanvasInterface:
         dotenv.load_dotenv(os.path.join(os.path.expanduser("~"), ".env"))
 
     self.prod = prod
-    self.privacy_mode = privacy_mode
-    if self.privacy_mode not in {None, "id_only"}:
-      raise ValueError("privacy_mode must be None or 'id_only'.")
+    self.privacy_mode = privacy_mode or "id_only"
+    if self.privacy_mode not in {"none", "id_only", "blind"}:
+      raise ValueError("privacy_mode must be one of: none, id_only, blind.")
+    self.reveal_identity = reveal_identity
+    self._anon_by_user_id: dict[int, str] = {}
+    self._anon_lock = threading.Lock()
     if canvas_url is None and canvas_key is None:
       if self.prod:
         log.warning("Using canvas PROD!")
@@ -131,6 +135,23 @@ class CanvasInterface:
     # cap_req.Requester = RobustRequester
     # cap_canvas.Requester = RobustRequester
     self.canvas = canvasapi.Canvas(self.canvas_url, self.canvas_key)
+
+  def _anonymous_label_for_user(self, user_id: int) -> str:
+    with self._anon_lock:
+      if user_id not in self._anon_by_user_id:
+        self._anon_by_user_id[user_id] = f"Anon {len(self._anon_by_user_id) + 1:04d}"
+      return self._anon_by_user_id[user_id]
+
+  def resolve_student_name(self,
+                           user_id: int,
+                           raw_name: str | None = None) -> str:
+    if self.privacy_mode == "none":
+      if raw_name:
+        return raw_name
+      return f"Student {user_id}"
+    if self.privacy_mode == "id_only":
+      return f"Student {user_id}"
+    return self._anonymous_label_for_user(user_id)
     
   def get_course(self, course_id: int) -> CanvasCourse:
     if course_id is None:
@@ -501,7 +522,9 @@ class CanvasCourse(LMSWrapper):
       prod=self.canvas_interface.prod,
       env_path=self.canvas_interface.env_path,
       canvas_url=self.canvas_interface.canvas_url,
-      canvas_key=self.canvas_interface.canvas_key
+      canvas_key=self.canvas_interface.canvas_key,
+      privacy_mode=self.canvas_interface.privacy_mode,
+      reveal_identity=self.canvas_interface.reveal_identity
     )
     course = canvas_interface.get_course(self.course.id)
     return course.course.get_quiz(quiz_id)
@@ -571,12 +594,10 @@ class CanvasCourse(LMSWrapper):
     return self.course.get_user(user_id).name
   
   def get_students(self, *, include_names: bool = False) -> list[Student]:
-    if self.canvas_interface.privacy_mode == "id_only":
-      include_names = False
     students = [Student(s.name, s.id, s) for s in self.course.get_users(enrollment_type=["student"])]
-    if include_names:
+    if self.canvas_interface.privacy_mode == "none" and include_names:
       return students
-    return [self._apply_privacy(s) for s in students]
+    return [self._apply_privacy(s, raw_name=s.name) for s in students]
 
   def get_quiz(self, quiz_id: int) -> CanvasQuiz | None:
     """Get a specific quiz by ID"""
@@ -603,8 +624,9 @@ class CanvasCourse(LMSWrapper):
       )
     return quizzes
 
-  def _apply_privacy(self, student: Student) -> Student:
-    student.name = f"Student {student.user_id}"
+  def _apply_privacy(self, student: Student, raw_name: str | None = None) -> Student:
+    student.name = self.canvas_interface.resolve_student_name(student.user_id,
+                                                              raw_name=raw_name)
     return student
 
 
@@ -733,25 +755,24 @@ class CanvasAssignment(LMSWrapper):
       
       # Get the student object for the submission
       include_names = kwargs.get("include_names", False)
-      if self.canvas_course.canvas_interface.privacy_mode == "id_only":
-        include_names = False
+      user_id = canvaspai_submission.user_id
+      need_raw_name = (self.canvas_course.canvas_interface.privacy_mode == "none"
+                       or include_names or test_only)
+      raw_name = None
+      if need_raw_name:
+        try:
+          raw_name = self.canvas_course.get_username(user_id)
+        except Exception as e:
+          log.warning(f"Failed to fetch username for user_id {user_id}: {e}")
 
-      if include_names:
-        student = Student(
-          self.canvas_course.get_username(canvaspai_submission.user_id),
-          user_id=canvaspai_submission.user_id,
-          _inner=self.canvas_course.get_user(canvaspai_submission.user_id)
-        )
-      else:
-        student = Student(
-          f"Student {canvaspai_submission.user_id}",
-          user_id=canvaspai_submission.user_id,
-          _inner=None
-        )
-      if not include_names:
-        student = self.canvas_course._apply_privacy(student)
+      student = Student(
+        raw_name or f"Student {user_id}",
+        user_id=user_id,
+        _inner=(self.canvas_course.get_user(user_id) if include_names else None)
+      )
+      student = self.canvas_course._apply_privacy(student, raw_name=raw_name)
       
-      if test_only and not "Test Student" in student.name:
+      if test_only and not (raw_name and "Test Student" in raw_name):
         continue
       
       log.debug(f"Checking submissions for {student.name} ({len(canvaspai_submission.submission_history)} submissions)")
@@ -839,28 +860,26 @@ class CanvasQuiz(LMSWrapper):
       # Get the student object for the submission
       try:
         include_names = kwargs.get("include_names", False)
-        if self.canvas_course.canvas_interface.privacy_mode == "id_only":
-          include_names = False
+        user_id = canvasapi_quiz_submission.user_id
+        need_raw_name = (self.canvas_course.canvas_interface.privacy_mode
+                         == "none" or include_names or test_only)
+        raw_name = None
+        if need_raw_name:
+          raw_name = self.canvas_course.get_username(user_id)
 
-        if include_names:
-          student = Student(
-            self.canvas_course.get_username(canvasapi_quiz_submission.user_id),
-            user_id=canvasapi_quiz_submission.user_id,
-            _inner=self.canvas_course.get_user(canvasapi_quiz_submission.user_id)
-          )
-        else:
-          student = Student(
-            f"Student {canvasapi_quiz_submission.user_id}",
-            user_id=canvasapi_quiz_submission.user_id,
-            _inner=None
-          )
-        if not include_names:
-          student = self.canvas_course._apply_privacy(student)
+        student = Student(
+          raw_name or f"Student {user_id}",
+          user_id=user_id,
+          _inner=(self.canvas_course.get_user(user_id) if include_names else None)
+        )
+        student = self.canvas_course._apply_privacy(student, raw_name=raw_name)
       except Exception as e:
-        log.warning(f"Could not get student info for user_id {canvasapi_quiz_submission.user_id}: {e}")
+        log.warning(
+          f"Could not get student info for user_id {canvasapi_quiz_submission.user_id}: {e}"
+        )
         continue
 
-      if test_only and "Test Student" not in student.name:
+      if test_only and not (raw_name and "Test Student" in raw_name):
         continue
 
       log.debug(f"Processing quiz submission for {student.name}")

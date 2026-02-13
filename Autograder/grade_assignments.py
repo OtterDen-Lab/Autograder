@@ -68,6 +68,11 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--debug",
                       action="store_true",
                       help="Enable debug logging")
+  parser.add_argument(
+    "--reveal-identity",
+    action="store_true",
+    help="Include Canvas numeric IDs in logs (requires AUTOGRADER_BREAK_GLASS=1)"
+  )
 
   args = parser.parse_args()
 
@@ -99,6 +104,40 @@ def configure_logging(debug: bool) -> None:
   logging.getLogger(__name__).setLevel(level)
 
 
+def resolve_reveal_identity(args: argparse.Namespace,
+                            config: RunConfig) -> bool:
+  requested = bool(getattr(args, "reveal_identity", False)
+                   or config.reveal_identity)
+  if not requested:
+    return False
+
+  if os.getenv("AUTOGRADER_BREAK_GLASS") != "1":
+    raise SystemExit(
+      "Identity reveal requested but AUTOGRADER_BREAK_GLASS is not set to 1.")
+
+  log.warning(
+    "Break-glass identity reveal is enabled; Canvas numeric IDs may appear in logs."
+  )
+  return True
+
+
+def format_student_label(student, reveal_identity: bool = False) -> str:
+  if student is None:
+    return "Unknown Student"
+
+  name = getattr(student, "name", "Unknown Student")
+  user_id = getattr(student, "user_id", None)
+  if reveal_identity and user_id is not None and str(user_id) not in str(name):
+    return f"{name} [canvas_user_id={user_id}]"
+  return str(name)
+
+
+def format_submission_for_log(submission, reveal_identity: bool = False) -> str:
+  student = getattr(submission, "student", None)
+  feedback = getattr(submission, "feedback", None)
+  return f"{type(submission).__name__}({format_student_label(student, reveal_identity)} : {feedback})"
+
+
 @contextlib.contextmanager
 def ensure_single_instance():
   """
@@ -128,7 +167,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
   Grade a single assignment in a separate thread.
 
   Args:
-    assignment_data: Dict containing all data needed to grade one assignment
+    assignment_data: Assignment request containing all data needed to grade one assignment
 
   Returns:
     Dict with grading results and any errors
@@ -214,11 +253,15 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
       with grader:
         grader.grade_assignment(grading_assignment,
                                 **settings,
+                                reveal_identity=assignment_data.reveal_identity,
+                                privacy_mode=assignment_data.privacy_mode,
                                 merge_only=args.merge_only,
                                 do_regrade=do_regrade)
 
         for submission in grading_assignment.submissions:
-          log.info(f"{submission}")
+          log.info(
+            format_submission_for_log(
+              submission, reveal_identity=assignment_data.reveal_identity))
 
         if grader.ready_to_finalize:
           record_retention = bool(settings.get('record_retention'))
@@ -308,11 +351,16 @@ def collect_assignments_to_grade(config: RunConfig,
     List of assignment run requests ready for grading
   """
   env_path = args.env or os.path.join(os.path.expanduser("~"), ".env")
+  reveal_identity = resolve_reveal_identity(args, config)
+  log.info(
+    f"Using privacy_mode={config.privacy_mode}, reveal_identity={reveal_identity}"
+  )
 
   # Create the LMS interface
   lms_interface = CanvasInterface(prod=config.prod,
                                   env_path=env_path,
-                                  privacy_mode="id_only")
+                                  privacy_mode=config.privacy_mode,
+                                  reveal_identity=reveal_identity)
 
   assignments_to_grade = []
 
@@ -346,6 +394,8 @@ def collect_assignments_to_grade(config: RunConfig,
             args=args,
             push_grades=config.push,
             slack_channel=course_config.slack_channel,
+            reveal_identity=reveal_identity,
+            privacy_mode=config.privacy_mode,
           ))
 
   return assignments_to_grade

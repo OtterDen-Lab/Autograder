@@ -1,5 +1,7 @@
 prod: False
 push: False
+privacy_mode: id_only
+# reveal_identity: false  # Requires AUTOGRADER_BREAK_GLASS=1 at runtime
 
 reporting:
   slack_channel: C0AAD94FX5K

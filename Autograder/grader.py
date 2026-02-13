@@ -51,10 +51,15 @@ class Grader(abc.ABC):
 
     log.info(
       f"[{assignment_id}] Starting to grade {total_submissions} submissions")
+    reveal_identity = kwargs.get("reveal_identity", False)
 
     for i, submission in enumerate(assignment.submissions, 1):
       student_name = getattr(getattr(submission, "student", None), "name",
                              "Unknown Student")
+      user_id = getattr(getattr(submission, "student", None), "user_id", None)
+      if reveal_identity and user_id is not None and str(user_id) not in str(
+          student_name):
+        student_name = f"{student_name} [canvas_user_id={user_id}]"
       log.info(
         f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {student_name})"
       )
@@ -185,10 +190,15 @@ class FileBasedGrader(Grader):
 
     log.info(
       f"[{assignment_id}] Starting to grade {total_submissions} submissions")
+    reveal_identity = kwargs.get("reveal_identity", False)
 
     for i, submission in enumerate(assignment.submissions, 1):
       student_name = getattr(getattr(submission, "student", None), "name",
                              "Unknown Student")
+      user_id = getattr(getattr(submission, "student", None), "user_id", None)
+      if reveal_identity and user_id is not None and str(user_id) not in str(
+          student_name):
+        student_name = f"{student_name} [canvas_user_id={user_id}]"
       log.info(
         f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {student_name})"
       )
