@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -112,6 +113,18 @@ def test_parse_args_accepts_idempotency_options(monkeypatch, tmp_path):
   args = grade_assignments.parse_args()
   assert args.idempotency_key == "run-1"
   assert args.idempotency_state_dir == "./.state"
+
+
+def test_parse_args_accepts_show_stage_timings(monkeypatch, tmp_path):
+  yaml_file = tmp_path / "config.yaml"
+  yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
+
+  monkeypatch.setattr(
+    sys, "argv",
+    ["grade-assignments", "--yaml",
+     str(yaml_file), "--show-stage-timings"])
+  args = grade_assignments.parse_args()
+  assert args.show_stage_timings is True
 
 
 def test_record_retention_requires_explicit_records_dir(monkeypatch):
@@ -332,8 +345,11 @@ def test_grade_single_assignment_emits_stage_contract_on_success(monkeypatch):
 
   assert result["success"] is True
   assert result["stage_contract"]["prepare"]["has_submissions"] is True
+  assert result["stage_contract"]["prepare"]["duration_ms"] >= 0
   assert result["stage_contract"]["grade"]["graded_count"] == 1
+  assert result["stage_contract"]["grade"]["duration_ms"] >= 0
   assert result["stage_contract"]["publish"]["finalized"] is True
+  assert result["stage_contract"]["publish"]["duration_ms"] >= 0
 
 
 def test_grade_single_assignment_no_submissions_stage_contract(monkeypatch):
@@ -530,3 +546,50 @@ def test_send_slack_run_summary_notifies_on_push_failures(monkeypatch):
 
   assert sent["url"].endswith("/chat.postMessage")
   assert "Per-student push failures:" in sent["json"]["text"]
+
+
+def test_write_run_report_includes_stage_and_push_summaries(tmp_path):
+  report_path = tmp_path / "run_report.json"
+  results = [{
+    "success": True,
+    "assignment_name": "PA1",
+    "assignment_id": 42,
+    "course_name": "CST334",
+    "finalize_summary": {
+      "push_failed": 1,
+      "push_failed_students": ["Student 10"],
+      "push_attempted": 2,
+      "push_succeeded": 1,
+      "push_skipped": 0,
+    },
+    "stage_contract": {
+      "prepare": {
+        "submission_count": 2,
+        "duration_ms": 10
+      },
+      "grade": {
+        "submission_count": 2,
+        "graded_count": 2,
+        "duration_ms": 20
+      },
+      "publish": {
+        "duration_ms": 5,
+        "finalize_summary": {
+          "push_attempted": 2,
+          "push_succeeded": 1,
+          "push_failed": 1,
+          "push_skipped": 0,
+        }
+      },
+    },
+  }]
+  args = SimpleNamespace(report=str(report_path), yaml="config.yaml")
+
+  grade_assignments.write_run_report(results, args)
+
+  payload = json.loads(report_path.read_text(encoding="utf-8"))
+  assert payload["summary"]["push_failures_total"] == 1
+  assert "PA1" in payload["summary"]["push_failures"][0]
+  assert payload["summary"]["stage_contracts"]["prepare"]["count"] == 1
+  assert payload["summary"]["stage_contracts"]["prepare"]["total_duration_ms"] == 10
+  assert payload["summary"]["stage_contracts"]["publish"]["total_push_attempted"] == 2

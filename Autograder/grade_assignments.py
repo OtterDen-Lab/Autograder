@@ -5,6 +5,7 @@ import fcntl
 import os
 import threading
 import traceback
+import time
 from dataclasses import dataclass, asdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List
@@ -76,6 +77,10 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--debug",
                       action="store_true",
                       help="Enable debug logging")
+  parser.add_argument(
+    "--show-stage-timings",
+    action="store_true",
+    help="Print stage timing and push aggregate summary at end of run")
   parser.add_argument(
     "--reveal-identity",
     action="store_true",
@@ -233,18 +238,88 @@ def collect_push_failure_lines(results: List[Dict]) -> tuple[int, List[str]]:
   return total_failed_pushes, lines
 
 
+def summarize_stage_contracts(results: List[Dict]) -> Dict:
+  summary = {
+    "prepare": {
+      "count": 0,
+      "total_duration_ms": 0,
+      "total_submission_count": 0,
+    },
+    "grade": {
+      "count": 0,
+      "total_duration_ms": 0,
+      "total_submission_count": 0,
+      "total_graded_count": 0,
+    },
+    "publish": {
+      "count": 0,
+      "total_duration_ms": 0,
+      "total_push_attempted": 0,
+      "total_push_succeeded": 0,
+      "total_push_failed": 0,
+      "total_push_skipped": 0,
+    },
+  }
+
+  for result in results:
+    stage_contract = result.get("stage_contract") or {}
+    prepare = stage_contract.get("prepare")
+    grade = stage_contract.get("grade")
+    publish = stage_contract.get("publish")
+
+    if isinstance(prepare, dict):
+      summary["prepare"]["count"] += 1
+      summary["prepare"]["total_duration_ms"] += int(
+        prepare.get("duration_ms", 0) or 0)
+      summary["prepare"]["total_submission_count"] += int(
+        prepare.get("submission_count", 0) or 0)
+
+    if isinstance(grade, dict):
+      summary["grade"]["count"] += 1
+      summary["grade"]["total_duration_ms"] += int(
+        grade.get("duration_ms", 0) or 0)
+      summary["grade"]["total_submission_count"] += int(
+        grade.get("submission_count", 0) or 0)
+      summary["grade"]["total_graded_count"] += int(
+        grade.get("graded_count", 0) or 0)
+
+    if isinstance(publish, dict):
+      summary["publish"]["count"] += 1
+      summary["publish"]["total_duration_ms"] += int(
+        publish.get("duration_ms", 0) or 0)
+      finalize_summary = publish.get("finalize_summary") or {}
+      if isinstance(finalize_summary, dict):
+        summary["publish"]["total_push_attempted"] += int(
+          finalize_summary.get("push_attempted", 0) or 0)
+        summary["publish"]["total_push_succeeded"] += int(
+          finalize_summary.get("push_succeeded", 0) or 0)
+        summary["publish"]["total_push_failed"] += int(
+          finalize_summary.get("push_failed", 0) or 0)
+        summary["publish"]["total_push_skipped"] += int(
+          finalize_summary.get("push_skipped", 0) or 0)
+
+  for stage in ("prepare", "grade", "publish"):
+    count = int(summary[stage]["count"])
+    total = int(summary[stage]["total_duration_ms"])
+    summary[stage]["avg_duration_ms"] = int(total / count) if count else 0
+
+  return summary
+
+
 @dataclass
 class PrepareStageResult:
   needed_preparation: bool
   submission_count: int
   has_submissions: bool
   skipped_reason: str | None = None
+  duration_ms: int = 0
 
 
 @dataclass
 class GradeStageResult:
   submission_count: int
   graded_count: int
+  duration_ms: int = 0
 
 
 @dataclass
@@ -252,6 +327,7 @@ class PublishStageResult:
   finalized: bool
   finalize_summary: Dict | None = None
   skipped_reason: str | None = None
+  duration_ms: int = 0
 
 
 def run_prepare_stage(grader, grading_assignment, args, settings,
@@ -419,8 +495,11 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
         lms_assignment=lms_assignment,
         grading_root_dir=None) as grading_assignment:
 
+      prepare_started = time.perf_counter()
       prepare_result = run_prepare_stage(grader, grading_assignment, args,
                                          settings, do_regrade)
+      prepare_result.duration_ms = int((time.perf_counter() - prepare_started
+                                       ) * 1000)
       stage_contract = {
         "prepare": asdict(prepare_result),
         "grade": None,
@@ -441,12 +520,18 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
         }
 
       with grader:
+        grade_started = time.perf_counter()
         grade_result = run_grade_stage(grader, grading_assignment, settings,
                                        assignment_data, args, do_regrade)
+        grade_result.duration_ms = int((time.perf_counter() - grade_started
+                                       ) * 1000)
         stage_contract["grade"] = asdict(grade_result)
+        publish_started = time.perf_counter()
         publish_result = run_publish_stage(grader, grading_assignment, args,
                                            push_grades, assignment_data,
                                            record_retention, settings)
+        publish_result.duration_ms = int((time.perf_counter() - publish_started
+                                         ) * 1000)
         stage_contract["publish"] = asdict(publish_result)
 
     return {
@@ -682,6 +767,62 @@ def print_results_summary(results: List[Dict]) -> None:
       log.warning(line)
 
 
+def print_stage_timing_summary(results: List[Dict]) -> None:
+  def _format_seconds(duration_ms: int) -> str:
+    duration_ms = int(duration_ms or 0)
+    whole = duration_ms // 1000
+    remainder = duration_ms % 1000
+    return f"{whole}.{remainder:03d}s"
+
+  stage_summary = summarize_stage_contracts(results)
+  prepare = stage_summary.get("prepare", {})
+  grade = stage_summary.get("grade", {})
+  publish = stage_summary.get("publish", {})
+
+  log.info("Aggregate stage timing summary (s):")
+  log.info(
+    f"  Prepare: count={prepare.get('count', 0)}, total={_format_seconds(prepare.get('total_duration_ms', 0))}, avg={_format_seconds(prepare.get('avg_duration_ms', 0))}, submissions={prepare.get('total_submission_count', 0)}"
+  )
+  log.info(
+    f"  Grade: count={grade.get('count', 0)}, total={_format_seconds(grade.get('total_duration_ms', 0))}, avg={_format_seconds(grade.get('avg_duration_ms', 0))}, submissions={grade.get('total_submission_count', 0)}, graded={grade.get('total_graded_count', 0)}"
+  )
+  log.info(
+    f"  Publish: count={publish.get('count', 0)}, total={_format_seconds(publish.get('total_duration_ms', 0))}, avg={_format_seconds(publish.get('avg_duration_ms', 0))}, push_attempted={publish.get('total_push_attempted', 0)}, push_succeeded={publish.get('total_push_succeeded', 0)}, push_failed={publish.get('total_push_failed', 0)}, push_skipped={publish.get('total_push_skipped', 0)}"
+  )
+
+  log.info("Per-assignment stage timing summary (s):")
+  for result in results:
+    if not result.get("success"):
+      continue
+    stage_contract = result.get("stage_contract") or {}
+    prepare_result = stage_contract.get("prepare") or {}
+    grade_result = stage_contract.get("grade") or {}
+    publish_result = stage_contract.get("publish") or {}
+    finalize_summary = publish_result.get("finalize_summary") or {}
+
+    assignment_label = (result.get("assignment_name")
+                        or f"ID {result.get('assignment_id')}")
+    course_label = result.get("course_name") or "Unknown Course"
+
+    prepare_ms = int(prepare_result.get("duration_ms", 0) or 0)
+    prepare_submissions = int(prepare_result.get("submission_count", 0) or 0)
+
+    grade_ms = int(grade_result.get("duration_ms", 0) or 0)
+    graded_count = int(grade_result.get("graded_count", 0) or 0)
+
+    publish_ms = int(publish_result.get("duration_ms", 0) or 0)
+    publish_state = ("finalized" if publish_result.get("finalized", False)
+                     else f"skipped:{publish_result.get('skipped_reason')}")
+    push_enabled = finalize_summary.get("push_enabled", False)
+    push_attempted = int(finalize_summary.get("push_attempted", 0) or 0)
+    push_failed = int(finalize_summary.get("push_failed", 0) or 0)
+
+    log.info(
+      f"  {course_label} / {assignment_label}: prepare={_format_seconds(prepare_ms)} (submissions={prepare_submissions}), "
+      f"grade={_format_seconds(grade_ms)} (graded={graded_count}), publish={_format_seconds(publish_ms)} ({publish_state}, push_enabled={push_enabled}, "
+      f"push_attempted={push_attempted}, push_failed={push_failed})")
+
+
 def send_slack_run_summary(results: List[Dict], args: argparse.Namespace,
                            config: RunConfig) -> None:
   reporting_config = config.reporting
@@ -757,12 +898,20 @@ def write_run_report(results: List[Dict], args: argparse.Namespace) -> None:
 
   successful = sum(1 for r in results if r['success'])
   failed = len(results) - successful
+  push_failed_total, push_failure_lines = collect_push_failure_lines(results)
+  stage_contract_summary = summarize_stage_contracts(results)
 
   report_payload = {
     "run_started_at": datetime.now().isoformat(timespec="seconds"),
     "yaml_path": args.yaml,
     "successful": successful,
     "failed": failed,
+    "summary": {
+      "assignment_failures": failed,
+      "push_failures_total": push_failed_total,
+      "push_failures": push_failure_lines,
+      "stage_contracts": stage_contract_summary,
+    },
     "results": results,
   }
 
@@ -788,6 +937,8 @@ def main() -> int:
       results = execute_grading(assignments_to_grade, args)
 
       print_results_summary(results)
+      if args.show_stage_timings:
+        print_stage_timing_summary(results)
       write_run_report(results, args)
       send_slack_run_summary(results, args, config)
 

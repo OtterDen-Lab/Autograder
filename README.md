@@ -122,6 +122,12 @@ grade-assignments --yaml config.yaml --test
 grade-assignments --yaml config.yaml --max_workers 2
 ```
 
+### Show stage timings and push aggregates
+
+```bash
+grade-assignments --yaml config.yaml --show-stage-timings
+```
+
 ## Configuration
 
 See the `example_files/` directory for complete configuration examples:
@@ -150,7 +156,10 @@ This hook runs `scripts/check_repo_hygiene.sh` and blocks commits that include r
 
 ## Documentation
 
-For detailed documentation, see [the documentation directory](https://github.com/OtterDen-Lab/Autograder/tree/main/documentation).
+For detailed documentation, see:
+
+- `documentation/operations_runbook.md` (failure autopsy + rerun procedures)
+- [documentation directory on GitHub](https://github.com/OtterDen-Lab/Autograder/tree/main/documentation)
 
 ## License
 
