@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from Autograder import grade_assignments
+from Autograder.config_models import AssignmentRunRequest
 from lms_interface.classes import Feedback, Submission, Student
 
 
@@ -14,42 +15,44 @@ def test_execute_grading_returns_empty_list_for_no_assignments():
 
 
 def test_grade_single_assignment_blocks_quiz_flow():
-  result = grade_assignments.grade_single_assignment({
-    "course": None,
-    "course_name": "CST",
-    "yaml_assignment": {
-      "id": 1
-    },
-    "merged_assignment": {
-      "type": "quiz",
-      "kind": "QuizAssignment",
-      "grader": "QuizGrader"
-    },
-    "args": SimpleNamespace(
-      do_regrade=False, merge_only=False, limit=None, test=False),
-    "push_grades": False,
-  })
+  result = grade_assignments.grade_single_assignment(
+    AssignmentRunRequest(
+      course=None,
+      course_name="CST",
+      assignment_id=1,
+      assignment_type="quiz",
+      assignment_kind="QuizAssignment",
+      grader_name="QuizGrader",
+      settings={},
+      repo_path=None,
+      assignment_name=None,
+      args=SimpleNamespace(
+        do_regrade=False, merge_only=False, limit=None, test=False),
+      push_grades=False,
+      slack_channel=None,
+    ))
 
   assert result["success"] is False
   assert "disabled" in result["error"].lower()
 
 
 def test_grade_single_assignment_blocks_exam_kind():
-  result = grade_assignments.grade_single_assignment({
-    "course": None,
-    "course_name": "CST",
-    "yaml_assignment": {
-      "id": 2
-    },
-    "merged_assignment": {
-      "type": "assignment",
-      "kind": "Exam",
-      "grader": "Dummy"
-    },
-    "args": SimpleNamespace(
-      do_regrade=False, merge_only=False, limit=None, test=False),
-    "push_grades": False,
-  })
+  result = grade_assignments.grade_single_assignment(
+    AssignmentRunRequest(
+      course=None,
+      course_name="CST",
+      assignment_id=2,
+      assignment_type="assignment",
+      assignment_kind="Exam",
+      grader_name="Dummy",
+      settings={},
+      repo_path=None,
+      assignment_name=None,
+      args=SimpleNamespace(
+        do_regrade=False, merge_only=False, limit=None, test=False),
+      push_grades=False,
+      slack_channel=None,
+    ))
 
   assert result["success"] is False
   assert "disabled" in result["error"].lower()
@@ -135,27 +138,24 @@ def test_record_retention_requires_explicit_records_dir(monkeypatch):
   monkeypatch.setattr(grade_assignments.AssignmentRegistry, "create",
                       lambda *args, **kwargs: DummyAssignment())
 
-  result = grade_assignments.grade_single_assignment({
-    "course": DummyCourse(),
-    "course_name": "CST",
-    "yaml_assignment": {
-      "id": 42
-    },
-    "merged_assignment": {
-      "type": "assignment",
-      "kind": "ProgrammingAssignment",
-      "grader": "template-grader",
-      "settings": {
+  result = grade_assignments.grade_single_assignment(
+    AssignmentRunRequest(
+      course=DummyCourse(),
+      course_name="CST",
+      assignment_id=42,
+      assignment_type="assignment",
+      assignment_kind="ProgrammingAssignment",
+      grader_name="template-grader",
+      settings={
         "record_retention": True
       },
-      "kwargs": {
-        "record_retention": True
-      },
-    },
-    "args": SimpleNamespace(
-      do_regrade=False, merge_only=False, limit=None, test=False),
-    "push_grades": False,
-  })
+      repo_path=None,
+      assignment_name=None,
+      args=SimpleNamespace(
+        do_regrade=False, merge_only=False, limit=None, test=False),
+      push_grades=False,
+      slack_channel=None,
+    ))
 
   assert result["success"] is False
   assert "explicit records_dir" in result["error"]

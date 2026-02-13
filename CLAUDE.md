@@ -142,13 +142,13 @@ Settings merge priority: `type defaults → course → group → assignment`
 ### Grading Flow
 
 1. **Configuration Loading** (`grade_assignments.py:load_and_validate_config()`):
-   - Parse YAML, extract global flags (`prod`, `push`)
-   - Load assignment types into `TypeRegistry` if new format
+   - Parse YAML into typed config objects and extract global flags (`prod`, `push`)
+   - Validate `assignment_types` and `assignment_groups` contracts
 
 2. **Assignment Collection** (`collect_assignments_to_grade()`):
    - Create LMS interface (Canvas)
-   - For each course, process assignment_groups (new) or assignments (legacy)
-   - Merge settings and create assignment data structures
+   - For each course, process `assignment_groups` only
+   - Merge settings and create typed assignment run requests
 
 3. **Parallel Execution** (`execute_grading()`):
    - ThreadPoolExecutor with configurable workers (default: 4)
