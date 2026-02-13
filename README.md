@@ -26,6 +26,7 @@ Create a YAML file (e.g., `assignments.yaml`) defining your courses and assignme
 ```yaml
 privacy_mode: id_only  # none | id_only | blind
 reveal_identity: false
+idempotency_key: null  # Optional: set to skip re-pushing already pushed feedback
 
 assignment_types:
   programming:
@@ -62,6 +63,12 @@ Temporarily include Canvas numeric IDs in logs (break-glass):
 AUTOGRADER_BREAK_GLASS=1 grade-assignments --yaml assignments.yaml --reveal-identity
 ```
 
+Idempotent push mode (safe rerun key):
+
+```bash
+grade-assignments --yaml assignments.yaml --idempotency-key spring26-ll2
+```
+
 ## Features
 
 ### Supported Assignment Types
@@ -74,6 +81,7 @@ AUTOGRADER_BREAK_GLASS=1 grade-assignments --yaml assignments.yaml --reveal-iden
 
 - Parallel execution with configurable worker threads
 - Privacy modes: `none`, `id_only`, `blind`
+- Optional idempotent feedback push via `idempotency_key`
 - Automatic score scaling to Canvas points
 - Slack notifications for grading errors
 - Record retention for audit trails

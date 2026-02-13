@@ -2,6 +2,7 @@ prod: False
 push: False
 privacy_mode: id_only
 # reveal_identity: false  # Requires AUTOGRADER_BREAK_GLASS=1 at runtime
+# idempotency_key: "cst334-pa1-2026-02-13"
 
 reporting:
   slack_channel: C0AAD94FX5K

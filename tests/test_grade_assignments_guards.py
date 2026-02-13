@@ -99,6 +99,21 @@ def test_parse_args_accepts_reveal_identity_flag(monkeypatch, tmp_path):
   assert args.reveal_identity is True
 
 
+def test_parse_args_accepts_idempotency_options(monkeypatch, tmp_path):
+  yaml_file = tmp_path / "config.yaml"
+  yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
+
+  monkeypatch.setattr(
+    sys, "argv", [
+      "grade-assignments", "--yaml",
+      str(yaml_file), "--idempotency-key", "run-1", "--idempotency-state-dir",
+      "./.state"
+    ])
+  args = grade_assignments.parse_args()
+  assert args.idempotency_key == "run-1"
+  assert args.idempotency_state_dir == "./.state"
+
+
 def test_record_retention_requires_explicit_records_dir(monkeypatch):
   class DummyAssignment:
     def __init__(self):
@@ -193,3 +208,22 @@ def test_resolve_reveal_identity_with_break_glass(monkeypatch):
   config = RunConfig(reveal_identity=True)
   monkeypatch.setenv("AUTOGRADER_BREAK_GLASS", "1")
   assert grade_assignments.resolve_reveal_identity(args, config) is True
+
+
+def test_resolve_idempotency_settings_uses_cli_over_config():
+  args = SimpleNamespace(idempotency_key="  run-2  ",
+                         idempotency_state_dir="~/grader_state")
+  config = RunConfig(idempotency_key="run-1",
+                     idempotency_state_dir="/tmp/unused")
+  key, state_dir = grade_assignments.resolve_idempotency_settings(args, config)
+  assert key == "run-2"
+  assert state_dir.endswith("grader_state")
+
+
+def test_resolve_idempotency_settings_uses_config_defaults():
+  args = SimpleNamespace(idempotency_key=None, idempotency_state_dir=None)
+  config = RunConfig(idempotency_key="run-1",
+                     idempotency_state_dir=".autograder/idempotency")
+  key, state_dir = grade_assignments.resolve_idempotency_settings(args, config)
+  assert key == "run-1"
+  assert state_dir.endswith(".autograder/idempotency")

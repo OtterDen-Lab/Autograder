@@ -96,6 +96,8 @@ def test_parse_run_config_accepts_privacy_mode_and_reveal_identity():
   run_config = parse_run_config({
     "privacy_mode": "blind",
     "reveal_identity": True,
+    "idempotency_key": "run-42",
+    "idempotency_state_dir": "/tmp/autograder-state",
     "assignment_types": {
       "text": {
         "kind": "TextAssignment",
@@ -115,6 +117,8 @@ def test_parse_run_config_accepts_privacy_mode_and_reveal_identity():
 
   assert run_config.privacy_mode == "blind"
   assert run_config.reveal_identity is True
+  assert run_config.idempotency_key == "run-42"
+  assert run_config.idempotency_state_dir == "/tmp/autograder-state"
 
 
 def test_parse_run_config_rejects_invalid_privacy_mode():

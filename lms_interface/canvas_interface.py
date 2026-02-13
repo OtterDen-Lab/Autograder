@@ -690,7 +690,7 @@ class CanvasAssignment(LMSWrapper):
         log.error(extra)
       log.debug(f"Failed on user_id = {user_id})")
       log.debug(f"username: {self.canvas_course.get_user(user_id)}")
-      return
+      return False
     
     # Push feedback to canvas
     submission.edit(
@@ -732,6 +732,7 @@ class CanvasAssignment(LMSWrapper):
     
     for i, attachment_buffer in enumerate(attachments):
       upload_buffer_as_file(attachment_buffer.read(), attachment_buffer.name)
+    return True
   
   def get_submissions(self, only_include_most_recent: bool = True, **kwargs) -> list[Submission]:
     """
@@ -942,7 +943,7 @@ class CanvasQuiz(LMSWrapper):
     # Quiz submissions typically don't support the same feedback mechanisms as assignments
     # This is a placeholder for quiz-specific feedback handling
     log.warning("Quiz feedback pushing not yet implemented")
-    pass
+    return False
 
 
     

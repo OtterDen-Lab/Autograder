@@ -73,6 +73,14 @@ def parse_args() -> argparse.Namespace:
     action="store_true",
     help="Include Canvas numeric IDs in logs (requires AUTOGRADER_BREAK_GLASS=1)"
   )
+  parser.add_argument(
+    "--idempotency-key",
+    default=None,
+    help="Skip pushing feedback already pushed under this idempotency key")
+  parser.add_argument(
+    "--idempotency-state-dir",
+    default=None,
+    help="Directory for idempotency state files (default from config)")
 
   args = parser.parse_args()
 
@@ -119,6 +127,21 @@ def resolve_reveal_identity(args: argparse.Namespace,
     "Break-glass identity reveal is enabled; Canvas numeric IDs may appear in logs."
   )
   return True
+
+
+def resolve_idempotency_settings(
+    args: argparse.Namespace, config: RunConfig) -> tuple[str | None, str]:
+  idempotency_key = getattr(args, "idempotency_key", None)
+  if idempotency_key is None:
+    idempotency_key = config.idempotency_key
+  if isinstance(idempotency_key, str):
+    idempotency_key = idempotency_key.strip() or None
+
+  state_dir = (getattr(args, "idempotency_state_dir", None)
+               or config.idempotency_state_dir
+               or ".autograder/idempotency")
+  state_dir = os.path.abspath(os.path.expanduser(state_dir))
+  return idempotency_key, state_dir
 
 
 def format_student_label(student, reveal_identity: bool = False) -> str:
@@ -265,6 +288,12 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
 
         if grader.ready_to_finalize:
           record_retention = bool(settings.get('record_retention'))
+          finalize_kwargs = {
+            "push": push_grades,
+            "merge_only": args.merge_only,
+            "idempotency_key": assignment_data.idempotency_key,
+            "idempotency_state_dir": assignment_data.idempotency_state_dir,
+          }
           if record_retention:
             # Determine where to save records
             records_dir = settings.get('records_dir')
@@ -274,14 +303,11 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
               )
             # Expand user paths (like ~/records)
             records_dir = os.path.abspath(os.path.expanduser(records_dir))
-
-            grading_assignment.finalize(push=push_grades,
-                                        merge_only=args.merge_only,
-                                        record_retention=record_retention,
-                                        records_dir=records_dir)
-          else:
-            grading_assignment.finalize(push=push_grades,
-                                        merge_only=args.merge_only)
+            finalize_kwargs.update({
+              "record_retention": record_retention,
+              "records_dir": records_dir
+            })
+          grading_assignment.finalize(**finalize_kwargs)
 
     return {
       'success': True,
@@ -352,9 +378,15 @@ def collect_assignments_to_grade(config: RunConfig,
   """
   env_path = args.env or os.path.join(os.path.expanduser("~"), ".env")
   reveal_identity = resolve_reveal_identity(args, config)
+  idempotency_key, idempotency_state_dir = resolve_idempotency_settings(
+    args, config)
   log.info(
     f"Using privacy_mode={config.privacy_mode}, reveal_identity={reveal_identity}"
   )
+  if idempotency_key:
+    log.info(
+      f"Idempotency enabled with key '{idempotency_key}' (state dir: {idempotency_state_dir})"
+    )
 
   # Create the LMS interface
   lms_interface = CanvasInterface(prod=config.prod,
@@ -396,6 +428,8 @@ def collect_assignments_to_grade(config: RunConfig,
             slack_channel=course_config.slack_channel,
             reveal_identity=reveal_identity,
             privacy_mode=config.privacy_mode,
+            idempotency_key=idempotency_key,
+            idempotency_state_dir=idempotency_state_dir,
           ))
 
   return assignments_to_grade

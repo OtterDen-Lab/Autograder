@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import List, Dict
 import abc
 import os
+import json
 from Autograder.registry import AssignmentRegistry
 from lms_interface.canvas_interface import CanvasAssignment
 from lms_interface.classes import Student, Submission
@@ -85,8 +86,26 @@ class Assignment(abc.ABC):
     if kwargs.get("merge_only", False):
       return
 
+    push_enabled = bool(kwargs.get("push", False))
+    idempotency_key = kwargs.get("idempotency_key")
+    idempotency_state_dir = kwargs.get("idempotency_state_dir")
+    processed_user_ids = None
+    processed_dirty = False
+    if push_enabled and idempotency_key:
+      processed_user_ids = self._load_idempotency_user_ids(
+        idempotency_key, idempotency_state_dir)
+      log.info(
+        f"Idempotency tracking enabled for assignment {self.lms_assignment.name}: {len(processed_user_ids)} previously pushed submission(s)"
+      )
+
     log.debug("Pushing")
     for submission in self.submissions:
+      user_id = submission.student.user_id
+      if push_enabled and processed_user_ids is not None and user_id in processed_user_ids:
+        log.info(
+          f"Skipping push for {submission.student.name} (canvas_user_id={user_id}) due to idempotency key"
+        )
+        continue
 
       # Handle record retention before pushing to LMS
       if kwargs.get("record_retention", False):
@@ -95,18 +114,25 @@ class Assignment(abc.ABC):
                                    kwargs.get("records_dir"),
                                    self.lms_assignment.name)
 
-      if kwargs.get("push", False):
+      if push_enabled:
         log.info(f"Pushing feedback for: {submission}")
         # Scale the score for Canvas submission
         scaled_score = self.scale_score_for_canvas(
           submission.feedback.percentage_score)
-        self.lms_assignment.push_feedback(
+        pushed = self.lms_assignment.push_feedback(
           score=scaled_score,
           comments=submission.feedback.comments,
           attachments=submission.feedback.attachments,
-          user_id=submission.student.user_id,
+          user_id=user_id,
           keep_previous_best=True,
           clobber_feedback=False)
+        if pushed and processed_user_ids is not None:
+          processed_user_ids.add(user_id)
+          processed_dirty = True
+
+    if processed_user_ids is not None and processed_dirty:
+      self._save_idempotency_user_ids(
+        idempotency_key, idempotency_state_dir, processed_user_ids)
 
   def _save_feedback_record(self, student: Student, comments: str,
                             records_dir: str, assignment_name: str) -> None:
@@ -148,6 +174,45 @@ class Assignment(abc.ABC):
     except Exception as e:
       log.error(
         f"Failed to save feedback record for student {student.name}: {e}")
+
+  def _idempotency_state_path(self, idempotency_key: str,
+                              idempotency_state_dir: str | None) -> str:
+    key_safe = re.sub(r'[^A-Za-z0-9._-]', '_', idempotency_key)
+    state_dir = idempotency_state_dir or ".autograder/idempotency"
+    state_dir = os.path.abspath(os.path.expanduser(state_dir))
+
+    course = getattr(self.lms_assignment, "canvas_course", None)
+    course_id = getattr(course, "id", "unknown_course")
+    assignment_id = getattr(self.lms_assignment, "id", "unknown_assignment")
+    filename = f"{key_safe}.course_{course_id}.assignment_{assignment_id}.json"
+    return os.path.join(state_dir, filename)
+
+  def _load_idempotency_user_ids(self, idempotency_key: str,
+                                 idempotency_state_dir: str | None) -> set[int]:
+    path = self._idempotency_state_path(idempotency_key, idempotency_state_dir)
+    if not os.path.exists(path):
+      return set()
+
+    try:
+      with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+      user_ids = payload.get("user_ids", [])
+      return {int(u) for u in user_ids}
+    except Exception as e:
+      log.warning(
+        f"Failed to load idempotency state from {path}: {e}. Continuing without prior state.")
+      return set()
+
+  def _save_idempotency_user_ids(self, idempotency_key: str,
+                                 idempotency_state_dir: str | None,
+                                 user_ids: set[int]) -> None:
+    path = self._idempotency_state_path(idempotency_key, idempotency_state_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    payload = {"user_ids": sorted(user_ids)}
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+      json.dump(payload, f, indent=2)
+    os.replace(tmp_path, path)
 
   def scale_score_for_canvas(self, percentage_score: float) -> float:
     """
