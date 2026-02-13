@@ -212,10 +212,10 @@ def _require_tier(value: Any, label: str) -> str:
 def _normalize_template_grader_settings(
     settings: Dict[str, Any], context_label: str) -> Dict[str, Any]:
   raw = dict(settings)
-  if "extra_install_lines" in raw and "extra_dockerfile_lines" not in raw:
-    raw["extra_dockerfile_lines"] = raw.pop("extra_install_lines")
-  else:
-    raw.pop("extra_install_lines", None)
+  if "extra_install_lines" in raw:
+    raise ValueError(
+      f"{context_label}.extra_install_lines is not supported; use extra_dockerfile_lines"
+    )
 
   allowed = {
     "base_image_name",
@@ -501,6 +501,24 @@ def parse_run_config(raw_config: Any) -> RunConfig:
       if group.type_name not in assignment_types:
         raise ValueError(
           f"unknown assignment group type '{group.type_name}' in course {course.id}")
+
+      seen_assignment_ids = set()
+      duplicate_assignment_ids = set()
+      for assignment in group.assignments:
+        if assignment.disabled:
+          continue
+        if assignment.id in seen_assignment_ids:
+          duplicate_assignment_ids.add(assignment.id)
+        seen_assignment_ids.add(assignment.id)
+
+      if duplicate_assignment_ids:
+        duplicates = ", ".join(
+          str(assignment_id)
+          for assignment_id in sorted(duplicate_assignment_ids))
+        group_label = group.name or group.type_name
+        raise ValueError(
+          f"duplicate assignment id(s) in course {course.id}, "
+          f"group '{group_label}' ({group.type_name}): {duplicates}")
 
   return RunConfig(
     prod=bool(config.get('prod', False)),

@@ -37,17 +37,11 @@ log.setLevel(logging.INFO)
 
 def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser()
-  subparsers = parser.add_subparsers(dest="command", help="Available commands")
-
-  # TEST command - for testing text submission flow
-  test_parser = subparsers.add_parser(
-    "TEST", help="Test text submission flow with learning-logs.yaml")
-  test_parser.add_argument("--limit", default=None, type=int)
 
   parser.add_argument(
     "--yaml",
     default=None,
-    help="Path to grading YAML configuration (required unless using TEST)")
+    help="Path to grading YAML configuration")
   parser.add_argument("--env",
                       default=None,
                       help="Path to the .env file (defaults to ~/.env)")
@@ -97,16 +91,8 @@ def parse_args() -> argparse.Namespace:
 
   args = parser.parse_args()
 
-  # Handle TEST command
-  if args.command == "TEST":
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    args.yaml = os.path.join(repo_root, "example_files", "learning-logs.yaml")
-    args.do_regrade = True
-    args.test = True
-    args.max_workers = 1
-
   if args.yaml is None:
-    parser.error("--yaml is required (or use the TEST command)")
+    parser.error("--yaml is required")
   args.yaml = os.path.abspath(os.path.expanduser(args.yaml))
   if not os.path.isfile(args.yaml):
     parser.error(f"--yaml file not found: {args.yaml}")
@@ -115,6 +101,9 @@ def parse_args() -> argparse.Namespace:
     args.env = os.path.abspath(os.path.expanduser(args.env))
     if not os.path.isfile(args.env):
       parser.error(f"--env file not found: {args.env}")
+
+  if args.max_workers is not None and args.max_workers < 1:
+    parser.error("--max_workers must be >= 1")
 
   return args
 

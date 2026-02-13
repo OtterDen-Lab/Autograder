@@ -59,22 +59,18 @@ def test_grade_single_assignment_rejects_unsupported_grader_for_kind():
   assert "not supported" in result["error"].lower()
 
 
-def test_parse_args_requires_yaml_when_not_using_test(monkeypatch):
+def test_parse_args_requires_yaml(monkeypatch):
   monkeypatch.setattr(sys, "argv", ["grade-assignments"])
   with pytest.raises(SystemExit) as exc:
     grade_assignments.parse_args()
   assert exc.value.code == 2
 
 
-def test_parse_args_test_command_sets_expected_defaults(monkeypatch):
+def test_parse_args_rejects_legacy_test_subcommand(monkeypatch):
   monkeypatch.setattr(sys, "argv", ["grade-assignments", "TEST"])
-  args = grade_assignments.parse_args()
-  assert args.command == "TEST"
-  assert args.do_regrade is True
-  assert args.test is True
-  assert args.max_workers == 1
-  assert args.yaml.endswith(os.path.join("example_files", "learning-logs.yaml"))
-  assert os.path.isfile(args.yaml)
+  with pytest.raises(SystemExit) as exc:
+    grade_assignments.parse_args()
+  assert exc.value.code == 2
 
 
 def test_parse_args_accepts_explicit_yaml(monkeypatch, tmp_path):
@@ -125,6 +121,19 @@ def test_parse_args_accepts_show_stage_timings(monkeypatch, tmp_path):
      str(yaml_file), "--show-stage-timings"])
   args = grade_assignments.parse_args()
   assert args.show_stage_timings is True
+
+
+def test_parse_args_rejects_non_positive_max_workers(monkeypatch, tmp_path):
+  yaml_file = tmp_path / "config.yaml"
+  yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
+
+  monkeypatch.setattr(
+    sys, "argv",
+    ["grade-assignments", "--yaml",
+     str(yaml_file), "--max_workers", "0"])
+  with pytest.raises(SystemExit) as exc:
+    grade_assignments.parse_args()
+  assert exc.value.code == 2
 
 
 def test_record_retention_requires_explicit_records_dir(monkeypatch):

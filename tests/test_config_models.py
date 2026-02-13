@@ -208,7 +208,56 @@ def test_parse_run_config_rejects_grader_not_allowed_for_kind():
   assert "not supported for kind" in str(exc.value)
 
 
-def test_collect_assignments_normalizes_template_alias_settings(monkeypatch):
+def test_parse_run_config_rejects_duplicate_assignment_ids_in_group():
+  with pytest.raises(ValueError) as exc:
+    parse_run_config({
+      "assignment_types": {
+        "programming": {
+          "kind": "ProgrammingAssignment",
+          "grader": "template-grader"
+        }
+      },
+      "courses": [{
+        "id": 1,
+        "assignment_groups": [{
+          "type": "programming",
+          "assignments": [{
+            "id": 2
+          }, {
+            "id": 2
+          }]
+        }]
+      }]
+    })
+  assert "duplicate assignment id(s)" in str(exc.value)
+
+
+def test_parse_run_config_allows_duplicate_id_if_one_assignment_disabled():
+  run_config = parse_run_config({
+    "assignment_types": {
+      "programming": {
+        "kind": "ProgrammingAssignment",
+        "grader": "template-grader"
+      }
+    },
+    "courses": [{
+      "id": 1,
+      "assignment_groups": [{
+        "type": "programming",
+        "assignments": [{
+          "id": 2
+        }, {
+          "id": 2,
+          "disabled": True
+        }]
+      }]
+    }]
+  })
+
+  assert run_config.courses[0].assignment_groups[0].assignments[1].disabled is True
+
+
+def test_collect_assignments_rejects_template_alias_settings(monkeypatch):
   class DummyCourse:
     name = "CST"
 
@@ -245,10 +294,10 @@ def test_collect_assignments_normalizes_template_alias_settings(monkeypatch):
   })
 
   args = SimpleNamespace(env=None)
-  requests = grade_assignments.collect_assignments_to_grade(run_config, args)
-  settings = requests[0].settings
-  assert settings["extra_dockerfile_lines"] == ["RUN apt install clang"]
-  assert "extra_install_lines" not in settings
+  with pytest.raises(ValueError) as exc:
+    grade_assignments.collect_assignments_to_grade(run_config, args)
+  assert "extra_install_lines" in str(exc.value)
+  assert "extra_dockerfile_lines" in str(exc.value)
 
 
 def test_collect_assignments_rejects_unknown_template_setting(monkeypatch):
