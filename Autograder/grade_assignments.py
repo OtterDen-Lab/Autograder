@@ -22,6 +22,7 @@ from Autograder.config_models import (
   ACTIVE_GRADERS_BY_KIND,
   RunConfig,
   AssignmentRunRequest,
+  normalize_grader_settings,
   parse_run_config,
 )
 
@@ -484,6 +485,11 @@ def collect_assignments_to_grade(config: RunConfig,
         settings.update(course_config.settings)
         settings.update(group.settings)
         settings.update(assignment.settings)
+        settings = normalize_grader_settings(
+          type_config.grader,
+          settings,
+          (f"course[{course_config.id}] group[{group.type_name}] "
+           f"assignment[{assignment.id}]"))
 
         assignments_to_grade.append(
           AssignmentRunRequest(

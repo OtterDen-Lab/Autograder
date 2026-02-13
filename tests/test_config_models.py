@@ -206,3 +206,126 @@ def test_parse_run_config_rejects_grader_not_allowed_for_kind():
       }]
     })
   assert "not supported for kind" in str(exc.value)
+
+
+def test_collect_assignments_normalizes_template_alias_settings(monkeypatch):
+  class DummyCourse:
+    name = "CST"
+
+  class DummyCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      pass
+
+    def get_course(self, _):
+      return DummyCourse()
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface", DummyCanvasInterface)
+
+  run_config = parse_run_config({
+    "assignment_types": {
+      "programming": {
+        "kind": "ProgrammingAssignment",
+        "grader": "template-grader",
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "programming",
+        "settings": {
+          "source_repo": "https://example.com/repo.git",
+          "extra_install_lines": ["RUN apt install clang"],
+        },
+        "assignments": [{
+          "id": 99,
+          "repo_path": "PA1",
+        }]
+      }]
+    }]
+  })
+
+  args = SimpleNamespace(env=None)
+  requests = grade_assignments.collect_assignments_to_grade(run_config, args)
+  settings = requests[0].settings
+  assert settings["extra_dockerfile_lines"] == ["RUN apt install clang"]
+  assert "extra_install_lines" not in settings
+
+
+def test_collect_assignments_rejects_unknown_template_setting(monkeypatch):
+  class DummyCourse:
+    name = "CST"
+
+  class DummyCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      pass
+
+    def get_course(self, _):
+      return DummyCourse()
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface", DummyCanvasInterface)
+
+  run_config = parse_run_config({
+    "assignment_types": {
+      "programming": {
+        "kind": "ProgrammingAssignment",
+        "grader": "template-grader",
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "programming",
+        "settings": {
+          "unknown_knob": True
+        },
+        "assignments": [{
+          "id": 99
+        }]
+      }]
+    }]
+  })
+
+  with pytest.raises(ValueError) as exc:
+    grade_assignments.collect_assignments_to_grade(run_config,
+                                                   SimpleNamespace(env=None))
+  assert "unsupported template-grader setting" in str(exc.value)
+
+
+def test_collect_assignments_rejects_invalid_text_tier(monkeypatch):
+  class DummyCourse:
+    name = "CST"
+
+  class DummyCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      pass
+
+    def get_course(self, _):
+      return DummyCourse()
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface", DummyCanvasInterface)
+
+  run_config = parse_run_config({
+    "assignment_types": {
+      "text": {
+        "kind": "TextAssignment",
+        "grader": "TextSubmissionGrader",
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "text",
+        "settings": {
+          "phase2_tier": "xl"
+        },
+        "assignments": [{
+          "id": 99
+        }]
+      }]
+    }]
+  })
+
+  with pytest.raises(ValueError) as exc:
+    grade_assignments.collect_assignments_to_grade(run_config,
+                                                   SimpleNamespace(env=None))
+  assert "phase2_tier" in str(exc.value)
