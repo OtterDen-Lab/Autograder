@@ -19,7 +19,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync dependencies
-        run: uv sync --dev
+        run: uv sync --extra dev
 
       - name: Run repository hygiene checks
         run: bash scripts/check_repo_hygiene.sh
