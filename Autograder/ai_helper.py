@@ -3,7 +3,7 @@ import json
 import os
 import random
 import ollama
-from typing import Tuple, Dict, List
+from typing import Tuple, Dict, List, Any, Callable
 
 import dotenv
 import openai.types.chat.completion_create_params
@@ -85,6 +85,219 @@ MODEL_CONFIG = {
 
 # Default tier to use when not specified
 DEFAULT_MODEL_TIER = "small"
+
+
+class AIResponseValidationError(ValueError):
+  """Raised when an LLM response does not match the expected schema."""
+  pass
+
+
+def _coerce_str(value: Any, default: str = "") -> str:
+  if value is None:
+    return default
+  if isinstance(value, str):
+    return value
+  return str(value)
+
+
+def _coerce_int(value: Any,
+                *,
+                default: int = 0,
+                min_value: int | None = None,
+                max_value: int | None = None) -> int:
+  try:
+    coerced = int(value)
+  except (TypeError, ValueError):
+    coerced = default
+  if min_value is not None:
+    coerced = max(min_value, coerced)
+  if max_value is not None:
+    coerced = min(max_value, coerced)
+  return coerced
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+  if isinstance(value, bool):
+    return value
+  if isinstance(value, str):
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes"}:
+      return True
+    if normalized in {"false", "0", "no"}:
+      return False
+  if isinstance(value, (int, float)):
+    return bool(value)
+  return default
+
+
+def _coerce_str_list(value: Any) -> list[str]:
+  if value is None:
+    return []
+  if not isinstance(value, list):
+    raise AIResponseValidationError(
+      f"Expected list[str], got {type(value).__name__}.")
+  return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _default_aggregate_analysis() -> Dict[str, Any]:
+  return {
+    "common_themes": "",
+    "commonly_misunderstood_topics": [],
+    "misconception_details": "",
+    "key_insights": "",
+    "teaching_feedback": "",
+    "core_topics": [],
+    "related_topics": [],
+    "off_topic_indicators": [],
+    "student_questions": []
+  }
+
+
+def _default_individual_grading() -> Dict[str, Any]:
+  return {
+    "engagement_score": 0,
+    "relevance_score": 0,
+    "explanation_quality_score": 0,
+    "topics_covered": [],
+    "topics_missing": [],
+    "topics_needing_review": [],
+    "off_topic_content": "",
+    "misconception_notes": "",
+    "needs_support": False,
+    "support_reason": "",
+    "feedback": ""
+  }
+
+
+def _default_question_consolidation() -> Dict[str, Any]:
+  return {"consolidated_questions": []}
+
+
+def _validate_aggregate_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
+  if not isinstance(payload, dict):
+    raise AIResponseValidationError(
+      f"Expected object for aggregate_analysis, got {type(payload).__name__}.")
+
+  return {
+    "common_themes": _coerce_str(payload.get("common_themes", "")),
+    "commonly_misunderstood_topics": _coerce_str_list(
+      payload.get("commonly_misunderstood_topics", [])),
+    "misconception_details": _coerce_str(
+      payload.get("misconception_details", "")),
+    "key_insights": _coerce_str(payload.get("key_insights", "")),
+    "teaching_feedback": _coerce_str(payload.get("teaching_feedback", "")),
+    "core_topics": _coerce_str_list(payload.get("core_topics", [])),
+    "related_topics": _coerce_str_list(payload.get("related_topics", [])),
+    "off_topic_indicators": _coerce_str_list(
+      payload.get("off_topic_indicators", [])),
+    "student_questions": _coerce_str_list(payload.get("student_questions", [])),
+  }
+
+
+def _validate_individual_grading(payload: Dict[str, Any]) -> Dict[str, Any]:
+  if not isinstance(payload, dict):
+    raise AIResponseValidationError(
+      f"Expected object for individual_grading, got {type(payload).__name__}.")
+
+  return {
+    "engagement_score":
+    _coerce_int(payload.get("engagement_score", 0), min_value=0, max_value=4),
+    "relevance_score":
+    _coerce_int(payload.get("relevance_score", 0), min_value=0, max_value=2),
+    "explanation_quality_score":
+    _coerce_int(payload.get("explanation_quality_score", 0),
+                min_value=0,
+                max_value=2),
+    "topics_covered": _coerce_str_list(payload.get("topics_covered", [])),
+    "topics_missing": _coerce_str_list(payload.get("topics_missing", [])),
+    "topics_needing_review":
+    _coerce_str_list(payload.get("topics_needing_review", [])),
+    "off_topic_content": _coerce_str(payload.get("off_topic_content", "")),
+    "misconception_notes": _coerce_str(payload.get("misconception_notes", "")),
+    "needs_support": _coerce_bool(payload.get("needs_support", False)),
+    "support_reason": _coerce_str(payload.get("support_reason", "")),
+    "feedback": _coerce_str(payload.get("feedback", "")),
+  }
+
+
+def _validate_question_consolidation(payload: Dict[str, Any]) -> Dict[str, Any]:
+  if not isinstance(payload, dict):
+    raise AIResponseValidationError(
+      f"Expected object for question_consolidation, got {type(payload).__name__}."
+    )
+
+  groups_raw = payload.get("consolidated_questions", [])
+  if not isinstance(groups_raw, list):
+    raise AIResponseValidationError(
+      "Expected consolidated_questions to be a list.")
+
+  groups = []
+  for group in groups_raw:
+    if not isinstance(group, dict):
+      raise AIResponseValidationError(
+        f"Expected consolidated question entry object, got {type(group).__name__}."
+      )
+    groups.append({
+      "canonical_question":
+      _coerce_str(group.get("canonical_question", "")),
+      "original_questions":
+      _coerce_str_list(group.get("original_questions", [])),
+      "topic":
+      _coerce_str(group.get("topic", "General")),
+    })
+
+  return {"consolidated_questions": groups}
+
+
+RESPONSE_SCHEMAS: dict[str, dict[str, Callable[..., Dict[str, Any]]]] = {
+  "aggregate_analysis": {
+    "defaults": _default_aggregate_analysis,
+    "validator": _validate_aggregate_analysis,
+  },
+  "individual_grading": {
+    "defaults": _default_individual_grading,
+    "validator": _validate_individual_grading,
+  },
+  "question_consolidation": {
+    "defaults": _default_question_consolidation,
+    "validator": _validate_question_consolidation,
+  },
+}
+
+
+def validate_response_payload(payload: Dict[str, Any],
+                              *,
+                              schema_name: str | None = None,
+                              strict: bool = False) -> Dict[str, Any]:
+  """
+  Validate and normalize a JSON payload returned by an LLM.
+
+  Args:
+      payload: Parsed JSON object.
+      schema_name: Optional schema key in RESPONSE_SCHEMAS.
+      strict: If True, re-raise validation errors instead of returning defaults.
+
+  Returns:
+      Validated payload (normalized to expected types).
+  """
+  if schema_name is None:
+    if isinstance(payload, dict):
+      return payload
+    raise AIResponseValidationError(
+      f"Expected JSON object response, got {type(payload).__name__}.")
+
+  schema = RESPONSE_SCHEMAS.get(schema_name)
+  if schema is None:
+    raise ValueError(f"Unknown AI response schema: {schema_name}")
+
+  try:
+    return schema["validator"](payload)
+  except AIResponseValidationError as e:
+    log.warning(
+      f"LLM response schema validation failed for '{schema_name}': {e}")
+    if strict:
+      raise
+    return schema["defaults"]()
 
 
 def get_model_for_tier(provider: str, tier: str = None) -> str:
@@ -239,7 +452,9 @@ class AI_Helper__OpenAI(AI_Helper):
                attachments: List[Tuple[str, str]],
                max_response_tokens: int = DEFAULT_MAX_TOKENS,
                max_retries: int = DEFAULT_MAX_RETRIES,
-               tier: str = None) -> Tuple[Dict, Dict]:
+               tier: str = None,
+               schema_name: str | None = None,
+               strict_validation: bool = False) -> Tuple[Dict, Dict]:
     messages = []
 
     # Get model for the specified tier
@@ -290,14 +505,32 @@ class AI_Helper__OpenAI(AI_Helper):
     }
 
     try:
-      content = json.loads(response.choices[0].message.content)
-      return content, usage_info
-    except TypeError:
+      raw_content = response.choices[0].message.content
+      content = json.loads(raw_content)
+      validated = validate_response_payload(content,
+                                            schema_name=schema_name,
+                                            strict=strict_validation)
+      return validated, usage_info
+    except (TypeError, json.JSONDecodeError, AIResponseValidationError) as e:
+      log.warning(f"OpenAI response parse/validation error: {e}")
       if max_retries > 0:
-        return cls.query_ai(message, attachments, max_response_tokens,
-                            max_retries - 1)
-      else:
-        return {}, usage_info
+        return cls.query_ai(message,
+                            attachments,
+                            max_response_tokens=max_response_tokens,
+                            max_retries=max_retries - 1,
+                            tier=tier,
+                            schema_name=schema_name,
+                            strict_validation=strict_validation)
+
+      if strict_validation:
+        raise
+
+      fallback = {}
+      if schema_name is not None:
+        fallback = validate_response_payload({},
+                                             schema_name=schema_name,
+                                             strict=False)
+      return fallback, usage_info
 
 
 class AI_Helper__Ollama(AI_Helper):

@@ -185,26 +185,21 @@ class TestOpenAIHelper:
         assert result["score"] == 85
         assert usage["provider"] == "openai"
 
-    def test_query_ai_raises_on_malformed_json(self, monkeypatch):
-        """
-        BUG DOCUMENTATION: The current implementation catches TypeError but
-        json.loads raises JSONDecodeError for malformed JSON. This means
-        malformed responses are not retried as intended.
-
-        TODO: Fix ai_helper.py to catch json.JSONDecodeError instead of TypeError
-        """
+    def test_query_ai_returns_fallback_on_malformed_json(self, monkeypatch):
         mock_client = MockOpenAIClient(responses=["not valid json"])
         monkeypatch.setattr(
             ai_helper.AI_Helper__OpenAI, "_client", mock_client
         )
 
-        # Current behavior: JSONDecodeError is raised, not caught
-        with pytest.raises(json.JSONDecodeError):
-            ai_helper.AI_Helper__OpenAI.query_ai(
-                message="Grade this",
-                attachments=[],
-                max_retries=2,
-            )
+        result, _ = ai_helper.AI_Helper__OpenAI.query_ai(
+            message="Grade this",
+            attachments=[],
+            max_retries=2,
+        )
+
+        # Should retry, then gracefully fall back.
+        assert mock_client._chat.completions.call_count == 3
+        assert result == {}
 
     def test_query_ai_retries_on_none_content(self, monkeypatch):
         """
@@ -281,6 +276,60 @@ class TestOpenAIHelper:
         content = messages[0]["content"]
         assert len(content) == 2
         assert content[1]["type"] == "image_url"
+
+    def test_query_ai_schema_validation_returns_defaults(self, monkeypatch):
+        malformed = {
+            "engagement_score": "4",
+            "topics_covered": "not a list",
+            "needs_support": "maybe"
+        }
+        mock_client = MockOpenAIClient(responses=[json.dumps(malformed)])
+        monkeypatch.setattr(
+            ai_helper.AI_Helper__OpenAI, "_client", mock_client
+        )
+
+        result, _ = ai_helper.AI_Helper__OpenAI.query_ai(
+            message="Grade this",
+            attachments=[],
+            max_retries=0,
+            schema_name="individual_grading",
+        )
+
+        assert result["engagement_score"] == 0
+        assert result["topics_covered"] == []
+        assert result["needs_support"] is False
+        assert result["feedback"] == ""
+
+    def test_query_ai_schema_validation_normalizes_types(self, monkeypatch):
+        payload = {
+            "engagement_score": "4",
+            "relevance_score": "2",
+            "explanation_quality_score": "1",
+            "topics_covered": ["Scheduling", "Locks"],
+            "topics_missing": [],
+            "topics_needing_review": [],
+            "off_topic_content": None,
+            "misconception_notes": None,
+            "needs_support": "yes",
+            "support_reason": None,
+            "feedback": "Strong work",
+        }
+        mock_client = MockOpenAIClient(responses=[json.dumps(payload)])
+        monkeypatch.setattr(
+            ai_helper.AI_Helper__OpenAI, "_client", mock_client
+        )
+
+        result, _ = ai_helper.AI_Helper__OpenAI.query_ai(
+            message="Grade this",
+            attachments=[],
+            schema_name="individual_grading",
+        )
+
+        assert result["engagement_score"] == 4
+        assert result["relevance_score"] == 2
+        assert result["explanation_quality_score"] == 1
+        assert result["needs_support"] is True
+        assert result["topics_covered"] == ["Scheduling", "Locks"]
 
 
 class TestGradingResultIntegration:

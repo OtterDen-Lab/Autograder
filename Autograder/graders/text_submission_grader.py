@@ -463,16 +463,12 @@ class TextSubmissionGrader(Grader):
         # Try to parse JSON from Anthropic response
         json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
         if json_match:
-          result = json.loads(json_match.group())
+          result = validate_response_payload(json.loads(json_match.group()),
+                                             schema_name="aggregate_analysis")
         else:
-          # If no JSON found, create structured response from text
-          result = {
-            "common_themes": analysis_text,
-            "key_insights": "",
-            "learning_patterns": "",
-            "teaching_feedback": "",
-            "core_topics": []
-          }
+          # If no JSON found, keep the text as a safe fallback summary.
+          result = validate_response_payload({"common_themes": analysis_text},
+                                             schema_name="aggregate_analysis")
 
         # Store topics for use in Phase 2
         self._store_topics_from_result(result)
@@ -492,7 +488,8 @@ class TextSubmissionGrader(Grader):
       log.debug(f"Attempting aggregate analysis with OpenAI (tier={self.phase1_tier})...")
       ai_helper = AI_Helper__OpenAI()
       result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000,
-                                         tier=self.phase1_tier)
+                                         tier=self.phase1_tier,
+                                         schema_name="aggregate_analysis")
 
       # Track token usage
       self._track_token_usage(usage, "Phase 1 - Aggregate Analysis (OpenAI)")
@@ -525,16 +522,12 @@ class TextSubmissionGrader(Grader):
           # Try to parse JSON from Anthropic response
           json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
           if json_match:
-            result = json.loads(json_match.group())
+            result = validate_response_payload(json.loads(json_match.group()),
+                                               schema_name="aggregate_analysis")
           else:
-            # If no JSON found, create structured response from text
-            result = {
-              "common_themes": analysis_text,
-              "key_insights": "",
-              "learning_patterns": "",
-              "teaching_feedback": "",
-              "core_topics": []
-            }
+            # If no JSON found, keep the text as a safe fallback summary.
+            result = validate_response_payload({"common_themes": analysis_text},
+                                               schema_name="aggregate_analysis")
 
           # Store topics for use in Phase 2
           self._store_topics_from_result(result)
@@ -550,9 +543,13 @@ class TextSubmissionGrader(Grader):
           return {
             "common_themes": f"Error performing analysis: {e}",
             "key_insights": "",
-            "learning_patterns": "",
+            "misconception_details": "",
             "teaching_feedback": "",
-            "core_topics": []
+            "core_topics": [],
+            "related_topics": [],
+            "off_topic_indicators": [],
+            "commonly_misunderstood_topics": [],
+            "student_questions": []
           }
 
   def phase_2_individual_grading(self, submission_data: List[Dict],
@@ -567,7 +564,8 @@ class TextSubmissionGrader(Grader):
     Returns:
         List of individual grading results
     """
-    from Autograder.ai_helper import AI_Helper__OpenAI, AI_Helper__Anthropic
+    from Autograder.ai_helper import (AI_Helper__OpenAI, AI_Helper__Anthropic,
+                                      validate_response_payload)
     import json
     import re
 
@@ -670,7 +668,8 @@ class TextSubmissionGrader(Grader):
     """
     import json
     import re
-    from Autograder.ai_helper import AI_Helper__OpenAI, AI_Helper__Anthropic
+    from Autograder.ai_helper import (AI_Helper__OpenAI, AI_Helper__Anthropic,
+                                      validate_response_payload)
 
     if not all_questions:
       log.info("No questions found to consolidate")
@@ -696,7 +695,9 @@ class TextSubmissionGrader(Grader):
         # Try to parse JSON from response
         json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
         if json_match:
-          result = json.loads(json_match.group())
+          result = validate_response_payload(
+            json.loads(json_match.group()),
+            schema_name="question_consolidation")
           consolidated = result.get("consolidated_questions", [])
           log.info(
             f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
@@ -714,7 +715,8 @@ class TextSubmissionGrader(Grader):
       # Try OpenAI (either first choice or fallback)
       ai_helper = AI_Helper__OpenAI()
       result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000,
-                                         tier=self.phase25_tier)
+                                         tier=self.phase25_tier,
+                                         schema_name="question_consolidation")
 
       # Track token usage
       self._track_token_usage(usage,
@@ -745,7 +747,9 @@ class TextSubmissionGrader(Grader):
           # Try to parse JSON from response
           json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
           if json_match:
-            result = json.loads(json_match.group())
+            result = validate_response_payload(
+              json.loads(json_match.group()),
+              schema_name="question_consolidation")
             consolidated = result.get("consolidated_questions", [])
             log.info(
               f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
@@ -776,7 +780,8 @@ class TextSubmissionGrader(Grader):
     Returns:
         Dictionary with grading results
     """
-    from Autograder.ai_helper import AI_Helper__OpenAI, AI_Helper__Anthropic
+    from Autograder.ai_helper import (AI_Helper__OpenAI, AI_Helper__Anthropic,
+                                      validate_response_payload)
     import json
     import re
 
@@ -801,7 +806,8 @@ class TextSubmissionGrader(Grader):
         # Try to parse JSON from response
         json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
         if json_match:
-          result = json.loads(json_match.group())
+          result = validate_response_payload(json.loads(json_match.group()),
+                                             schema_name="individual_grading")
           result["student_id"] = student_id
           return result
         else:
@@ -827,7 +833,8 @@ class TextSubmissionGrader(Grader):
       # Try OpenAI (either first choice or fallback)
       ai_helper = AI_Helper__OpenAI()
       result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000,
-                                         tier=self.phase2_tier)
+                                         tier=self.phase2_tier,
+                                         schema_name="individual_grading")
 
       # Track token usage
       self._track_token_usage(
@@ -857,7 +864,8 @@ class TextSubmissionGrader(Grader):
           # Try to parse JSON from response
           json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
           if json_match:
-            result = json.loads(json_match.group())
+            result = validate_response_payload(json.loads(json_match.group()),
+                                               schema_name="individual_grading")
             result["student_id"] = student_id
             return result
           else:
