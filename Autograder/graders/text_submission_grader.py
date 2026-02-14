@@ -329,6 +329,79 @@ class RubricGenerator:
     return "\n".join(feedback_lines)
 
 
+class BatchProcessor:
+  """
+  Coordinates truncation and the 3-phase text grading pipeline.
+  """
+
+  def __init__(self, grader: "BaseTextSubmissionGrader"):
+    self.grader = grader
+
+  def run(self, assignment: Assignment, *, assignment_name: str,
+          course_name: str) -> bool:
+    submission_data = assignment.get_submission_data()
+    submission_texts = assignment.get_all_submission_texts()
+
+    if not submission_data:
+      log.info(
+        f"No submissions to grade for '{assignment_name}' - assignment may be unlocked"
+      )
+      return False
+
+    truncated_texts, truncation_count = self._truncate_batch(
+      submission_texts, submission_data)
+
+    if truncation_count > 0:
+      log.info(
+        f"Truncated {truncation_count} submission(s) exceeding {DEFAULT_MAX_WORDS} words or {DEFAULT_MAX_CHARACTERS} characters"
+      )
+
+    log.info(
+      f"Starting 3-phase grading for '{assignment_name}' with {len(submission_data)} submissions"
+    )
+
+    # Phase 1: Aggregate Analysis
+    log.info("Phase 1/3: Aggregate analysis")
+    self.grader.aggregate_results = self.grader.phase_1_aggregate_analysis(
+      truncated_texts, assignment_name, course_name)
+
+    # Phase 2: Individual Grading
+    log.info("Phase 2/3: Individual grading")
+    self.grader.individual_results = self.grader.phase_2_individual_grading(
+      submission_data, self.grader.core_topics)
+
+    # Apply grades to submissions
+    self.grader._apply_grades_to_submissions(assignment.submissions,
+                                             self.grader.individual_results)
+
+    # Phase 3: Report Generation
+    log.info("Phase 3/3: Report generation")
+    self.grader.phase_3_generate_report(self.grader.aggregate_results,
+                                        self.grader.individual_results)
+    return True
+
+  def _truncate_batch(self, submission_texts: List[str],
+                      submission_data: List[Dict]) -> tuple[List[str], int]:
+    truncated_texts = []
+    truncation_count = 0
+
+    for text in submission_texts:
+      truncated, was_truncated = self.grader._truncate_submission_text(text)
+      truncated_texts.append(truncated)
+      if was_truncated:
+        truncation_count += 1
+
+    for submission_info in submission_data:
+      original_text = submission_info.get('text', '')
+      truncated, was_truncated = self.grader._truncate_submission_text(
+        original_text)
+      if was_truncated:
+        submission_info['text'] = truncated
+        submission_info['was_truncated'] = True
+
+    return truncated_texts, truncation_count
+
+
 class BaseTextSubmissionGrader(Grader):
   COMPATIBLE_KINDS = {"TextAssignment"}
   """
@@ -360,6 +433,7 @@ class BaseTextSubmissionGrader(Grader):
     self.reveal_identity = False
     self.score_calculator = ScoreCalculator()
     self.rubric_generator = RubricGenerator()
+    self.batch_processor = BatchProcessor(self)
 
     # Model tier settings for each phase (small, medium, large)
     # Can be configured via grader settings in YAML
@@ -459,60 +533,9 @@ class BaseTextSubmissionGrader(Grader):
     self.usage_details = []
 
     assignment_name = assignment.lms_assignment.name
-    submission_data = assignment.get_submission_data()
-    submission_texts = assignment.get_all_submission_texts()
-
-    # Check if assignment was skipped due to lock date
-    if not submission_data:
-      log.info(
-        f"No submissions to grade for '{assignment_name}' - assignment may be unlocked"
-      )
-      return
-
-    # Truncate all submission texts before processing
-    truncated_texts = []
-    truncation_count = 0
-    for text in submission_texts:
-      truncated, was_truncated = self._truncate_submission_text(text)
-      truncated_texts.append(truncated)
-      if was_truncated:
-        truncation_count += 1
-
-    if truncation_count > 0:
-      log.info(
-        f"Truncated {truncation_count} submission(s) exceeding {DEFAULT_MAX_WORDS} words or {DEFAULT_MAX_CHARACTERS} characters"
-      )
-
-    # Also truncate in submission_data for phase 2
-    for submission_info in submission_data:
-      original_text = submission_info.get('text', '')
-      truncated, was_truncated = self._truncate_submission_text(original_text)
-      if was_truncated:
-        submission_info['text'] = truncated
-        submission_info['was_truncated'] = True
-
-    log.info(
-      f"Starting 3-phase grading for '{assignment_name}' with {len(submission_data)} submissions"
-    )
-
-    # Phase 1: Aggregate Analysis
-    log.info("Phase 1/3: Aggregate analysis")
-    self.aggregate_results = self.phase_1_aggregate_analysis(
-      truncated_texts, assignment_name, self.course_name)
-
-    # Phase 2: Individual Grading
-    log.info("Phase 2/3: Individual grading")
-    self.individual_results = self.phase_2_individual_grading(
-      submission_data, self.core_topics)
-
-    # Apply grades to submissions
-    self._apply_grades_to_submissions(assignment.submissions,
-                                      self.individual_results)
-
-    # Phase 3: Report Generation
-    log.info("Phase 3/3: Report generation")
-    self.phase_3_generate_report(self.aggregate_results,
-                                 self.individual_results)
+    self.batch_processor.run(assignment,
+                             assignment_name=assignment_name,
+                             course_name=self.course_name)
 
   def phase_1_aggregate_analysis(self, submission_texts: List[str],
                                  assignment_name: str,

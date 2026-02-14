@@ -1,6 +1,8 @@
 import json
+from types import SimpleNamespace
 
 from Autograder.graders.text_submission_grader import (
+  BatchProcessor,
   RubricGenerator,
   ScoreCalculator,
   TextSubmissionGrader,
@@ -56,6 +58,96 @@ def test_rubric_generator_includes_topics_needing_review_and_totals():
   assert "TOPICS TO REVIEW:" in rendered
   assert "- Deadlock" in rendered
   assert "FEEDBACK:" in rendered
+
+
+def test_batch_processor_truncates_and_runs_three_phase_pipeline():
+  class FakeGrader:
+    def __init__(self):
+      self.aggregate_results = {}
+      self.individual_results = []
+      self.core_topics = []
+      self.calls = []
+      self.phase2_submission_data = None
+
+    def _truncate_submission_text(self, text):
+      return ("trimmed text", True) if "very long" in text else (text, False)
+
+    def phase_1_aggregate_analysis(self, submission_texts, assignment_name, course_name):
+      self.calls.append(("phase1", assignment_name, course_name))
+      self.core_topics = ["Processes"]
+      return {"core_topics": ["Processes"], "student_questions": []}
+
+    def phase_2_individual_grading(self, submission_data, core_topics):
+      self.calls.append(("phase2", list(core_topics)))
+      self.phase2_submission_data = submission_data
+      return [{
+        "student_id": 1,
+        "total_grade": 10,
+        "feedback": "ok",
+      }]
+
+    def _apply_grades_to_submissions(self, submissions, individual_results):
+      self.calls.append(("apply", len(submissions), len(individual_results)))
+
+    def phase_3_generate_report(self, aggregate_results, individual_results):
+      self.calls.append(("phase3", bool(aggregate_results), len(individual_results)))
+
+  class FakeAssignment:
+    def __init__(self):
+      self.submissions = [object()]
+      self.lms_assignment = SimpleNamespace(name="Weekly Notes")
+
+    def get_submission_data(self):
+      return [{
+        "student_id": 1,
+        "student_name": "Anon 0001",
+        "text": "very long notes",
+        "word_count": 350,
+      }]
+
+    def get_all_submission_texts(self):
+      return ["very long notes"]
+
+  grader = FakeGrader()
+  processor = BatchProcessor(grader)
+  assignment = FakeAssignment()
+
+  ran = processor.run(assignment,
+                      assignment_name="Weekly Notes",
+                      course_name="CST334")
+
+  assert ran is True
+  assert grader.calls[0][0] == "phase1"
+  assert grader.calls[1][0] == "phase2"
+  assert grader.calls[2][0] == "apply"
+  assert grader.calls[3][0] == "phase3"
+  assert grader.phase2_submission_data[0]["text"] == "trimmed text"
+  assert grader.phase2_submission_data[0]["was_truncated"] is True
+
+
+def test_batch_processor_returns_false_when_no_submissions():
+  class FakeGrader:
+    def _truncate_submission_text(self, text):
+      return text, False
+
+    def phase_1_aggregate_analysis(self, *_args, **_kwargs):
+      raise AssertionError("phase_1 should not run")
+
+  class EmptyAssignment:
+    lms_assignment = SimpleNamespace(name="Weekly Notes")
+    submissions = []
+
+    def get_submission_data(self):
+      return []
+
+    def get_all_submission_texts(self):
+      return []
+
+  processor = BatchProcessor(FakeGrader())
+  ran = processor.run(EmptyAssignment(),
+                      assignment_name="Weekly Notes",
+                      course_name="CST334")
+  assert ran is False
 
 
 def test_text_submission_grader_is_alias_of_weekly_notes_grader():
