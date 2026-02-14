@@ -509,6 +509,90 @@ class QuestionConsolidator:
     return []
 
 
+class IndividualGradingProcessor:
+  """
+  Encapsulates Phase 2 individual grading orchestration.
+  """
+
+  def __init__(self, grader: "BaseTextSubmissionGrader"):
+    self.grader = grader
+
+  def grade_batch(self, submission_data: List[Dict],
+                  core_topics: List[str]) -> List[Dict]:
+    log.info(f"Grading {len(submission_data)} individual submissions...")
+
+    if not core_topics:
+      log.warning("No core topics available for individual grading")
+      core_topics = ["General class content"]
+
+    individual_results = []
+    self.grader.support_needed_students = []
+
+    for i, submission_info in enumerate(submission_data, 1):
+      student_id = submission_info.get('student_id')
+      student_name = submission_info.get('student_name', 'Unknown')
+      submission_text = submission_info.get('text', '')
+      word_count = submission_info.get('word_count', 0)
+      display_name = student_name
+      if self.grader.reveal_identity and student_id is not None and str(
+          student_id) not in str(student_name):
+        display_name = f"{student_name} [canvas_user_id={student_id}]"
+
+      log.debug(
+        f"   Grading {i}/{len(submission_data)}: {display_name} ({word_count} words)"
+      )
+
+      if not submission_text.strip():
+        # Handle empty submissions
+        result = {
+          "student_id": student_id,
+          "engagement_score": 0,
+          "relevance_score": 0,
+          "explanation_quality_score": 0,
+          "topics_covered": [],
+          "topics_missing": core_topics,
+          "topics_needing_review": [],
+          "misconception_notes": "",
+          "word_count": 0,
+          "needs_support": True,
+          "support_reason": "No submission content",
+          "feedback": "Please submit your study notes for grading."
+        }
+      else:
+        # Grade the submission using AI
+        result = self.grader._grade_individual_submission(
+          submission_text, core_topics, student_id)
+
+      result = self.grader.score_calculator.apply_scores(
+        result, word_count=word_count, student_name=student_name)
+
+      # Track students needing support.
+      if self.grader.score_calculator.needs_support(result):
+        self.grader.support_needed_students.append({
+          "student_id":
+          student_id,
+          "student_name":
+          student_name,
+          "reason":
+          result.get("support_reason", "Unknown reason")
+        })
+
+      individual_results.append(result)
+
+    log.info(
+      f"Individual grading completed. {len(self.grader.support_needed_students)} students may need support."
+    )
+
+    # Phase 2.5: Consolidate questions (using questions from aggregate analysis)
+    log.info("Phase 2.5/3: Question consolidation")
+    student_questions = self.grader.aggregate_results.get("student_questions",
+                                                          [])
+    self.grader.consolidated_questions = self.grader._consolidate_questions(
+      student_questions)
+
+    return individual_results
+
+
 class BaseTextSubmissionGrader(Grader):
   COMPATIBLE_KINDS = {"TextAssignment"}
   """
@@ -542,6 +626,7 @@ class BaseTextSubmissionGrader(Grader):
     self.rubric_generator = RubricGenerator()
     self.batch_processor = BatchProcessor(self)
     self.question_consolidator = QuestionConsolidator(self)
+    self.individual_grading_processor = IndividualGradingProcessor(self)
 
     # Model tier settings for each phase (small, medium, large)
     # Can be configured via grader settings in YAML
@@ -802,82 +887,8 @@ class BaseTextSubmissionGrader(Grader):
     Returns:
         List of individual grading results
     """
-    from Autograder.ai_helper import (AI_Helper__OpenAI, AI_Helper__Anthropic,
-                                      validate_response_payload)
-    import json
-    import re
-
-    log.info(f"Grading {len(submission_data)} individual submissions...")
-
-    if not core_topics:
-      log.warning("No core topics available for individual grading")
-      core_topics = ["General class content"]
-
-    individual_results = []
-    self.support_needed_students = []
-
-    for i, submission_info in enumerate(submission_data, 1):
-      student_id = submission_info.get('student_id')
-      student_name = submission_info.get('student_name', 'Unknown')
-      submission_text = submission_info.get('text', '')
-      word_count = submission_info.get('word_count', 0)
-      display_name = student_name
-      if self.reveal_identity and student_id is not None and str(
-          student_id) not in str(student_name):
-        display_name = f"{student_name} [canvas_user_id={student_id}]"
-
-      log.debug(
-        f"   Grading {i}/{len(submission_data)}: {display_name} ({word_count} words)"
-      )
-
-      if not submission_text.strip():
-        # Handle empty submissions
-        result = {
-          "student_id": student_id,
-          "engagement_score": 0,
-          "relevance_score": 0,
-          "explanation_quality_score": 0,
-          "topics_covered": [],
-          "topics_missing": core_topics,
-          "topics_needing_review": [],
-          "misconception_notes": "",
-          "word_count": 0,
-          "needs_support": True,
-          "support_reason": "No submission content",
-          "feedback": "Please submit your study notes for grading."
-        }
-      else:
-        # Grade the submission using AI
-        result = self._grade_individual_submission(submission_text,
-                                                   core_topics, student_id)
-
-      result = self.score_calculator.apply_scores(result,
-                                                  word_count=word_count,
-                                                  student_name=student_name)
-
-      # Track students needing support.
-      if self.score_calculator.needs_support(result):
-        self.support_needed_students.append({
-          "student_id":
-          student_id,
-          "student_name":
-          student_name,
-          "reason":
-          result.get("support_reason", "Unknown reason")
-        })
-
-      individual_results.append(result)
-
-    log.info(
-      f"Individual grading completed. {len(self.support_needed_students)} students may need support."
-    )
-
-    # Phase 2.5: Consolidate questions (using questions from aggregate analysis)
-    log.info("Phase 2.5/3: Question consolidation")
-    student_questions = self.aggregate_results.get("student_questions", [])
-    self.consolidated_questions = self._consolidate_questions(student_questions)
-
-    return individual_results
+    return self.individual_grading_processor.grade_batch(submission_data,
+                                                         core_topics)
 
   def _consolidate_questions(self,
                              all_questions: List[str]) -> List[Dict]:

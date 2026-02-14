@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from Autograder.graders.text_submission_grader import (
   BatchProcessor,
+  IndividualGradingProcessor,
   RubricGenerator,
   ScoreCalculator,
   TextSubmissionGrader,
@@ -148,6 +149,62 @@ def test_batch_processor_returns_false_when_no_submissions():
                       assignment_name="Weekly Notes",
                       course_name="CST334")
   assert ran is False
+
+
+def test_individual_grading_processor_tracks_support_and_consolidates_questions():
+  class FakeGrader:
+    def __init__(self):
+      self.reveal_identity = False
+      self.score_calculator = ScoreCalculator(word_threshold=250, length_points=2)
+      self.support_needed_students = []
+      self.aggregate_results = {
+        "student_questions": ["How does paging differ from segmentation?"]
+      }
+      self.consolidated_questions = []
+
+    def _grade_individual_submission(self, submission_text, core_topics, student_id):
+      return {
+        "student_id": student_id,
+        "engagement_score": 3,
+        "relevance_score": 2,
+        "explanation_quality_score": 1,
+        "topics_covered": core_topics,
+        "topics_missing": [],
+        "topics_needing_review": [],
+        "misconception_notes": "",
+        "needs_support": "true" if student_id == 2 else "false",
+        "support_reason": "Needs follow-up" if student_id == 2 else "",
+        "feedback": "Reasonable effort."
+      }
+
+    def _consolidate_questions(self, questions):
+      return [{"topic": "Memory", "questions": questions}]
+
+  processor = IndividualGradingProcessor(FakeGrader())
+  results = processor.grade_batch([
+    {
+      "student_id": 1,
+      "student_name": "Anon 0001",
+      "text": "Detailed study notes about paging and segmentation.",
+      "word_count": 280,
+    },
+    {
+      "student_id": 2,
+      "student_name": "Anon 0002",
+      "text": "Short note.",
+      "word_count": 120,
+    },
+  ], ["Memory"])
+
+  assert len(results) == 2
+  assert processor.grader.support_needed_students == [{
+    "student_id": 2,
+    "student_name": "Anon 0002",
+    "reason": "Needs follow-up"
+  }]
+  assert processor.grader.consolidated_questions[0]["topic"] == "Memory"
+  assert results[0]["length_score"] == 2
+  assert results[1]["length_score"] == 0
 
 
 def test_text_submission_grader_is_alias_of_weekly_notes_grader():
