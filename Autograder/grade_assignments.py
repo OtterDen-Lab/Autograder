@@ -224,6 +224,22 @@ def _is_lms_exception(error: Exception) -> bool:
                             canvasapi.exceptions.CanvasException))
 
 
+def _error_hint_for_exception(error: Exception) -> str | None:
+  if isinstance(error, autograder_exceptions.LMSError):
+    return ("See documentation/instructor_onboarding.md for Canvas setup and "
+            "credentials troubleshooting.")
+  if isinstance(error, autograder_exceptions.ConfigurationError):
+    return ("Check YAML/config values and refer to "
+            "documentation/instructor_onboarding.md.")
+  if isinstance(error, autograder_exceptions.AIError):
+    return ("Verify provider credentials and model settings. "
+            "See README.md AI configuration notes.")
+  if isinstance(error, autograder_exceptions.DockerError):
+    return ("Verify Docker is running and configured. "
+            "See README.md Docker setup/troubleshooting.")
+  return None
+
+
 def collect_push_failure_lines(results: List[Dict]) -> tuple[int, List[str]]:
   lines = []
   total_failed_pushes = 0
@@ -593,6 +609,10 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
     }
 
   except Exception as e:
+    hint = _error_hint_for_exception(e)
+    error_message = str(e)
+    if hint:
+      error_message = f"{error_message} {hint}"
     log.exception(
       f"[Thread {thread_id}] Error grading assignment {assignment_id or 'unknown'}: {e}"
     )
@@ -601,7 +621,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
       'assignment_id': assignment_id,
       'assignment_name': assignment_name,
       'course_name': course_name,
-      'error': str(e),
+      'error': error_message,
       'error_type': type(e).__name__,
       'thread_id': thread_id
     }
@@ -864,13 +884,19 @@ def execute_grading(assignments_to_grade: List[AssignmentRunRequest],
         log.error(
           f"Assignment {assignment_data.assignment_id} generated an exception: {exc}"
         )
+        hint = _error_hint_for_exception(exc)
+        error_message = str(exc)
+        if hint:
+          error_message = f"{error_message} {hint}"
         results.append({
           'success':
           False,
           'assignment_id':
           assignment_data.assignment_id,
+          'error_type':
+          type(exc).__name__,
           'error':
-          str(exc)
+          error_message
         })
 
   return results
@@ -892,7 +918,14 @@ def print_results_summary(results: List[Dict]) -> None:
     log.error("The following assignments failed:")
     for result in results:
       if not result['success']:
-        log.error(f"  Assignment {result['assignment_id']}: {result['error']}")
+        error_type = result.get("error_type")
+        if error_type:
+          log.error(
+            f"  Assignment {result['assignment_id']} [{error_type}]: {result['error']}"
+          )
+        else:
+          log.error(
+            f"  Assignment {result['assignment_id']}: {result['error']}")
 
   push_failed_total, push_failure_lines = collect_push_failure_lines(results)
   if push_failed_total > 0:
@@ -988,6 +1021,9 @@ def send_slack_run_summary(results: List[Dict], args: argparse.Namespace,
                           or f"ID {result.get('assignment_id')}")
       course_label = result.get('course_name') or "Unknown Course"
       error_msg = result.get('error', 'Unknown error')
+      error_type = result.get('error_type')
+      if error_type:
+        error_msg = f"[{error_type}] {error_msg}"
       failure_lines.append(
         f"- {course_label} / {assignment_label}: {error_msg}")
 

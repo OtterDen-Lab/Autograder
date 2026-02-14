@@ -105,7 +105,9 @@ class Grader__docker(FileBasedGrader):
     """
     target_container = container if container is not None else self.container
     if not target_container:
-      raise RuntimeError("No container available for command execution")
+      raise Autograder.exceptions.ContainerError(
+        "No container available for command execution. "
+        "Call start_container() before execute_command_in_container().")
 
     return target_container.execute_command(command, workdir)
 
@@ -495,26 +497,34 @@ class Grader__template_grader(Grader__docker):
   @staticmethod
   def _normalize_container_repo_path(container_repo_path: str) -> str:
     if not isinstance(container_repo_path, str):
-      raise ValueError("container_repo_path must be a string")
+      raise ValueError(
+        "container_repo_path must be a string (example: '/repo/programming-assignments')."
+      )
 
     normalized = os.path.normpath(container_repo_path.strip())
     if not normalized.startswith("/"):
       raise ValueError(
-        "container_repo_path must be an absolute path under /repo")
+        "container_repo_path must be an absolute path under /repo "
+        "(example: '/repo/programming-assignments').")
     if normalized != "/repo" and not normalized.startswith("/repo/"):
-      raise ValueError("container_repo_path must be within /repo")
+      raise ValueError(
+        f"container_repo_path must be within /repo, got '{container_repo_path}'.")
     return normalized
 
   def _normalize_additional_repos(self, additional_repos) -> List[dict]:
     if additional_repos is None:
       return []
     if not isinstance(additional_repos, list):
-      raise ValueError("additional_repos must be a list")
+      raise ValueError(
+        "additional_repos must be a list of mappings with keys: "
+        "source_repo, container_path, optional depth.")
 
     normalized_repos = []
     for i, repo_config in enumerate(additional_repos):
       if not isinstance(repo_config, dict):
-        raise ValueError(f"additional_repos[{i}] must be a mapping")
+        raise ValueError(
+          f"additional_repos[{i}] must be a mapping. "
+          "Expected keys: source_repo, container_path, optional depth.")
       unknown_keys = sorted(
         k for k in repo_config.keys() if k not in {"source_repo", "container_path", "depth"})
       if unknown_keys:
@@ -523,18 +533,21 @@ class Grader__template_grader(Grader__docker):
 
       source_repo = repo_config.get("source_repo")
       if not isinstance(source_repo, str) or not source_repo.strip():
-        raise ValueError(f"additional_repos[{i}].source_repo is required")
+        raise ValueError(
+          f"additional_repos[{i}].source_repo is required and must be a non-empty string."
+        )
 
       container_path = self._normalize_container_repo_path(
         repo_config.get("container_path"))
       if container_path == "/repo":
         raise ValueError(
-          "additional_repos cannot target /repo (reserved for source_repo)")
+          "additional_repos cannot target /repo (reserved for source_repo). "
+          "Use a subpath such as /repo/tools.")
 
       depth = repo_config.get("depth", 1)
       if depth is not None and (not isinstance(depth, int) or depth <= 0):
         raise ValueError(
-          f"additional_repos[{i}].depth must be >= 1 when provided")
+          f"additional_repos[{i}].depth must be an integer >= 1 when provided.")
 
       normalized_repos.append({
         "source_repo": source_repo,
@@ -548,7 +561,7 @@ class Grader__template_grader(Grader__docker):
         if path_j.startswith(f"{path_i}/") or path_i.startswith(f"{path_j}/"):
           raise ValueError(
             "additional_repos contain overlapping container_path values: "
-            f"'{path_i}' and '{path_j}'")
+            f"'{path_i}' and '{path_j}'. Choose disjoint mount targets.")
 
     return normalized_repos
 
@@ -582,7 +595,8 @@ class Grader__template_grader(Grader__docker):
         base = os.path.join(temp_build_dir, mount["context_dir"])
         return base if relative == "." else os.path.join(base, relative)
     raise ValueError(
-      f"container path '{container_path}' is not mounted by any configured repository"
+      f"container path '{container_path}' is not mounted by any configured repository. "
+      f"Configured mounts: {', '.join(sorted(m['container_path'] for m in repo_mounts))}"
     )
 
   @staticmethod
@@ -590,7 +604,10 @@ class Grader__template_grader(Grader__docker):
 
     dest = pathlib.Path(dest).expanduser().resolve()
     if dest.exists():
-      raise FileExistsError(f"{dest} already exists")
+      raise FileExistsError(
+        f"Destination path '{dest}' already exists while preparing repository "
+        f"source '{repo_path}'. Remove the existing path or choose a different target."
+      )
 
     # If it's local, copy it from local
     if pathlib.Path(repo_path).expanduser().exists():
@@ -624,8 +641,12 @@ class Grader__template_grader(Grader__docker):
       except subprocess.CalledProcessError as e:
         stderr = (getattr(e, "stderr", None) or "").strip()
         if stderr:
-          raise RuntimeError(f"git clone failed for {repo_path}: {stderr}") from e
-        raise RuntimeError(f"git clone failed for {repo_path}") from e
+          raise RuntimeError(
+            f"git clone failed for '{repo_path}': {stderr}. "
+            "Check repository URL/access permissions and network connectivity.") from e
+        raise RuntimeError(
+          f"git clone failed for '{repo_path}'. "
+          "Check repository URL/access permissions and network connectivity.") from e
 
   def _match_files_to_paths(self,
                             submission) -> Tuple[List[Tuple], Optional[str]]:
