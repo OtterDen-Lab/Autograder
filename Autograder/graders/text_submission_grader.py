@@ -23,6 +23,10 @@ from datetime import datetime
 from Autograder.grader import Grader
 from Autograder.registry import GraderRegistry
 from Autograder.assignment import Assignment
+from Autograder.ai_orchestrator import (ProviderFallbackOrchestrator,
+                                         parse_anthropic_json_payload,
+                                         query_anthropic_text,
+                                         query_openai_structured)
 from lms_interface.classes import Feedback, Submission, TextSubmission
 
 log = logging.getLogger(__name__)
@@ -411,11 +415,6 @@ class QuestionConsolidator:
     self.grader = grader
 
   def consolidate(self, all_questions: List[str]) -> List[Dict]:
-    import json
-    import re
-    from Autograder.ai_helper import (AI_Helper__OpenAI, AI_Helper__Anthropic,
-                                      validate_response_payload)
-
     if not all_questions:
       log.info("No questions found to consolidate")
       return []
@@ -423,47 +422,24 @@ class QuestionConsolidator:
     log.info(f"Consolidating {len(all_questions)} questions from students...")
 
     prompt = self.grader._build_question_consolidation_prompt(all_questions)
+    orchestrator = ProviderFallbackOrchestrator(self.grader.prefer_anthropic)
 
-    if self.grader.prefer_anthropic:
-      # Try Anthropic first if preferred
-      try:
-        ai_helper = AI_Helper__Anthropic()
-        analysis_text, usage = ai_helper.query_ai(
-          prompt, [], max_response_tokens=2000, tier=self.grader.phase25_tier)
+    def _run_anthropic() -> List[Dict]:
+      operation = "Phase 2.5 - Question Consolidation (Anthropic)"
+      if not self.grader.prefer_anthropic:
+        operation = "Phase 2.5 - Question Consolidation (Anthropic fallback)"
+      analysis_text, usage = query_anthropic_text(
+        prompt, tier=self.grader.phase25_tier, max_response_tokens=2000)
+      self.grader._track_token_usage(usage, operation)
 
-        self.grader._track_token_usage(
-          usage, "Phase 2.5 - Question Consolidation (Anthropic)")
-
-        # Try to parse JSON from response
-        json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-        if json_match:
-          result = validate_response_payload(
-            json.loads(json_match.group()),
-            schema_name="question_consolidation")
-          consolidated = result.get("consolidated_questions", [])
-          log.info(
-            f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
-          )
-          return consolidated
-
-        log.warning("Could not parse JSON from Anthropic response")
+      result = parse_anthropic_json_payload(
+        analysis_text, schema_name="question_consolidation")
+      if result is None:
+        if self.grader.prefer_anthropic:
+          log.warning("Could not parse JSON from Anthropic response")
+        else:
+          log.warning("Could not parse JSON from Anthropic fallback response")
         return []
-
-      except Exception as e:
-        log.debug(
-          f"Anthropic question consolidation failed: {e}. Trying OpenAI...")
-
-    try:
-      # Try OpenAI (either first choice or fallback)
-      ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(
-        prompt, [],
-        max_response_tokens=2000,
-        tier=self.grader.phase25_tier,
-        schema_name="question_consolidation")
-
-      self.grader._track_token_usage(
-        usage, "Phase 2.5 - Question Consolidation (OpenAI)")
 
       consolidated = result.get("consolidated_questions", [])
       log.info(
@@ -471,42 +447,45 @@ class QuestionConsolidator:
       )
       return consolidated
 
-    except Exception as e:
-      log.debug(f"OpenAI question consolidation failed: {e}")
+    def _run_openai() -> List[Dict]:
+      result, usage = query_openai_structured(
+        prompt,
+        schema_name="question_consolidation",
+        tier=self.grader.phase25_tier,
+        max_response_tokens=2000)
+      self.grader._track_token_usage(
+        usage, "Phase 2.5 - Question Consolidation (OpenAI)")
+      consolidated = result.get("consolidated_questions", [])
+      log.info(
+        f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+      )
+      return consolidated
 
-      if not self.grader.prefer_anthropic:
+    def _on_openai_error(error: Exception, is_fallback: bool) -> None:
+      log.debug(f"OpenAI question consolidation failed: {error}")
+      if not is_fallback:
         log.debug("Trying Anthropic as fallback...")
-        try:
-          # Fallback to Anthropic when OpenAI was first choice
-          ai_helper = AI_Helper__Anthropic()
-          analysis_text, usage = ai_helper.query_ai(
-            prompt, [], max_response_tokens=2000, tier=self.grader.phase25_tier)
 
-          self.grader._track_token_usage(
-            usage, "Phase 2.5 - Question Consolidation (Anthropic fallback)")
+    def _on_anthropic_error(error: Exception, is_fallback: bool) -> None:
+      if not is_fallback:
+        log.debug(
+          f"Anthropic question consolidation failed: {error}. Trying OpenAI..."
+        )
+      else:
+        log.debug(f"Anthropic question consolidation failed: {error}")
 
-          # Try to parse JSON from response
-          json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-          if json_match:
-            result = validate_response_payload(
-              json.loads(json_match.group()),
-              schema_name="question_consolidation")
-            consolidated = result.get("consolidated_questions", [])
-            log.info(
-              f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
-            )
-            return consolidated
+    def _on_both_fail(_primary_error: Exception,
+                      secondary_error: Exception) -> List[Dict]:
+      log.error(
+        f"Both AI providers failed for question consolidation: {secondary_error}"
+      )
+      return []
 
-          log.warning("Could not parse JSON from Anthropic fallback response")
-          return []
-
-        except Exception as fallback_error:
-          log.error(
-            f"Both AI providers failed for question consolidation: {fallback_error}"
-          )
-          return []
-
-    return []
+    return orchestrator.run(run_openai=_run_openai,
+                            run_anthropic=_run_anthropic,
+                            on_openai_error=_on_openai_error,
+                            on_anthropic_error=_on_anthropic_error,
+                            on_both_fail=_on_both_fail)
 
 
 class IndividualGradingProcessor:
@@ -603,11 +582,6 @@ class AggregateAnalyzer:
 
   def analyze(self, submission_texts: List[str], assignment_name: str,
               course_name: str = "Unknown Course") -> Dict:
-    from Autograder.ai_helper import (AI_Helper__OpenAI, AI_Helper__Anthropic,
-                                      validate_response_payload)
-    import json
-    import re
-
     log.info(
       f"Analyzing {len(submission_texts)} submissions for aggregate insights..."
     )
@@ -626,122 +600,99 @@ class AggregateAnalyzer:
 
     prompt = self.grader._build_aggregate_analysis_prompt(
       submission_texts, assignment_name, course_name)
+    orchestrator = ProviderFallbackOrchestrator(self.grader.prefer_anthropic)
 
-    if self.grader.prefer_anthropic:
-      # Try Anthropic first if preferred
-      try:
-        log.debug(
-          f"Attempting aggregate analysis with Anthropic (preferred, tier={self.grader.phase1_tier})..."
-        )
-        ai_helper = AI_Helper__Anthropic()
-        analysis_text, usage = ai_helper.query_ai(
-          prompt, [], max_response_tokens=2000, tier=self.grader.phase1_tier)
+    def _run_anthropic() -> Dict:
+      operation = "Phase 1 - Aggregate Analysis (Anthropic)"
+      if not self.grader.prefer_anthropic:
+        operation = "Phase 1 - Aggregate Analysis (Anthropic fallback)"
+      analysis_text, usage = query_anthropic_text(
+        prompt, tier=self.grader.phase1_tier, max_response_tokens=2000)
+      self.grader._track_token_usage(usage, operation)
 
-        self.grader._track_token_usage(
-          usage, "Phase 1 - Aggregate Analysis (Anthropic)")
+      result = parse_anthropic_json_payload(analysis_text,
+                                            schema_name="aggregate_analysis")
+      if result is None:
+        # Keep text fallback behavior when Anthropic returns no parseable JSON.
+        result = {
+          "common_themes": analysis_text,
+          "commonly_misunderstood_topics": [],
+          "misconception_details": "",
+          "key_insights": "",
+          "teaching_feedback": "",
+          "core_topics": [],
+          "related_topics": [],
+          "off_topic_indicators": [],
+          "student_questions": []
+        }
 
-        # Try to parse JSON from Anthropic response
-        json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-        if json_match:
-          result = validate_response_payload(json.loads(json_match.group()),
-                                             schema_name="aggregate_analysis")
-        else:
-          # If no JSON found, keep the text as a safe fallback summary.
-          result = validate_response_payload({"common_themes": analysis_text},
-                                             schema_name="aggregate_analysis")
+      self.grader._store_topics_from_result(result)
+      provider_label = "Anthropic" if self.grader.prefer_anthropic else "Anthropic fallback"
+      log.info(
+        f"Aggregate analysis completed ({provider_label}). Identified {len(self.grader.core_topics)} core topics, {len(self.grader.related_topics)} related topics"
+      )
+      return result
 
-        self.grader._store_topics_from_result(result)
-
-        log.info(
-          f"Aggregate analysis completed (Anthropic). Identified {len(self.grader.core_topics)} core topics, {len(self.grader.related_topics)} related topics"
-        )
-
-        return result
-
-      except Exception as e:
-        log.error(f"Anthropic aggregate analysis failed: {e}")
-        log.info("Falling back to OpenAI...")
-
-    try:
-      # Try OpenAI (either first choice or fallback)
+    def _run_openai() -> Dict:
       log.debug(
         f"Attempting aggregate analysis with OpenAI (tier={self.grader.phase1_tier})..."
       )
-      ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(
-        prompt, [],
-        max_response_tokens=2000,
+      result, usage = query_openai_structured(
+        prompt,
+        schema_name="aggregate_analysis",
         tier=self.grader.phase1_tier,
-        schema_name="aggregate_analysis")
-
+        max_response_tokens=2000)
       self.grader._track_token_usage(usage,
                                      "Phase 1 - Aggregate Analysis (OpenAI)")
-
       self.grader._store_topics_from_result(result)
-
       log.info(
         f"Aggregate analysis completed (OpenAI). Identified {len(self.grader.core_topics)} core topics, {len(self.grader.related_topics)} related topics"
       )
-
       return result
 
-    except Exception as e:
-      log.error(f"OpenAI aggregate analysis failed: {e}")
-
-      if not self.grader.prefer_anthropic:
+    def _on_openai_error(error: Exception, is_fallback: bool) -> None:
+      log.error(f"OpenAI aggregate analysis failed: {error}")
+      if not is_fallback:
         log.info("Falling back to Anthropic...")
-        try:
-          # Fallback to Anthropic when OpenAI was first choice
-          ai_helper = AI_Helper__Anthropic()
-          analysis_text, usage = ai_helper.query_ai(
-            prompt, [], max_response_tokens=2000, tier=self.grader.phase1_tier)
 
-          self.grader._track_token_usage(
-            usage, "Phase 1 - Aggregate Analysis (Anthropic fallback)")
+    def _on_anthropic_error(error: Exception, is_fallback: bool) -> None:
+      if not is_fallback:
+        log.error(f"Anthropic aggregate analysis failed: {error}")
+        log.info("Falling back to OpenAI...")
+      else:
+        log.error(f"Anthropic fallback also failed: {error}")
 
-          # Try to parse JSON from Anthropic response
-          json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-          if json_match:
-            result = validate_response_payload(json.loads(json_match.group()),
-                                               schema_name="aggregate_analysis")
-          else:
-            # If no JSON found, keep the text as a safe fallback summary.
-            result = validate_response_payload({"common_themes": analysis_text},
-                                               schema_name="aggregate_analysis")
+    def _on_both_fail(primary_error: Exception, _secondary_error: Exception) -> Dict:
+      if self.grader.prefer_anthropic:
+        return {
+          "common_themes": "Error performing analysis",
+          "key_insights": "",
+          "misconception_details": "",
+          "teaching_feedback": "",
+          "core_topics": [],
+          "related_topics": [],
+          "off_topic_indicators": [],
+          "commonly_misunderstood_topics": [],
+          "student_questions": []
+        }
 
-          self.grader._store_topics_from_result(result)
+      return {
+        "common_themes": f"Error performing analysis: {primary_error}",
+        "key_insights": "",
+        "misconception_details": "",
+        "teaching_feedback": "",
+        "core_topics": [],
+        "related_topics": [],
+        "off_topic_indicators": [],
+        "commonly_misunderstood_topics": [],
+        "student_questions": []
+      }
 
-          log.info(
-            f"Aggregate analysis completed (Anthropic fallback). Identified {len(self.grader.core_topics)} core topics, {len(self.grader.related_topics)} related topics"
-          )
-
-          return result
-
-        except Exception as fallback_error:
-          log.error(f"Anthropic fallback also failed: {fallback_error}")
-          return {
-            "common_themes": f"Error performing analysis: {e}",
-            "key_insights": "",
-            "misconception_details": "",
-            "teaching_feedback": "",
-            "core_topics": [],
-            "related_topics": [],
-            "off_topic_indicators": [],
-            "commonly_misunderstood_topics": [],
-            "student_questions": []
-          }
-
-    return {
-      "common_themes": "Error performing analysis",
-      "key_insights": "",
-      "misconception_details": "",
-      "teaching_feedback": "",
-      "core_topics": [],
-      "related_topics": [],
-      "off_topic_indicators": [],
-      "commonly_misunderstood_topics": [],
-      "student_questions": []
-    }
+    return orchestrator.run(run_openai=_run_openai,
+                            run_anthropic=_run_anthropic,
+                            on_openai_error=_on_openai_error,
+                            on_anthropic_error=_on_anthropic_error,
+                            on_both_fail=_on_both_fail)
 
 
 class IndividualSubmissionAnalyzer:
@@ -754,133 +705,102 @@ class IndividualSubmissionAnalyzer:
 
   def analyze(self, submission_text: str, core_topics: List[str],
               student_id: str) -> Dict:
-    from Autograder.ai_helper import (AI_Helper__OpenAI, AI_Helper__Anthropic,
-                                      validate_response_payload)
-    import json
-    import re
-
     prompt = self.grader._build_individual_grading_prompt(submission_text,
                                                           core_topics)
+    orchestrator = ProviderFallbackOrchestrator(self.grader.prefer_anthropic)
 
-    if self.grader.prefer_anthropic:
-      # Try Anthropic first if preferred
-      try:
-        ai_helper = AI_Helper__Anthropic()
-        analysis_text, usage = ai_helper.query_ai(
-          prompt, [], max_response_tokens=1000, tier=self.grader.phase2_tier)
+    def _default_from_text(analysis_text: str) -> Dict:
+      return {
+        "student_id": student_id,
+        "engagement_score": 3,  # Default to moderate score
+        "relevance_score": 1,
+        "explanation_quality_score": 1,
+        "topics_covered": [],
+        "topics_missing": core_topics,
+        "topics_needing_review": [],
+        "misconception_notes": "",
+        "needs_support": False,
+        "support_reason": "",
+        "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
+      }
 
-        self.grader._track_token_usage(
-          usage, f"Phase 2 - Individual Grading ({student_id}) - Anthropic")
+    def _run_anthropic() -> Dict:
+      operation = f"Phase 2 - Individual Grading ({student_id}) - Anthropic"
+      if not self.grader.prefer_anthropic:
+        operation = f"Phase 2 - Individual Grading ({student_id}) - Anthropic fallback"
+      analysis_text, usage = query_anthropic_text(
+        prompt, tier=self.grader.phase2_tier, max_response_tokens=1000)
+      self.grader._track_token_usage(usage, operation)
 
-        # Try to parse JSON from response
-        json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-        if json_match:
-          result = validate_response_payload(json.loads(json_match.group()),
-                                             schema_name="individual_grading")
-          result["student_id"] = student_id
-          return result
+      result = parse_anthropic_json_payload(analysis_text,
+                                            schema_name="individual_grading")
+      if result is None:
+        return _default_from_text(analysis_text)
+      result["student_id"] = student_id
+      return result
 
-        # If no JSON, create structured response from text.
+    def _run_openai() -> Dict:
+      result, usage = query_openai_structured(
+        prompt,
+        schema_name="individual_grading",
+        tier=self.grader.phase2_tier,
+        max_response_tokens=1000)
+      self.grader._track_token_usage(
+        usage, f"Phase 2 - Individual Grading ({student_id}) - OpenAI")
+      result["student_id"] = student_id
+      return result
+
+    def _on_openai_error(error: Exception, is_fallback: bool) -> None:
+      if is_fallback and self.grader.prefer_anthropic:
+        log.debug(f"OpenAI failed for {student_id}: {error}")
+      else:
+        log.debug(f"OpenAI failed for {student_id}: {error}")
+        if not is_fallback:
+          log.debug("Trying Anthropic...")
+
+    def _on_anthropic_error(error: Exception, is_fallback: bool) -> None:
+      if is_fallback and not self.grader.prefer_anthropic:
+        log.error(f"Both AI providers failed for {student_id}: {error}")
+      elif not is_fallback:
+        log.debug(f"Anthropic failed for {student_id}: {error}. Trying OpenAI...")
+      else:
+        log.debug(f"Anthropic failed for {student_id}: {error}")
+
+    def _on_both_fail(primary_error: Exception, _secondary_error: Exception) -> Dict:
+      if not self.grader.prefer_anthropic:
         return {
           "student_id": student_id,
-          "engagement_score": 3,  # Default to moderate score
-          "relevance_score": 1,
-          "explanation_quality_score": 1,
+          "engagement_score": 0,
+          "relevance_score": 0,
+          "explanation_quality_score": 0,
           "topics_covered": [],
           "topics_missing": core_topics,
           "topics_needing_review": [],
           "misconception_notes": "",
-          "needs_support": False,
-          "support_reason": "",
-          "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
+          "needs_support": True,
+          "support_reason": "Error analyzing submission",
+          "feedback": f"Error analyzing submission: {primary_error}"
         }
 
-      except Exception as e:
-        log.debug(f"Anthropic failed for {student_id}: {e}. Trying OpenAI...")
+      return {
+        "student_id": student_id,
+        "engagement_score": 0,
+        "relevance_score": 0,
+        "explanation_quality_score": 0,
+        "topics_covered": [],
+        "topics_missing": core_topics,
+        "topics_needing_review": [],
+        "misconception_notes": "",
+        "needs_support": True,
+        "support_reason": "Error analyzing submission",
+        "feedback": "Error analyzing submission"
+      }
 
-    try:
-      # Try OpenAI (either first choice or fallback)
-      ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(
-        prompt, [],
-        max_response_tokens=1000,
-        tier=self.grader.phase2_tier,
-        schema_name="individual_grading")
-
-      self.grader._track_token_usage(
-        usage, f"Phase 2 - Individual Grading ({student_id}) - OpenAI")
-
-      result["student_id"] = student_id
-      return result
-
-    except Exception as e:
-      log.debug(f"OpenAI failed for {student_id}: {e}")
-
-      if not self.grader.prefer_anthropic:
-        log.debug("Trying Anthropic...")
-        try:
-          # Fallback to Anthropic when OpenAI was first choice
-          ai_helper = AI_Helper__Anthropic()
-          analysis_text, usage = ai_helper.query_ai(
-            prompt, [], max_response_tokens=1000, tier=self.grader.phase2_tier)
-
-          self.grader._track_token_usage(
-            usage,
-            f"Phase 2 - Individual Grading ({student_id}) - Anthropic fallback"
-          )
-
-          # Try to parse JSON from response
-          json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-          if json_match:
-            result = validate_response_payload(json.loads(json_match.group()),
-                                               schema_name="individual_grading")
-            result["student_id"] = student_id
-            return result
-
-          # If no JSON, create structured response from text.
-          return {
-            "student_id": student_id,
-            "engagement_score": 3,
-            "relevance_score": 1,
-            "explanation_quality_score": 1,
-            "topics_covered": [],
-            "topics_missing": core_topics,
-            "topics_needing_review": [],
-            "misconception_notes": "",
-            "needs_support": False,
-            "support_reason": "",
-            "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
-          }
-
-        except Exception as fallback_error:
-          log.error(f"Both AI providers failed for {student_id}: {fallback_error}")
-          return {
-            "student_id": student_id,
-            "engagement_score": 0,
-            "relevance_score": 0,
-            "explanation_quality_score": 0,
-            "topics_covered": [],
-            "topics_missing": core_topics,
-            "topics_needing_review": [],
-            "misconception_notes": "",
-            "needs_support": True,
-            "support_reason": "Error analyzing submission",
-            "feedback": f"Error analyzing submission: {e}"
-          }
-
-    return {
-      "student_id": student_id,
-      "engagement_score": 0,
-      "relevance_score": 0,
-      "explanation_quality_score": 0,
-      "topics_covered": [],
-      "topics_missing": core_topics,
-      "topics_needing_review": [],
-      "misconception_notes": "",
-      "needs_support": True,
-      "support_reason": "Error analyzing submission",
-      "feedback": "Error analyzing submission"
-    }
+    return orchestrator.run(run_openai=_run_openai,
+                            run_anthropic=_run_anthropic,
+                            on_openai_error=_on_openai_error,
+                            on_anthropic_error=_on_anthropic_error,
+                            on_both_fail=_on_both_fail)
 
 
 class ReportCompiler:
