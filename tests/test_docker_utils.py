@@ -118,6 +118,23 @@ class TestDockerClientBuildImage:
         with pytest.raises(ImageBuildError, match="Failed to build image"):
             mock_docker_client.build_image("FROM bad:image", "fail:tag")
 
+    def test_build_image_from_context_handles_api_error(self, mock_docker_client, mock_docker_module, monkeypatch):
+        class MockAPIError(Exception):
+            pass
+
+        class MockBuildError(Exception):
+            pass
+
+        mock_docker_module.errors.APIError = MockAPIError
+        mock_docker_module.errors.BuildError = MockBuildError
+        monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)
+        mock_docker_client.client.images.build.side_effect = MockAPIError(
+            "Build API failed"
+        )
+
+        with pytest.raises(DockerError, match="Docker API error building fail:tag"):
+            mock_docker_client.build_image_from_context("/tmp/missing-context", "fail:tag")
+
 
 class TestDockerClientCleanup:
     """Tests for DockerClient cleanup."""
@@ -234,6 +251,61 @@ class TestDockerContainerLifecycle:
 
         mock_container_obj.stop.assert_called_once()
         mock_container_obj.remove.assert_called_once()
+
+    def test_container_context_manager_stops_container_on_inner_exception(self, mock_docker_client, mock_docker_module, monkeypatch):
+        monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)
+
+        mock_container_obj = MagicMock()
+        mock_docker_client.client.containers.run.return_value = mock_container_obj
+
+        with pytest.raises(RuntimeError, match="boom"):
+            with DockerContainer(mock_docker_client, "test:image"):
+                raise RuntimeError("boom")
+
+        mock_container_obj.stop.assert_called_once()
+        mock_container_obj.remove.assert_called_once()
+
+    def test_container_start_cleans_up_partial_container_on_start_exception(self, mock_docker_client, mock_docker_module, monkeypatch):
+        class MockContainerError(Exception):
+            pass
+
+        mock_docker_module.errors.ContainerError = MockContainerError
+        monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)
+
+        container = DockerContainer(mock_docker_client, "test:image")
+        partial_container = MagicMock()
+
+        def fail_run_image(**_kwargs):
+            container.container = partial_container
+            raise MockContainerError("startup failed")
+
+        container.client.run_image = MagicMock(side_effect=fail_run_image)
+
+        with pytest.raises(ContainerError, match="Failed to start container"):
+            container.start()
+
+        partial_container.remove.assert_called_once_with(force=True)
+
+    def test_container_stop_handles_api_error_and_clears_handle(self, mock_docker_client, mock_docker_module, monkeypatch):
+        class MockAPIError(Exception):
+            pass
+
+        mock_docker_module.errors.APIError = MockAPIError
+        monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)
+
+        stop_error = MockAPIError("conflict")
+        stop_error.status_code = 409
+
+        mock_container_obj = MagicMock()
+        mock_container_obj.stop.side_effect = stop_error
+        mock_docker_client.client.containers.run.return_value = mock_container_obj
+
+        container = DockerContainer(mock_docker_client, "test:image")
+        container.start()
+        container.stop()
+
+        assert container.container is None
+        mock_container_obj.remove.assert_not_called()
 
     def test_container_handles_image_not_found(self, mock_docker_client, mock_docker_module, monkeypatch):
         monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)

@@ -132,3 +132,211 @@ def test_phase_1_aggregate_analysis_falls_back_to_anthropic_when_openai_fails(
   assert "Memory" in grader.core_topics
   assert any(detail["provider"] == "anthropic"
              for detail in grader.usage_details)
+
+
+def test_grade_individual_submission_falls_back_to_openai_when_anthropic_fails(
+    monkeypatch):
+  from Autograder import ai_helper
+
+  class FailingAnthropic:
+    calls = 0
+
+    def query_ai(self, *args, **kwargs):
+      type(self).calls += 1
+      raise RuntimeError("Anthropic timeout")
+
+  class WorkingOpenAI:
+    calls = 0
+
+    def query_ai(self, *args, **kwargs):
+      type(self).calls += 1
+      return {
+        "engagement_score": 4,
+        "relevance_score": 2,
+        "explanation_quality_score": 2,
+        "topics_covered": ["Processes"],
+        "topics_missing": [],
+        "topics_needing_review": [],
+        "off_topic_content": "",
+        "misconception_notes": "",
+        "needs_support": False,
+        "support_reason": "",
+        "feedback": "Strong effort."
+      }, {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "prompt_tokens": 12,
+        "completion_tokens": 7,
+        "total_tokens": 19
+      }
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", FailingAnthropic)
+  monkeypatch.setattr(ai_helper, "AI_Helper__OpenAI", WorkingOpenAI)
+
+  grader = TextSubmissionGrader(phase2_tier="small")
+  grader.prefer_anthropic = True
+  grader.total_tokens = 0
+  grader.total_cost = 0.0
+  grader.usage_details = []
+  grader.related_topics = []
+  grader.off_topic_indicators = []
+
+  result = grader._grade_individual_submission(
+    "I studied processes and scheduling.",
+    ["Processes"],
+    student_id=42,
+  )
+
+  assert result["student_id"] == 42
+  assert result["engagement_score"] == 4
+  assert FailingAnthropic.calls == 1
+  assert WorkingOpenAI.calls == 1
+  assert any(detail["provider"] == "openai" for detail in grader.usage_details)
+
+
+def test_grade_individual_submission_falls_back_to_anthropic_when_openai_fails(
+    monkeypatch):
+  from Autograder import ai_helper
+
+  class FailingOpenAI:
+    calls = 0
+
+    def query_ai(self, *args, **kwargs):
+      type(self).calls += 1
+      raise RuntimeError("OpenAI timeout")
+
+  class WorkingAnthropic:
+    calls = 0
+
+    def query_ai(self, *args, **kwargs):
+      type(self).calls += 1
+      return json.dumps({
+        "engagement_score": 3,
+        "relevance_score": 1,
+        "explanation_quality_score": 1,
+        "topics_covered": ["Memory"],
+        "topics_missing": [],
+        "topics_needing_review": [],
+        "off_topic_content": "",
+        "misconception_notes": "",
+        "needs_support": False,
+        "support_reason": "",
+        "feedback": "Decent start."
+      }), {
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "prompt_tokens": 9,
+        "completion_tokens": 5,
+        "total_tokens": 14
+      }
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__OpenAI", FailingOpenAI)
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", WorkingAnthropic)
+
+  grader = TextSubmissionGrader(phase2_tier="small")
+  grader.prefer_anthropic = False
+  grader.total_tokens = 0
+  grader.total_cost = 0.0
+  grader.usage_details = []
+  grader.related_topics = []
+  grader.off_topic_indicators = []
+
+  result = grader._grade_individual_submission(
+    "I worked through memory management examples.",
+    ["Memory"],
+    student_id=99,
+  )
+
+  assert result["student_id"] == 99
+  assert result["engagement_score"] == 3
+  assert FailingOpenAI.calls == 1
+  assert WorkingAnthropic.calls == 1
+  assert any(detail["provider"] == "anthropic"
+             for detail in grader.usage_details)
+
+
+def test_grade_individual_submission_returns_safe_default_when_both_providers_fail(
+    monkeypatch):
+  from Autograder import ai_helper
+
+  class FailingOpenAI:
+    def query_ai(self, *args, **kwargs):
+      raise RuntimeError("OpenAI timeout")
+
+  class FailingAnthropic:
+    def query_ai(self, *args, **kwargs):
+      raise RuntimeError("Anthropic timeout")
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__OpenAI", FailingOpenAI)
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", FailingAnthropic)
+
+  grader = TextSubmissionGrader(phase2_tier="small")
+  grader.prefer_anthropic = False
+  grader.related_topics = []
+  grader.off_topic_indicators = []
+
+  result = grader._grade_individual_submission(
+    "I tried to write about scheduling.",
+    ["Scheduling"],
+    student_id=7,
+  )
+
+  assert result["student_id"] == 7
+  assert result["engagement_score"] == 0
+  assert result["needs_support"] is True
+  assert result["support_reason"] == "Error analyzing submission"
+
+
+def test_question_consolidation_falls_back_to_anthropic_when_openai_fails(
+    monkeypatch):
+  from Autograder import ai_helper
+
+  class FailingOpenAI:
+    calls = 0
+
+    def query_ai(self, *args, **kwargs):
+      type(self).calls += 1
+      raise RuntimeError("OpenAI timeout")
+
+  class WorkingAnthropic:
+    calls = 0
+
+    def query_ai(self, *args, **kwargs):
+      type(self).calls += 1
+      return json.dumps({
+        "consolidated_questions": [{
+          "canonical_question": "How does round-robin avoid starvation?",
+          "original_questions": [
+            "Does round-robin prevent starvation?",
+            "How does RR avoid starvation?"
+          ],
+          "topic": "Scheduling"
+        }]
+      }), {
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "prompt_tokens": 11,
+        "completion_tokens": 6,
+        "total_tokens": 17
+      }
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__OpenAI", FailingOpenAI)
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", WorkingAnthropic)
+
+  grader = TextSubmissionGrader(phase25_tier="small")
+  grader.prefer_anthropic = False
+  grader.total_tokens = 0
+  grader.total_cost = 0.0
+  grader.usage_details = []
+
+  consolidated = grader._consolidate_questions([
+    "Does round-robin prevent starvation?",
+    "How does RR avoid starvation?"
+  ])
+
+  assert len(consolidated) == 1
+  assert consolidated[0]["topic"] == "Scheduling"
+  assert FailingOpenAI.calls == 1
+  assert WorkingAnthropic.calls == 1
+  assert any(detail["provider"] == "anthropic"
+             for detail in grader.usage_details)

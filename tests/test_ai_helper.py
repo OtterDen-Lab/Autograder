@@ -18,6 +18,7 @@ from Autograder import ai_helper
 from tests.fixtures.llm_mocks import (
     MockAnthropicClient,
     MockOpenAIClient,
+    MockRateLimitError,
     make_grading_result,
 )
 
@@ -357,6 +358,18 @@ class TestOpenAIHelper:
         )
 
         with pytest.raises(httpx.ReadTimeout):
+            ai_helper.AI_Helper__OpenAI.query_ai(
+                message="Grade this",
+                attachments=[],
+            )
+
+    def test_query_ai_propagates_rate_limit_errors_for_upstream_fallback(self, monkeypatch):
+        mock_client = MockOpenAIClient(error=MockRateLimitError("rate limit"))
+        monkeypatch.setattr(
+            ai_helper.AI_Helper__OpenAI, "_client", mock_client
+        )
+
+        with pytest.raises(MockRateLimitError):
             ai_helper.AI_Helper__OpenAI.query_ai(
                 message="Grade this",
                 attachments=[],
