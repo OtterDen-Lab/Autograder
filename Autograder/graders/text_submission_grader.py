@@ -883,6 +883,84 @@ class IndividualSubmissionAnalyzer:
     }
 
 
+class ReportCompiler:
+  """
+  Encapsulates report-data compilation and summary statistics.
+  """
+
+  def __init__(self, grader: "BaseTextSubmissionGrader"):
+    self.grader = grader
+
+  def compile(self, aggregate_results: Dict,
+              individual_results: List[Dict]) -> Dict:
+    total_grades = [
+      result.get("total_grade", 0) for result in individual_results
+    ]
+    grade_stats = {
+      "total_students":
+      len(individual_results),
+      "average_grade":
+      sum(total_grades) / len(total_grades) if total_grades else 0,
+      "grade_distribution":
+      self._calculate_grade_distribution(total_grades),
+      "students_below_70":
+      sum(1 for grade in total_grades if grade < 7),  # Below 70%
+    }
+
+    topic_coverage = self._analyze_topic_coverage(individual_results)
+
+    support_summary = {
+      "students_needing_support": len(self.grader.support_needed_students),
+      "support_details": self.grader.support_needed_students
+    }
+
+    return {
+      "aggregate_insights": aggregate_results,
+      "grade_statistics": grade_stats,
+      "topic_coverage": topic_coverage,
+      "support_summary": support_summary,
+      "core_topics": self.grader.core_topics,
+      "individual_results": individual_results
+    }
+
+  def _calculate_grade_distribution(self, grades: List[float]) -> Dict:
+    if not grades:
+      return {}
+
+    distribution = {"A": 0, "B": 0, "C": 0, "D": 0, "F": 0}
+    for grade in grades:
+      percentage = (grade / 10) * 100  # Convert to percentage
+      if percentage >= 90:
+        distribution["A"] += 1
+      elif percentage >= 80:
+        distribution["B"] += 1
+      elif percentage >= 70:
+        distribution["C"] += 1
+      elif percentage >= 60:
+        distribution["D"] += 1
+      else:
+        distribution["F"] += 1
+
+    return distribution
+
+  def _analyze_topic_coverage(self, individual_results: List[Dict]) -> Dict:
+    if not self.grader.core_topics:
+      return {}
+
+    topic_stats = {}
+    for topic in self.grader.core_topics:
+      covered_count = sum(1 for result in individual_results
+                          if topic in result.get("topics_covered", []))
+      topic_stats[topic] = {
+        "students_covered":
+        covered_count,
+        "coverage_percentage": (covered_count / len(individual_results)) *
+        100 if individual_results else 0
+      }
+
+    return topic_stats
+
+
 class BaseTextSubmissionGrader(Grader):
   COMPATIBLE_KINDS = {"TextAssignment"}
   """
@@ -919,6 +997,7 @@ class BaseTextSubmissionGrader(Grader):
     self.individual_grading_processor = IndividualGradingProcessor(self)
     self.aggregate_analyzer = AggregateAnalyzer(self)
     self.individual_submission_analyzer = IndividualSubmissionAnalyzer(self)
+    self.report_compiler = ReportCompiler(self)
 
     # Model tier settings for each phase (small, medium, large)
     # Can be configured via grader settings in YAML
@@ -1121,77 +1200,15 @@ class BaseTextSubmissionGrader(Grader):
     Returns:
         Dictionary containing all compiled report data
     """
-    # Calculate grade statistics
-    total_grades = [
-      result.get("total_grade", 0) for result in individual_results
-    ]
-    grade_stats = {
-      "total_students":
-      len(individual_results),
-      "average_grade":
-      sum(total_grades) / len(total_grades) if total_grades else 0,
-      "grade_distribution":
-      self._calculate_grade_distribution(total_grades),
-      "students_below_70":
-      sum(1 for grade in total_grades if grade < 7),  # Below 70%
-    }
-
-    # Topic coverage analysis
-    topic_coverage = self._analyze_topic_coverage(individual_results)
-
-    # Support needs
-    support_summary = {
-      "students_needing_support": len(self.support_needed_students),
-      "support_details": self.support_needed_students
-    }
-
-    return {
-      "aggregate_insights": aggregate_results,
-      "grade_statistics": grade_stats,
-      "topic_coverage": topic_coverage,
-      "support_summary": support_summary,
-      "core_topics": self.core_topics,
-      "individual_results": individual_results
-    }
+    return self.report_compiler.compile(aggregate_results, individual_results)
 
   def _calculate_grade_distribution(self, grades: List[float]) -> Dict:
     """Calculate distribution of grades by letter grade ranges."""
-    if not grades:
-      return {}
-
-    distribution = {"A": 0, "B": 0, "C": 0, "D": 0, "F": 0}
-    for grade in grades:
-      percentage = (grade / 10) * 100  # Convert to percentage
-      if percentage >= 90:
-        distribution["A"] += 1
-      elif percentage >= 80:
-        distribution["B"] += 1
-      elif percentage >= 70:
-        distribution["C"] += 1
-      elif percentage >= 60:
-        distribution["D"] += 1
-      else:
-        distribution["F"] += 1
-
-    return distribution
+    return self.report_compiler._calculate_grade_distribution(grades)
 
   def _analyze_topic_coverage(self, individual_results: List[Dict]) -> Dict:
     """Analyze how well topics were covered across all students."""
-    if not self.core_topics:
-      return {}
-
-    topic_stats = {}
-    for topic in self.core_topics:
-      covered_count = sum(1 for result in individual_results
-                          if topic in result.get("topics_covered", []))
-      topic_stats[topic] = {
-        "students_covered":
-        covered_count,
-        "coverage_percentage": (covered_count / len(individual_results)) *
-        100 if individual_results else 0
-      }
-
-    return topic_stats
+    return self.report_compiler._analyze_topic_coverage(individual_results)
 
   def _display_aggregate_insights(self, report_data: Dict) -> None:
     """Display aggregate analysis insights."""

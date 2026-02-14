@@ -211,6 +211,44 @@ def test_text_submission_grader_is_alias_of_weekly_notes_grader():
   assert issubclass(TextSubmissionGrader, WeeklyStudyNotesGrader)
 
 
+def test_compile_report_data_calculates_grade_and_topic_summaries():
+  grader = TextSubmissionGrader()
+  grader.core_topics = ["Processes", "Memory"]
+  grader.support_needed_students = [{
+    "student_id": 2,
+    "student_name": "Anon 0002",
+    "reason": "Needs follow-up"
+  }]
+
+  report = grader._compile_report_data({
+    "common_themes": "Students discussed scheduling",
+  }, [
+    {
+      "student_id": 1,
+      "total_grade": 10,
+      "topics_covered": ["Processes", "Memory"]
+    },
+    {
+      "student_id": 2,
+      "total_grade": 7,
+      "topics_covered": ["Processes"]
+    },
+  ])
+
+  assert report["grade_statistics"]["total_students"] == 2
+  assert report["grade_statistics"]["average_grade"] == 8.5
+  assert report["grade_statistics"]["grade_distribution"] == {
+    "A": 1,
+    "B": 0,
+    "C": 1,
+    "D": 0,
+    "F": 0
+  }
+  assert report["topic_coverage"]["Processes"]["students_covered"] == 2
+  assert report["topic_coverage"]["Memory"]["students_covered"] == 1
+  assert report["support_summary"]["students_needing_support"] == 1
+
+
 def test_apply_grades_to_submissions_maps_results_by_student_id():
   grader = TextSubmissionGrader()
   submissions = [_submission("Student A", 1), _submission("Student B", 2)]
