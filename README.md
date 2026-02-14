@@ -176,6 +176,8 @@ See the `example_files/` directory for complete configuration examples:
 - `workhorse.yaml`: Recommended combined programming + text setup
 - `programming_assignments.yaml`: Programming-only setup
 - `learning-logs.yaml`: Text submission grading
+- `minimal-programming.yaml`: Simplest programming assignment setup
+- `minimal-text.yaml`: Simplest text assignment setup
 - `example-template.yaml`: All available options
 
 ## Requirements
@@ -222,6 +224,10 @@ For detailed documentation, see:
 
 - `documentation/instructor_onboarding.md` (minimal setup + common customizations)
 - `documentation/operations_runbook.md` (failure autopsy + rerun procedures)
+- `documentation/troubleshooting.md` (common runtime failures and recovery steps)
+- `documentation/customization.md` (adding graders/kinds + common recipes)
+- `documentation/configuration_schema.md` (field-by-field config reference)
+- `documentation/privacy_audit.md` (PII surfaces and privacy controls)
 - `documentation/archives/step_by_step_grader_reference.md` (archived grader concept for future redesign)
 - [documentation directory on GitHub](https://github.com/OtterDen-Lab/Autograder/tree/main/documentation)
 

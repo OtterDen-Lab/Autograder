@@ -7,6 +7,8 @@ This directory contains YAML examples for the currently supported grading flows.
 - `workhorse.yaml`: Primary production-style config using `assignment_types` + `assignment_groups` for both programming and text assignments.
 - `programming_assignments.yaml`: Programming-only config with `template-grader`.
 - `learning-logs.yaml`: Text submission grading example with `TextSubmissionGrader`.
+- `minimal-programming.yaml`: Smallest viable programming config (copy/paste starter).
+- `minimal-text.yaml`: Smallest viable text-grading config (copy/paste starter).
 - `example-template.yaml`: Programming template with detailed `template-grader` options.
 - `algo.yaml`: Programming assignment with custom file mapping and Docker setup.
 

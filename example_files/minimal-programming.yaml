@@ -1,0 +1,23 @@
+prod: false
+push: false
+privacy_mode: id_only
+
+assignment_types:
+  programming:
+    kind: ProgrammingAssignment
+    grader: template-grader
+    settings:
+      base_image_name: "python:3.12-slim"
+      source_repo: "https://github.com/your-org/programming-assignments"
+      container_repo_path: "/repo/programming-assignments"
+      student_code_path: ""
+      record_retention: false
+
+courses:
+  - id: 12345
+    name: "Example Course"
+    assignment_groups:
+      - type: programming
+        assignments:
+          - id: 67890
+            repo_path: "PA1"
