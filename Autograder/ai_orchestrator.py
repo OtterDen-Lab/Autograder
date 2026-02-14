@@ -4,6 +4,7 @@ import re
 from typing import Any, Callable, Dict, TypeVar
 
 from Autograder import ai_helper
+from Autograder import exceptions as autograder_exceptions
 
 log = logging.getLogger(__name__)
 
@@ -54,23 +55,33 @@ def query_openai_structured(prompt: str,
                             schema_name: str,
                             tier: str,
                             max_response_tokens: int) -> tuple[Dict[str, Any], Dict[str, Any]]:
-  helper = ai_helper.AI_Helper__OpenAI()
-  return helper.query_ai(prompt,
-                         [],
-                         max_response_tokens=max_response_tokens,
-                         tier=tier,
-                         schema_name=schema_name)
+  try:
+    helper = ai_helper.AI_Helper__OpenAI()
+    return helper.query_ai(prompt,
+                           [],
+                           max_response_tokens=max_response_tokens,
+                           tier=tier,
+                           schema_name=schema_name)
+  except Exception as e:
+    raise autograder_exceptions.AIProviderError(
+      f"OpenAI request failed (tier={tier}, schema={schema_name}). "
+      "Check API credentials, connectivity, and provider availability.") from e
 
 
 def query_anthropic_text(prompt: str,
                          *,
                          tier: str,
                          max_response_tokens: int) -> tuple[str, Dict[str, Any]]:
-  helper = ai_helper.AI_Helper__Anthropic()
-  return helper.query_ai(prompt,
-                         [],
-                         max_response_tokens=max_response_tokens,
-                         tier=tier)
+  try:
+    helper = ai_helper.AI_Helper__Anthropic()
+    return helper.query_ai(prompt,
+                           [],
+                           max_response_tokens=max_response_tokens,
+                           tier=tier)
+  except Exception as e:
+    raise autograder_exceptions.AIProviderError(
+      f"Anthropic request failed (tier={tier}). "
+      "Check API credentials, connectivity, and provider availability.") from e
 
 
 class ProviderFallbackOrchestrator:

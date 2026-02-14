@@ -17,7 +17,7 @@ from typing import Tuple, Optional, List
 
 from Autograder.registry import GraderRegistry
 from lms_interface.classes import Feedback
-from Autograder.docker_utils import DockerClient, DockerContainer, DockerError
+from Autograder.docker_utils import DockerClient, DockerContainer
 import Autograder.exceptions
 from Autograder.grader import FileBasedGrader
 
@@ -40,7 +40,7 @@ class Grader__docker(FileBasedGrader):
     # Set up docker client
     try:
       self.docker_client = DockerClient()
-    except DockerError as e:
+    except Autograder.exceptions.DockerError as e:
       log.error(f"Failed to initialize Docker client: {e}")
       raise Autograder.exceptions.ConfigurationError(
         f"Docker client initialization failed: {e}") from e

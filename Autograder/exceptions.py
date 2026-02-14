@@ -36,6 +36,16 @@ class LMSError(AutograderError):
   pass
 
 
+class AIError(AutograderError):
+  """Errors related to AI provider calls and response handling."""
+  pass
+
+
+class AIProviderError(AIError):
+  """Errors raised when an AI provider request fails."""
+  pass
+
+
 class SubmissionError(AutograderError):
   """Errors related to student submission processing."""
   pass

@@ -11,6 +11,7 @@ from typing import Dict, List
 import json
 from datetime import datetime
 import requests
+import canvasapi.exceptions
 
 import yaml
 
@@ -25,6 +26,7 @@ from Autograder.config_models import (
   normalize_grader_settings,
   parse_run_config,
 )
+from Autograder import exceptions as autograder_exceptions
 
 import logging
 
@@ -217,6 +219,11 @@ def format_submission_for_log(submission, reveal_identity: bool = False) -> str:
   return f"{type(submission).__name__}({format_student_label(student, reveal_identity)} : {feedback})"
 
 
+def _is_lms_exception(error: Exception) -> bool:
+  return isinstance(error, (requests.exceptions.RequestException,
+                            canvasapi.exceptions.CanvasException))
+
+
 def collect_push_failure_lines(results: List[Dict]) -> tuple[int, List[str]]:
   lines = []
   total_failed_pushes = 0
@@ -342,10 +349,21 @@ def run_prepare_stage(grader, grading_assignment, args, settings,
                       do_regrade: bool) -> PrepareStageResult:
   needed_preparation = grader.assignment_needs_preparation()
   if needed_preparation:
-    grading_assignment.prepare(limit=args.limit,
-                               do_regrade=do_regrade,
-                               test=args.test,
-                               **settings)
+    try:
+      grading_assignment.prepare(limit=args.limit,
+                                 do_regrade=do_regrade,
+                                 test=args.test,
+                                 **settings)
+    except Exception as e:
+      assignment_obj = getattr(grading_assignment, "lms_assignment", None)
+      assignment_name = getattr(assignment_obj, "name", "unknown")
+      assignment_id = getattr(assignment_obj, "id", "unknown")
+      if _is_lms_exception(e):
+        raise autograder_exceptions.LMSError(
+          f"Failed to fetch submissions from Canvas for assignment "
+          f"'{assignment_name}' (id={assignment_id}). "
+          "Verify Canvas API access, assignment ID, and network connectivity.") from e
+      raise
 
   submission_count = len(grading_assignment.submissions)
   has_submissions = submission_count > 0
@@ -461,7 +479,20 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
         f"Grader '{grader_name}' is not supported for kind '{assignment_kind}'. "
         f"Allowed graders: {allowed}")
 
-    lms_assignment = course.get_assignment(assignment_id)
+    try:
+      lms_assignment = course.get_assignment(assignment_id)
+    except Exception as e:
+      if _is_lms_exception(e):
+        raise autograder_exceptions.LMSError(
+          f"Failed to load Canvas assignment id={assignment_id} for course "
+          f"'{course_name}'. Verify course/assignment IDs and Canvas API access."
+        ) from e
+      raise
+    if lms_assignment is None:
+      raise autograder_exceptions.LMSError(
+        f"Canvas assignment id={assignment_id} was not found for course "
+        f"'{course_name}'. Verify the assignment ID in your YAML config."
+      )
     assignment_name = lms_assignment.name
     log.info(f"[Thread {thread_id}] Grading assignment \"{assignment_name}\"")
 
@@ -571,6 +602,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
       'assignment_name': assignment_name,
       'course_name': course_name,
       'error': str(e),
+      'error_type': type(e).__name__,
       'thread_id': thread_id
     }
   finally:
@@ -636,15 +668,31 @@ def collect_assignments_to_grade(config: RunConfig,
     )
 
   # Create the LMS interface
-  lms_interface = CanvasInterface(prod=config.prod,
-                                  env_path=env_path,
-                                  privacy_mode=config.privacy_mode,
-                                  reveal_identity=reveal_identity)
+  try:
+    lms_interface = CanvasInterface(prod=config.prod,
+                                    env_path=env_path,
+                                    privacy_mode=config.privacy_mode,
+                                    reveal_identity=reveal_identity)
+  except Exception as e:
+    if _is_lms_exception(e) or isinstance(e, ValueError):
+      raise autograder_exceptions.LMSError(
+        "Failed to initialize Canvas interface. "
+        "Verify .env credentials (CANVAS_API_URL/CANVAS_API_KEY), network connectivity, and API token validity."
+      ) from e
+    raise
 
   assignments_to_grade = []
 
   for course_config in config.courses:
-    course = lms_interface.get_course(course_config.id)
+    try:
+      course = lms_interface.get_course(course_config.id)
+    except Exception as e:
+      if _is_lms_exception(e) or isinstance(e, ValueError):
+        raise autograder_exceptions.LMSError(
+          f"Failed to load Canvas course id={course_config.id}. "
+          "Verify course ID, enrollment/access permissions, and API credentials."
+        ) from e
+      raise
     log.info(f"Preparing to grade Course \"{course.name}\"")
 
     for group in course_config.assignment_groups:
@@ -1037,6 +1085,9 @@ def main() -> int:
 
       if any(not r['success'] for r in results):
         exit_code = 1
+    except autograder_exceptions.AutograderError as e:
+      log.error(e)
+      exit_code = 1
     finally:
       # Always perform global Docker cleanup at the end
       log.info("Performing final Docker cleanup...")

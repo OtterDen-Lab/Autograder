@@ -4,11 +4,13 @@ import json
 import logging
 import contextlib
 from types import SimpleNamespace
+import requests
 
 import pytest
 
 from Autograder import grade_assignments
-from Autograder.config_models import AssignmentRunRequest, RunConfig
+from Autograder import exceptions as autograder_exceptions
+from Autograder.config_models import AssignmentRunRequest, CourseConfig, RunConfig
 from lms_interface.classes import Feedback, Submission, Student
 
 
@@ -59,6 +61,33 @@ def test_grade_single_assignment_rejects_unsupported_grader_for_kind():
 
   assert result["success"] is False
   assert "not supported" in result["error"].lower()
+
+
+def test_grade_single_assignment_wraps_assignment_lookup_as_lms_error():
+  class FailingCourse:
+    def get_assignment(self, assignment_id):
+      raise requests.exceptions.Timeout(f"timeout for assignment {assignment_id}")
+
+  result = grade_assignments.grade_single_assignment(
+    AssignmentRunRequest(
+      course=FailingCourse(),
+      course_name="CST",
+      assignment_id=2,
+      assignment_type="assignment",
+      assignment_kind="ProgrammingAssignment",
+      grader_name="template-grader",
+      settings={},
+      repo_path=None,
+      assignment_name=None,
+      args=SimpleNamespace(
+        do_regrade=False, limit=None, test=False),
+      push_grades=False,
+      slack_channel=None,
+    ))
+
+  assert result["success"] is False
+  assert result.get("error_type") == "LMSError"
+  assert "failed to load canvas assignment" in result["error"].lower()
 
 
 def test_parse_args_requires_yaml(monkeypatch):
@@ -538,6 +567,48 @@ def test_resolve_idempotency_settings_uses_config_defaults():
   key, state_dir = grade_assignments.resolve_idempotency_settings(args, config)
   assert key == "run-1"
   assert state_dir.endswith(".autograder/idempotency")
+
+
+def test_collect_assignments_wraps_canvas_interface_initialization_errors(
+    monkeypatch):
+  class FailingCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      raise ValueError("missing credentials")
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface",
+                      FailingCanvasInterface)
+
+  args = SimpleNamespace(env=None,
+                         reveal_identity=False,
+                         idempotency_key=None,
+                         idempotency_state_dir=None)
+  config = RunConfig(courses=[])
+
+  with pytest.raises(autograder_exceptions.LMSError,
+                     match="Failed to initialize Canvas interface"):
+    grade_assignments.collect_assignments_to_grade(config, args)
+
+
+def test_collect_assignments_wraps_course_lookup_errors(monkeypatch):
+  class FailingCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      pass
+
+    def get_course(self, course_id):
+      raise requests.exceptions.Timeout(f"timeout for {course_id}")
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface",
+                      FailingCanvasInterface)
+
+  args = SimpleNamespace(env=None,
+                         reveal_identity=False,
+                         idempotency_key=None,
+                         idempotency_state_dir=None)
+  config = RunConfig(courses=[CourseConfig(id=101, name="CST334")])
+
+  with pytest.raises(autograder_exceptions.LMSError,
+                     match="Failed to load Canvas course id=101"):
+    grade_assignments.collect_assignments_to_grade(config, args)
 
 
 def test_resolve_records_dir_requires_absolute_path():

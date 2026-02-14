@@ -1,6 +1,11 @@
+import pytest
+
+from Autograder import exceptions as autograder_exceptions
 from Autograder.ai_orchestrator import (ProviderFallbackOrchestrator,
                                         extract_json_object,
-                                        parse_anthropic_json_payload)
+                                        parse_anthropic_json_payload,
+                                        query_anthropic_text,
+                                        query_openai_structured)
 
 
 def test_extract_json_object_parses_first_object_from_text():
@@ -50,3 +55,34 @@ def test_parse_anthropic_json_payload_validates_schema():
   assert parsed is not None
   assert parsed["common_themes"] == "threads"
   assert parsed["core_topics"] == []
+
+
+def test_query_openai_structured_wraps_provider_failures(monkeypatch):
+  from Autograder import ai_helper
+
+  class FailingOpenAI:
+    def query_ai(self, *args, **kwargs):
+      raise RuntimeError("provider outage")
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__OpenAI", FailingOpenAI)
+
+  with pytest.raises(autograder_exceptions.AIProviderError,
+                     match="OpenAI request failed"):
+    query_openai_structured("hello",
+                            schema_name="aggregate_analysis",
+                            tier="small",
+                            max_response_tokens=100)
+
+
+def test_query_anthropic_text_wraps_provider_failures(monkeypatch):
+  from Autograder import ai_helper
+
+  class FailingAnthropic:
+    def query_ai(self, *args, **kwargs):
+      raise RuntimeError("provider outage")
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", FailingAnthropic)
+
+  with pytest.raises(autograder_exceptions.AIProviderError,
+                     match="Anthropic request failed"):
+    query_anthropic_text("hello", tier="small", max_response_tokens=100)

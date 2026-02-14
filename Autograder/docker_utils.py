@@ -590,7 +590,9 @@ class DockerContainer:
         File contents as string, or None if file not found
     """
     if not self.container:
-      raise DockerOperationError("Cannot read file - no running container")
+      raise Autograder.exceptions.ContainerError(
+        "Cannot read file: no running container. Start the container before reading files."
+      )
 
     try:
       bits, stats = self.container.get_archive(file_path)
@@ -670,7 +672,9 @@ class DockerContainerManager:
   def get_container(self, name: str) -> DockerContainer:
     """Get a container by name."""
     if name not in self.containers:
-      raise DockerOperationError(f"Container '{name}' not found")
+      raise Autograder.exceptions.ContainerError(
+        f"Container '{name}' not found in manager. "
+        "Create it first with create_container(...).")
     return self.containers[name]
 
   def stop_all(self) -> None:
@@ -686,19 +690,3 @@ class DockerContainerManager:
   def __exit__(self, exc_type, exc_val, exc_tb):
     """Context manager exit with cleanup."""
     self.stop_all()
-
-
-# Exception classes for better error handling
-class DockerError(Exception):
-  """Base class for Docker-related errors."""
-  pass
-
-
-class DockerConnectionError(DockerError):
-  """Raised when Docker connection fails."""
-  pass
-
-
-class DockerOperationError(DockerError):
-  """Raised when a Docker operation fails."""
-  pass
