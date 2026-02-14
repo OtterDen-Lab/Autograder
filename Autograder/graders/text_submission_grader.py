@@ -402,6 +402,113 @@ class BatchProcessor:
     return truncated_texts, truncation_count
 
 
+class QuestionConsolidator:
+  """
+  Encapsulates Phase 2.5 question consolidation with provider fallback.
+  """
+
+  def __init__(self, grader: "BaseTextSubmissionGrader"):
+    self.grader = grader
+
+  def consolidate(self, all_questions: List[str]) -> List[Dict]:
+    import json
+    import re
+    from Autograder.ai_helper import (AI_Helper__OpenAI, AI_Helper__Anthropic,
+                                      validate_response_payload)
+
+    if not all_questions:
+      log.info("No questions found to consolidate")
+      return []
+
+    log.info(f"Consolidating {len(all_questions)} questions from students...")
+
+    prompt = self.grader._build_question_consolidation_prompt(all_questions)
+
+    if self.grader.prefer_anthropic:
+      # Try Anthropic first if preferred
+      try:
+        ai_helper = AI_Helper__Anthropic()
+        analysis_text, usage = ai_helper.query_ai(
+          prompt, [], max_response_tokens=2000, tier=self.grader.phase25_tier)
+
+        self.grader._track_token_usage(
+          usage, "Phase 2.5 - Question Consolidation (Anthropic)")
+
+        # Try to parse JSON from response
+        json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
+        if json_match:
+          result = validate_response_payload(
+            json.loads(json_match.group()),
+            schema_name="question_consolidation")
+          consolidated = result.get("consolidated_questions", [])
+          log.info(
+            f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+          )
+          return consolidated
+
+        log.warning("Could not parse JSON from Anthropic response")
+        return []
+
+      except Exception as e:
+        log.debug(
+          f"Anthropic question consolidation failed: {e}. Trying OpenAI...")
+
+    try:
+      # Try OpenAI (either first choice or fallback)
+      ai_helper = AI_Helper__OpenAI()
+      result, usage = ai_helper.query_ai(
+        prompt, [],
+        max_response_tokens=2000,
+        tier=self.grader.phase25_tier,
+        schema_name="question_consolidation")
+
+      self.grader._track_token_usage(
+        usage, "Phase 2.5 - Question Consolidation (OpenAI)")
+
+      consolidated = result.get("consolidated_questions", [])
+      log.info(
+        f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+      )
+      return consolidated
+
+    except Exception as e:
+      log.debug(f"OpenAI question consolidation failed: {e}")
+
+      if not self.grader.prefer_anthropic:
+        log.debug("Trying Anthropic as fallback...")
+        try:
+          # Fallback to Anthropic when OpenAI was first choice
+          ai_helper = AI_Helper__Anthropic()
+          analysis_text, usage = ai_helper.query_ai(
+            prompt, [], max_response_tokens=2000, tier=self.grader.phase25_tier)
+
+          self.grader._track_token_usage(
+            usage, "Phase 2.5 - Question Consolidation (Anthropic fallback)")
+
+          # Try to parse JSON from response
+          json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
+          if json_match:
+            result = validate_response_payload(
+              json.loads(json_match.group()),
+              schema_name="question_consolidation")
+            consolidated = result.get("consolidated_questions", [])
+            log.info(
+              f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+            )
+            return consolidated
+
+          log.warning("Could not parse JSON from Anthropic fallback response")
+          return []
+
+        except Exception as fallback_error:
+          log.error(
+            f"Both AI providers failed for question consolidation: {fallback_error}"
+          )
+          return []
+
+    return []
+
+
 class BaseTextSubmissionGrader(Grader):
   COMPATIBLE_KINDS = {"TextAssignment"}
   """
@@ -434,6 +541,7 @@ class BaseTextSubmissionGrader(Grader):
     self.score_calculator = ScoreCalculator()
     self.rubric_generator = RubricGenerator()
     self.batch_processor = BatchProcessor(self)
+    self.question_consolidator = QuestionConsolidator(self)
 
     # Model tier settings for each phase (small, medium, large)
     # Can be configured via grader settings in YAML
@@ -782,105 +890,7 @@ class BaseTextSubmissionGrader(Grader):
     Returns:
         List of consolidated question dictionaries
     """
-    import json
-    import re
-    from Autograder.ai_helper import (AI_Helper__OpenAI, AI_Helper__Anthropic,
-                                      validate_response_payload)
-
-    if not all_questions:
-      log.info("No questions found to consolidate")
-      return []
-
-    log.info(f"Consolidating {len(all_questions)} questions from students...")
-
-    # Get the consolidation prompt
-    prompt = self._build_question_consolidation_prompt(all_questions)
-
-    if self.prefer_anthropic:
-      # Try Anthropic first if preferred
-      try:
-        ai_helper = AI_Helper__Anthropic()
-        analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                  max_response_tokens=2000,
-                                                  tier=self.phase25_tier)
-
-        # Track token usage
-        self._track_token_usage(
-          usage, "Phase 2.5 - Question Consolidation (Anthropic)")
-
-        # Try to parse JSON from response
-        json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-        if json_match:
-          result = validate_response_payload(
-            json.loads(json_match.group()),
-            schema_name="question_consolidation")
-          consolidated = result.get("consolidated_questions", [])
-          log.info(
-            f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
-          )
-          return consolidated
-        else:
-          log.warning("Could not parse JSON from Anthropic response")
-          return []
-
-      except Exception as e:
-        log.debug(
-          f"Anthropic question consolidation failed: {e}. Trying OpenAI...")
-
-    try:
-      # Try OpenAI (either first choice or fallback)
-      ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000,
-                                         tier=self.phase25_tier,
-                                         schema_name="question_consolidation")
-
-      # Track token usage
-      self._track_token_usage(usage,
-                              "Phase 2.5 - Question Consolidation (OpenAI)")
-
-      consolidated = result.get("consolidated_questions", [])
-      log.info(
-        f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
-      )
-      return consolidated
-
-    except Exception as e:
-      log.debug(f"OpenAI question consolidation failed: {e}")
-
-      if not self.prefer_anthropic:
-        log.debug("Trying Anthropic as fallback...")
-        try:
-          # Fallback to Anthropic when OpenAI was first choice
-          ai_helper = AI_Helper__Anthropic()
-          analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                    max_response_tokens=2000,
-                                                    tier=self.phase25_tier)
-
-          # Track token usage
-          self._track_token_usage(
-            usage, "Phase 2.5 - Question Consolidation (Anthropic fallback)")
-
-          # Try to parse JSON from response
-          json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-          if json_match:
-            result = validate_response_payload(
-              json.loads(json_match.group()),
-              schema_name="question_consolidation")
-            consolidated = result.get("consolidated_questions", [])
-            log.info(
-              f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
-            )
-            return consolidated
-          else:
-            log.warning(
-              "Could not parse JSON from Anthropic fallback response")
-            return []
-
-        except Exception as fallback_error:
-          log.error(
-            f"Both AI providers failed for question consolidation: {fallback_error}"
-          )
-          return []
+    return self.question_consolidator.consolidate(all_questions)
 
   def _grade_individual_submission(self, submission_text: str,
                                    core_topics: List[str],
