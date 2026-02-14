@@ -1,6 +1,7 @@
 import json
 
 from Autograder.graders.text_submission_grader import (
+  RubricGenerator,
   ScoreCalculator,
   TextSubmissionGrader,
   WeeklyStudyNotesGrader,
@@ -33,6 +34,28 @@ def test_score_calculator_needs_support_handles_string_and_bool():
   assert ScoreCalculator.needs_support({"needs_support": "false"}) is False
   assert ScoreCalculator.needs_support({"needs_support": True}) is True
   assert ScoreCalculator.needs_support({}) is False
+
+
+def test_rubric_generator_includes_topics_needing_review_and_totals():
+  generator = RubricGenerator()
+  result = {
+    "engagement_score": 4,
+    "length_score": 2,
+    "relevance_score": 2,
+    "explanation_quality_score": 2,
+    "total_grade": 10,
+    "accurate_word_count": 280,
+    "topics_needing_review": ["Deadlock"],
+    "feedback": "Great synthesis.",
+  }
+
+  rendered = generator.generate(result)
+
+  assert "Study Notes Feedback" in rendered
+  assert "TOTAL SCORE: 10/10 (100%)" in rendered
+  assert "TOPICS TO REVIEW:" in rendered
+  assert "- Deadlock" in rendered
+  assert "FEEDBACK:" in rendered
 
 
 def test_text_submission_grader_is_alias_of_weekly_notes_grader():

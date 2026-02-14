@@ -280,6 +280,55 @@ class ScoreCalculator:
     return bool(value)
 
 
+class RubricGenerator:
+  """
+  Encapsulates student-facing rubric feedback rendering.
+  """
+
+  def __init__(self,
+               *,
+               engagement_points: int = ENGAGEMENT_POINTS,
+               length_points: int = LENGTH_POINTS,
+               relevance_points: int = RELEVANCE_POINTS,
+               explanation_quality_points: int = EXPLANATION_QUALITY_POINTS,
+               rubric_total: int = DEFAULT_RUBRIC_TOTAL):
+    self.engagement_points = engagement_points
+    self.length_points = length_points
+    self.relevance_points = relevance_points
+    self.explanation_quality_points = explanation_quality_points
+    self.rubric_total = rubric_total
+
+  def generate(self, result: Dict) -> str:
+    engagement_score = result.get('engagement_score', 0)
+    length_score = result.get('length_score', 0)
+    relevance_score = result.get('relevance_score', 0)
+    quality_score = result.get('explanation_quality_score', 0)
+    total_score = result.get('total_grade', 0)
+    word_count = result.get('accurate_word_count', 0)
+    ai_feedback = result.get('feedback', '')
+    topics_needing_review = result.get('topics_needing_review', [])
+
+    feedback_lines = [
+      "Study Notes Feedback", "=" * 50, "", "GRADE BREAKDOWN:",
+      f"- Engagement ({self.engagement_points} pts): {engagement_score}/{self.engagement_points} - Effort to process and explain material",
+      f"- Length ({self.length_points} pts): {length_score}/{self.length_points} - {'Met 250+ word requirement' if length_score == self.length_points else 'Under 250 words required'}",
+      f"- Relevance ({self.relevance_points} pts): {relevance_score}/{self.relevance_points} - Coverage of class topics",
+      f"- Explanation Quality ({self.explanation_quality_points} pts): {quality_score}/{self.explanation_quality_points} - Depth of explanation",
+      "",
+      f"TOTAL SCORE: {total_score}/{self.rubric_total} ({(total_score/self.rubric_total)*100:.0f}%)",
+      f"Word Count: {word_count} words"
+    ]
+
+    if topics_needing_review:
+      feedback_lines.append("")
+      feedback_lines.append("TOPICS TO REVIEW:")
+      for topic in topics_needing_review:
+        feedback_lines.append(f"- {topic}")
+
+    feedback_lines.extend(["", "FEEDBACK:", ai_feedback])
+    return "\n".join(feedback_lines)
+
+
 class BaseTextSubmissionGrader(Grader):
   COMPATIBLE_KINDS = {"TextAssignment"}
   """
@@ -310,6 +359,7 @@ class BaseTextSubmissionGrader(Grader):
     self.records_dir = None
     self.reveal_identity = False
     self.score_calculator = ScoreCalculator()
+    self.rubric_generator = RubricGenerator()
 
     # Model tier settings for each phase (small, medium, large)
     # Can be configured via grader settings in YAML
@@ -1147,7 +1197,7 @@ class BaseTextSubmissionGrader(Grader):
         percentage_score = (total_grade / 10.0) * 100.0
 
         # Create detailed rubric feedback
-        feedback_text = self._generate_rubric_feedback(result)
+        feedback_text = self.rubric_generator.generate(result)
         submission.feedback = Feedback(percentage_score, feedback_text)
       else:
         # Fallback for missing results
@@ -1155,45 +1205,8 @@ class BaseTextSubmissionGrader(Grader):
                                        "Error: Could not analyze submission")
 
   def _generate_rubric_feedback(self, result: Dict) -> str:
-    """
-    Generate detailed rubric breakdown for student feedback.
-
-    Args:
-        result: Individual grading result dictionary
-
-    Returns:
-        Formatted feedback string with rubric breakdown
-    """
-    engagement_score = result.get('engagement_score', 0)
-    length_score = result.get('length_score', 0)
-    relevance_score = result.get('relevance_score', 0)
-    quality_score = result.get('explanation_quality_score', 0)
-    total_score = result.get('total_grade', 0)
-    # Always use our accurate word count
-    word_count = result.get('accurate_word_count', 0)
-    ai_feedback = result.get('feedback', '')
-    topics_needing_review = result.get('topics_needing_review', [])
-
-    feedback_lines = [
-      "Study Notes Feedback", "=" * 50, "", "GRADE BREAKDOWN:",
-      f"- Engagement (4 pts): {engagement_score}/4 - Effort to process and explain material",
-      f"- Length (2 pts): {length_score}/2 - {'Met 250+ word requirement' if length_score == 2 else 'Under 250 words required'}",
-      f"- Relevance (2 pts): {relevance_score}/2 - Coverage of class topics",
-      f"- Explanation Quality (2 pts): {quality_score}/2 - Depth of explanation",
-      "", f"TOTAL SCORE: {total_score}/10 ({(total_score/10)*100:.0f}%)",
-      f"Word Count: {word_count} words"
-    ]
-
-    # Add topics needing review if any
-    if topics_needing_review:
-      feedback_lines.append("")
-      feedback_lines.append("TOPICS TO REVIEW:")
-      for topic in topics_needing_review:
-        feedback_lines.append(f"- {topic}")
-
-    feedback_lines.extend(["", "FEEDBACK:", ai_feedback])
-
-    return "\n".join(feedback_lines)
+    """Backward-compatible wrapper around RubricGenerator."""
+    return self.rubric_generator.generate(result)
 
   # Hook methods for customization
   def _store_topics_from_result(self, result: Dict) -> None:
