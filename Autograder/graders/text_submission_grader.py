@@ -961,6 +961,90 @@ class ReportCompiler:
     return topic_stats
 
 
+class ReportPresenter:
+  """
+  Encapsulates report presentation/logging output.
+  """
+
+  def __init__(self, grader: "BaseTextSubmissionGrader"):
+    self.grader = grader
+
+  def present(self, report_data: Dict) -> None:
+    self.display_aggregate_insights(report_data)
+    self.display_grade_summary(report_data)
+    self.display_support_recommendations(report_data)
+
+  def display_aggregate_insights(self, report_data: Dict) -> None:
+    insights = report_data.get("aggregate_insights", {})
+
+    log.debug("\nCLASS-WIDE INSIGHTS")
+    log.debug("=" * 60)
+
+    if insights.get("common_themes"):
+      log.debug(f"Common themes:\n{insights['common_themes']}")
+
+    if insights.get("key_insights"):
+      log.debug(f"\nKey learning insights:\n{insights['key_insights']}")
+
+    misunderstood = insights.get("commonly_misunderstood_topics", [])
+    if misunderstood:
+      log.debug(f"\nTopics needing review ({len(misunderstood)}):")
+      for topic in misunderstood:
+        log.debug(f"   - {topic}")
+      if insights.get("misconception_details"):
+        log.debug(f"   Details: {insights['misconception_details']}")
+
+    if insights.get("teaching_feedback"):
+      log.debug(
+        f"\nTeaching recommendations:\n{insights['teaching_feedback']}")
+
+    core_topics = report_data.get("core_topics", [])
+    if core_topics:
+      log.debug(f"\nCore topics identified ({len(core_topics)}):")
+      for i, topic in enumerate(core_topics, 1):
+        coverage = report_data["topic_coverage"].get(topic, {})
+        coverage_pct = coverage.get("coverage_percentage", 0)
+        log.debug(f"   {i}. {topic} ({coverage_pct:.1f}% of students)")
+
+  def display_grade_summary(self, report_data: Dict) -> None:
+    stats = report_data.get("grade_statistics", {})
+
+    log.debug("\nGRADE SUMMARY")
+    log.debug("=" * 60)
+
+    log.debug(f"Total Students: {stats.get('total_students', 0)}")
+    log.debug(
+      f"Average Grade: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)"
+    )
+
+    distribution = stats.get("grade_distribution", {})
+    if distribution:
+      log.debug("\nGrade Distribution:")
+      for letter, count in distribution.items():
+        percentage = (count / stats.get('total_students', 1)) * 100
+        log.debug(f"   {letter}: {count} students ({percentage:.1f}%)")
+
+    below_70 = stats.get("students_below_70", 0)
+    if below_70 > 0:
+      log.debug(f"\n{below_70} students scored below 70%")
+
+  def display_support_recommendations(self, report_data: Dict) -> None:
+    support = report_data.get("support_summary", {})
+    students_needing_support = support.get("students_needing_support", 0)
+
+    if students_needing_support > 0:
+      log.debug("\nSTUDENTS WHO MAY BENEFIT FROM OFFICE HOURS")
+      log.debug("=" * 60)
+
+      for student_info in support.get("support_details", []):
+        student_id = student_info.get("student_id", "Unknown")
+        reason = student_info.get("reason", "No reason provided")
+        log.debug(f"- {student_id}: {reason}")
+    else:
+      log.debug(
+        "\nAll students appear to be engaging well with the material.")
+
+
 class BaseTextSubmissionGrader(Grader):
   COMPATIBLE_KINDS = {"TextAssignment"}
   """
@@ -998,6 +1082,7 @@ class BaseTextSubmissionGrader(Grader):
     self.aggregate_analyzer = AggregateAnalyzer(self)
     self.individual_submission_analyzer = IndividualSubmissionAnalyzer(self)
     self.report_compiler = ReportCompiler(self)
+    self.report_presenter = ReportPresenter(self)
 
     # Model tier settings for each phase (small, medium, large)
     # Can be configured via grader settings in YAML
@@ -1179,9 +1264,7 @@ class BaseTextSubmissionGrader(Grader):
                                             individual_results)
 
     # Display the report
-    self._display_aggregate_insights(report_data)
-    self._display_grade_summary(report_data)
-    self._display_support_recommendations(report_data)
+    self.report_presenter.present(report_data)
 
     # Use output hook for custom delivery
     self.output_report_hook(report_data)
@@ -1212,78 +1295,15 @@ class BaseTextSubmissionGrader(Grader):
 
   def _display_aggregate_insights(self, report_data: Dict) -> None:
     """Display aggregate analysis insights."""
-    insights = report_data.get("aggregate_insights", {})
-
-    log.debug("\nCLASS-WIDE INSIGHTS")
-    log.debug("=" * 60)
-
-    if insights.get("common_themes"):
-      log.debug(f"Common themes:\n{insights['common_themes']}")
-
-    if insights.get("key_insights"):
-      log.debug(f"\nKey learning insights:\n{insights['key_insights']}")
-
-    # Display commonly misunderstood topics
-    misunderstood = insights.get("commonly_misunderstood_topics", [])
-    if misunderstood:
-      log.debug(f"\nTopics needing review ({len(misunderstood)}):")
-      for topic in misunderstood:
-        log.debug(f"   - {topic}")
-      if insights.get("misconception_details"):
-        log.debug(f"   Details: {insights['misconception_details']}")
-
-    if insights.get("teaching_feedback"):
-      log.debug(
-        f"\nTeaching recommendations:\n{insights['teaching_feedback']}")
-
-    # Display core topics
-    core_topics = report_data.get("core_topics", [])
-    if core_topics:
-      log.debug(f"\nCore topics identified ({len(core_topics)}):")
-      for i, topic in enumerate(core_topics, 1):
-        coverage = report_data["topic_coverage"].get(topic, {})
-        coverage_pct = coverage.get("coverage_percentage", 0)
-        log.debug(f"   {i}. {topic} ({coverage_pct:.1f}% of students)")
+    self.report_presenter.display_aggregate_insights(report_data)
 
   def _display_grade_summary(self, report_data: Dict) -> None:
     """Display grade summary statistics."""
-    stats = report_data.get("grade_statistics", {})
-
-    log.debug("\nGRADE SUMMARY")
-    log.debug("=" * 60)
-
-    log.debug(f"Total Students: {stats.get('total_students', 0)}")
-    log.debug(
-      f"Average Grade: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)"
-    )
-
-    distribution = stats.get("grade_distribution", {})
-    if distribution:
-      log.debug("\nGrade Distribution:")
-      for letter, count in distribution.items():
-        percentage = (count / stats.get('total_students', 1)) * 100
-        log.debug(f"   {letter}: {count} students ({percentage:.1f}%)")
-
-    below_70 = stats.get("students_below_70", 0)
-    if below_70 > 0:
-      log.debug(f"\n{below_70} students scored below 70%")
+    self.report_presenter.display_grade_summary(report_data)
 
   def _display_support_recommendations(self, report_data: Dict) -> None:
     """Display support recommendations for students."""
-    support = report_data.get("support_summary", {})
-    students_needing_support = support.get("students_needing_support", 0)
-
-    if students_needing_support > 0:
-      log.debug("\nSTUDENTS WHO MAY BENEFIT FROM OFFICE HOURS")
-      log.debug("=" * 60)
-
-      for student_info in support.get("support_details", []):
-        student_id = student_info.get("student_id", "Unknown")
-        reason = student_info.get("reason", "No reason provided")
-        log.debug(f"- {student_id}: {reason}")
-    else:
-      log.debug(
-        "\nAll students appear to be engaging well with the material.")
+    self.report_presenter.display_support_recommendations(report_data)
 
   def _apply_grades_to_submissions(self, submissions: List[Submission],
                                    individual_results: List[Dict]) -> None:
