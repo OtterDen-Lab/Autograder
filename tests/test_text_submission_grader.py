@@ -1,11 +1,18 @@
 import json
 
-from Autograder.graders.text_submission_grader import TextSubmissionGrader
+from Autograder.graders.text_submission_grader import (
+  TextSubmissionGrader,
+  WeeklyStudyNotesGrader,
+)
 from lms_interface.classes import Student, TextSubmission
 
 
 def _submission(name: str, user_id: int) -> TextSubmission:
   return TextSubmission(student=Student(name=name, user_id=user_id, _inner=None))
+
+
+def test_text_submission_grader_is_alias_of_weekly_notes_grader():
+  assert issubclass(TextSubmissionGrader, WeeklyStudyNotesGrader)
 
 
 def test_apply_grades_to_submissions_maps_results_by_student_id():

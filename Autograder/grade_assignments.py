@@ -482,7 +482,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
           f"Invalid records configuration for assignment {assignment_id} "
           f"('{assignment_name or 'unknown'}'): {e}") from e
     elif settings.get("records_dir") is not None and str(grader_name).lower(
-    ) == "textsubmissiongrader":
+    ) in {"textsubmissiongrader", "weeklystudynotesgrader"}:
       # TextSubmissionGrader can write optional reports/questions to records_dir
       try:
         settings["records_dir"] = resolve_records_dir(settings.get("records_dir"))

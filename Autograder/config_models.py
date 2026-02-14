@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 _FALLBACK_ACTIVE_ASSIGNMENT_KINDS = {"ProgrammingAssignment", "TextAssignment"}
 _FALLBACK_ACTIVE_GRADERS_BY_KIND = {
   "ProgrammingAssignment": {"template-grader"},
-  "TextAssignment": {"TextSubmissionGrader"},
+  "TextAssignment": {"TextSubmissionGrader", "WeeklyStudyNotesGrader"},
 }
 
 
@@ -491,7 +491,7 @@ def normalize_grader_settings(grader_name: str,
                               context_label: str) -> Dict[str, Any]:
   if grader_name == "template-grader":
     return _normalize_template_grader_settings(settings, context_label)
-  if grader_name == "TextSubmissionGrader":
+  if grader_name in {"TextSubmissionGrader", "WeeklyStudyNotesGrader"}:
     return _normalize_text_submission_grader_settings(settings, context_label)
 
   raise _config_error(f"Unsupported grader for settings validation: {grader_name}")

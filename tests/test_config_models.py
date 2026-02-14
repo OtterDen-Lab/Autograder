@@ -214,6 +214,29 @@ def test_parse_run_config_accepts_privacy_mode_and_reveal_identity():
   assert run_config.idempotency_state_dir == "/tmp/autograder-state"
 
 
+def test_parse_run_config_accepts_weekly_study_notes_grader():
+  run_config = parse_run_config({
+    "assignment_types": {
+      "weekly_notes": {
+        "kind": "TextAssignment",
+        "grader": "WeeklyStudyNotesGrader"
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "weekly_notes",
+        "assignments": [{
+          "id": 99
+        }]
+      }]
+    }]
+  })
+
+  assert run_config.assignment_types["weekly_notes"].kind == "TextAssignment"
+  assert run_config.assignment_types["weekly_notes"].grader == "WeeklyStudyNotesGrader"
+
+
 def test_parse_run_config_rejects_invalid_privacy_mode():
   with pytest.raises(ValueError):
     parse_run_config({

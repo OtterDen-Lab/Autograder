@@ -245,8 +245,7 @@ RELEVANCE_POINTS = 2   # Coverage of class topics
 EXPLANATION_QUALITY_POINTS = 2  # Depth of explanation
 
 
-@GraderRegistry.register("TextSubmissionGrader")
-class TextSubmissionGrader(Grader):
+class BaseTextSubmissionGrader(Grader):
   COMPATIBLE_KINDS = {"TextAssignment"}
   """
   Grader for text-based weekly study notes submissions.
@@ -282,7 +281,26 @@ class TextSubmissionGrader(Grader):
     self.phase2_tier = kwargs.get('phase2_tier', 'small')  # Individual grading
     self.phase25_tier = kwargs.get('phase25_tier', 'small')  # Question consolidation
 
-    log.info(f"TextSubmissionGrader initialized with tiers: phase1={self.phase1_tier}, phase2={self.phase2_tier}, phase25={self.phase25_tier}")
+    log.info(f"{self.__class__.__name__} initialized with tiers: phase1={self.phase1_tier}, phase2={self.phase2_tier}, phase25={self.phase25_tier}")
+
+  def _build_aggregate_analysis_prompt(self, submission_texts: List[str],
+                                       assignment_name: str,
+                                       course_name: str) -> str:
+    return get_aggregate_analysis_prompt(submission_texts, assignment_name,
+                                         course_name)
+
+  def _build_individual_grading_prompt(self,
+                                       submission_text: str,
+                                       core_topics: List[str]) -> str:
+    return get_individual_grading_prompt(
+      submission_text, core_topics,
+      related_topics=self.related_topics,
+      off_topic_indicators=self.off_topic_indicators
+    )
+
+  def _build_question_consolidation_prompt(self,
+                                           all_questions: List[str]) -> str:
+    return get_question_consolidation_prompt(all_questions)
 
   def can_grade_submission(self, submission: Submission) -> bool:
     """
@@ -446,7 +464,8 @@ class TextSubmissionGrader(Grader):
       }
 
     # Get the prompt
-    prompt = get_aggregate_analysis_prompt(submission_texts, assignment_name, course_name)
+    prompt = self._build_aggregate_analysis_prompt(
+      submission_texts, assignment_name, course_name)
 
     if self.prefer_anthropic:
       # Try Anthropic first if preferred
@@ -680,7 +699,7 @@ class TextSubmissionGrader(Grader):
     log.info(f"Consolidating {len(all_questions)} questions from students...")
 
     # Get the consolidation prompt
-    prompt = get_question_consolidation_prompt(all_questions)
+    prompt = self._build_question_consolidation_prompt(all_questions)
 
     if self.prefer_anthropic:
       # Try Anthropic first if preferred
@@ -787,11 +806,7 @@ class TextSubmissionGrader(Grader):
     import json
     import re
 
-    prompt = get_individual_grading_prompt(
-      submission_text, core_topics,
-      related_topics=self.related_topics,
-      off_topic_indicators=self.off_topic_indicators
-    )
+    prompt = self._build_individual_grading_prompt(submission_text, core_topics)
 
     if self.prefer_anthropic:
       # Try Anthropic first if preferred
@@ -1642,3 +1657,19 @@ class TextSubmissionGrader(Grader):
     Text assignments need preparation to fetch submissions.
     """
     return True
+
+
+@GraderRegistry.register("WeeklyStudyNotesGrader")
+class WeeklyStudyNotesGrader(BaseTextSubmissionGrader):
+  """
+  Concrete weekly-study-notes implementation of the text grading pipeline.
+  """
+  COMPATIBLE_KINDS = {"TextAssignment"}
+
+
+@GraderRegistry.register("TextSubmissionGrader")
+class TextSubmissionGrader(WeeklyStudyNotesGrader):
+  """
+  Backward-compatible alias for the weekly study notes grader.
+  """
+  COMPATIBLE_KINDS = {"TextAssignment"}
