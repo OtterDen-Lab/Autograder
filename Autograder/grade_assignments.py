@@ -498,10 +498,11 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
     try:
       lms_assignment = course.get_assignment(assignment_id)
     except Exception as e:
-      if _is_lms_exception(e):
+      if _is_lms_exception(e) or isinstance(e, (ValueError, AttributeError)):
         raise autograder_exceptions.LMSError(
           f"Failed to load Canvas assignment id={assignment_id} for course "
-          f"'{course_name}'. Verify course/assignment IDs and Canvas API access."
+          f"'{course_name}': {e}. Verify course/assignment IDs and Canvas API access. "
+          "If Canvas is under maintenance, retry after maintenance completes."
         ) from e
       raise
     if lms_assignment is None:
@@ -509,8 +510,15 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
         f"Canvas assignment id={assignment_id} was not found for course "
         f"'{course_name}'. Verify the assignment ID in your YAML config."
       )
-    assignment_name = lms_assignment.name
-    log.info(f"[Thread {thread_id}] Grading assignment \"{assignment_name}\"")
+    try:
+      lms_assignment_name = lms_assignment.name
+    except AttributeError as e:
+      raise autograder_exceptions.LMSError(
+        f"Canvas assignment id={assignment_id} for course '{course_name}' is missing "
+        f"required metadata ('name'): {e}. This can happen during Canvas maintenance."
+      ) from e
+    assignment_name = lms_assignment_name
+    log.info(f"[Thread {thread_id}] Grading assignment \"{lms_assignment_name}\"")
 
     settings = assignment_data.settings
 
@@ -548,7 +556,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
     if isinstance(assignment_name, str):
       assignment_name = assignment_name.strip()
     if not assignment_name:
-      assignment_name = repo_path or lms_assignment.name
+      assignment_name = repo_path or lms_assignment_name
     grader = GraderRegistry.create(grader_name,
                                    assignment_path=repo_path,
                                    assignment_name=assignment_name,
@@ -572,11 +580,11 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
 
       if not prepare_result.has_submissions:
         log.info(
-          f"[Thread {thread_id}] No submissions for {lms_assignment.name}; skipping grading."
+          f"[Thread {thread_id}] No submissions for {lms_assignment_name}; skipping grading."
         )
         return {
           'success': True,
-          'assignment_name': assignment_name,
+          'assignment_name': lms_assignment_name,
           'course_name': course_name,
           'assignment_id': assignment_id,
           'thread_id': thread_id,
@@ -600,7 +608,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
 
     return {
       'success': True,
-      'assignment_name': lms_assignment.name,
+      'assignment_name': lms_assignment_name,
       'assignment_id': assignment_id,
       'thread_id': thread_id,
       'course_name': course_name,

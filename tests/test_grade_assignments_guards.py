@@ -90,6 +90,35 @@ def test_grade_single_assignment_wraps_assignment_lookup_as_lms_error():
   assert "failed to load canvas assignment" in result["error"].lower()
 
 
+def test_grade_single_assignment_wraps_assignment_metadata_errors_as_lms_error():
+  class MaintenanceCourse:
+    def get_assignment(self, assignment_id):
+      raise ValueError(
+        f"Canvas returned incomplete metadata for assignment id={assignment_id} (missing: name)."
+      )
+
+  result = grade_assignments.grade_single_assignment(
+    AssignmentRunRequest(
+      course=MaintenanceCourse(),
+      course_name="CST",
+      assignment_id=42,
+      assignment_type="assignment",
+      assignment_kind="ProgrammingAssignment",
+      grader_name="template-grader",
+      settings={},
+      repo_path=None,
+      assignment_name=None,
+      args=SimpleNamespace(
+        do_regrade=False, limit=None, test=False),
+      push_grades=False,
+      slack_channel=None,
+    ))
+
+  assert result["success"] is False
+  assert result.get("error_type") == "LMSError"
+  assert "maintenance" in result["error"].lower()
+
+
 def test_parse_args_requires_yaml(monkeypatch):
   monkeypatch.setattr(sys, "argv", ["grade-assignments"])
   with pytest.raises(SystemExit) as exc:

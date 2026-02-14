@@ -623,12 +623,30 @@ class CanvasCourse(LMSWrapper):
           time.sleep(sleep_s)
     return False
 
+  @staticmethod
+  def _validate_assignment_metadata(canvasapi_assignment,
+                                    assignment_id: int) -> None:
+    missing_fields = []
+    if not hasattr(canvasapi_assignment, "id"):
+      missing_fields.append("id")
+    if not hasattr(canvasapi_assignment, "name"):
+      missing_fields.append("name")
+
+    if missing_fields:
+      missing = ", ".join(missing_fields)
+      raise ValueError(
+        f"Canvas returned incomplete metadata for assignment id={assignment_id} "
+        f"(missing: {missing}). This can happen during Canvas maintenance or partial API outages."
+      )
+
   def get_assignment(self, assignment_id : int) -> CanvasAssignment | None:
     try:
+      canvas_assignment = self.course.get_assignment(assignment_id)
+      self._validate_assignment_metadata(canvas_assignment, assignment_id)
       return CanvasAssignment(
         canvasapi_interface=self.canvas_interface,
         canvasapi_course=self,
-        canvasapi_assignment=self.course.get_assignment(assignment_id)
+        canvasapi_assignment=canvas_assignment
       )
     except canvasapi.exceptions.ResourceDoesNotExist:
       log.error(f"Assignment {assignment_id} not found in course \"{self.name}\"")

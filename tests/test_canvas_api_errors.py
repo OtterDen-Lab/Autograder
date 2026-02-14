@@ -497,6 +497,29 @@ class TestCanvasAssignmentSubmissions:
         result = course.get_assignment(99999)
         assert result is None
 
+    def test_get_assignment_raises_when_canvas_assignment_metadata_incomplete(self):
+        """Canvas maintenance/partial outages can return assignment objects missing required fields."""
+        interface = CanvasInterface(
+            canvas_url="https://canvas.example.edu",
+            canvas_key="token",
+        )
+
+        mock_canvasapi_course = MagicMock()
+        mock_canvasapi_course.id = 123
+        mock_canvasapi_course.name = "Test Course"
+
+        # Simulate partial metadata object with no `name`.
+        incomplete_assignment = SimpleNamespace(id=555)
+        mock_canvasapi_course.get_assignment.return_value = incomplete_assignment
+
+        course = CanvasCourse(
+            canvas_interface=interface,
+            canvasapi_course=mock_canvasapi_course,
+        )
+
+        with pytest.raises(ValueError, match="incomplete metadata"):
+            course.get_assignment(555)
+
 
 class TestCanvasAssignmentPushFeedback:
     """Tests for push_feedback temp file handling."""
