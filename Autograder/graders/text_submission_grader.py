@@ -245,6 +245,41 @@ RELEVANCE_POINTS = 2   # Coverage of class topics
 EXPLANATION_QUALITY_POINTS = 2  # Depth of explanation
 
 
+class ScoreCalculator:
+  """
+  Encapsulates score normalization and total-grade calculation for phase 2.
+  """
+
+  def __init__(self,
+               *,
+               word_threshold: int = DEFAULT_WORD_THRESHOLD,
+               length_points: int = LENGTH_POINTS):
+    self.word_threshold = word_threshold
+    self.length_points = length_points
+
+  def apply_scores(self, result: Dict, *, word_count: int,
+                   student_name: str) -> Dict:
+    # Length score is computed locally from measured word count.
+    result["length_score"] = (
+      self.length_points if word_count >= self.word_threshold else 0)
+    result["accurate_word_count"] = word_count
+    result["student_name"] = student_name
+
+    total_grade = (int(result.get("engagement_score", 0)) +
+                   int(result.get("length_score", 0)) +
+                   int(result.get("relevance_score", 0)) +
+                   int(result.get("explanation_quality_score", 0)))
+    result["total_grade"] = total_grade
+    return result
+
+  @staticmethod
+  def needs_support(result: Dict) -> bool:
+    value = result.get("needs_support", False)
+    if isinstance(value, str):
+      value = value.lower() in ['true', '1', 'yes']
+    return bool(value)
+
+
 class BaseTextSubmissionGrader(Grader):
   COMPATIBLE_KINDS = {"TextAssignment"}
   """
@@ -274,6 +309,7 @@ class BaseTextSubmissionGrader(Grader):
     self.slack_channel = kwargs.get('slack_channel')
     self.records_dir = None
     self.reveal_identity = False
+    self.score_calculator = ScoreCalculator()
 
     # Model tier settings for each phase (small, medium, large)
     # Can be configured via grader settings in YAML
@@ -634,26 +670,12 @@ class BaseTextSubmissionGrader(Grader):
         result = self._grade_individual_submission(submission_text,
                                                    core_topics, student_id)
 
-      # Calculate length score (separate from AI analysis) and store accurate word count
-      result["length_score"] = 2 if word_count >= 250 else 0
-      result["accurate_word_count"] = word_count  # Store our accurate count
-      result["student_name"] = student_name  # Store student name for reporting
+      result = self.score_calculator.apply_scores(result,
+                                                  word_count=word_count,
+                                                  student_name=student_name)
 
-      # Calculate total grade (ensure all scores are integers)
-      # AI provides 8 points (engagement + relevance + explanation_quality)
-      # Length (2 points) is calculated locally
-      total_grade = (int(result.get("engagement_score", 0)) +
-                     int(result.get("length_score", 0)) +
-                     int(result.get("relevance_score", 0)) +
-                     int(result.get("explanation_quality_score", 0)))
-      result["total_grade"] = total_grade
-
-      # Track students needing support (handle string boolean from AI)
-      needs_support = result.get("needs_support", False)
-      if isinstance(needs_support, str):
-        needs_support = needs_support.lower() in ['true', '1', 'yes']
-
-      if needs_support:
+      # Track students needing support.
+      if self.score_calculator.needs_support(result):
         self.support_needed_students.append({
           "student_id":
           student_id,

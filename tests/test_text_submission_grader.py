@@ -1,6 +1,7 @@
 import json
 
 from Autograder.graders.text_submission_grader import (
+  ScoreCalculator,
   TextSubmissionGrader,
   WeeklyStudyNotesGrader,
 )
@@ -9,6 +10,29 @@ from lms_interface.classes import Student, TextSubmission
 
 def _submission(name: str, user_id: int) -> TextSubmission:
   return TextSubmission(student=Student(name=name, user_id=user_id, _inner=None))
+
+
+def test_score_calculator_applies_length_and_total_grade():
+  calculator = ScoreCalculator(word_threshold=250, length_points=2)
+  result = {
+    "engagement_score": 3,
+    "relevance_score": 2,
+    "explanation_quality_score": 1,
+  }
+
+  scored = calculator.apply_scores(result, word_count=300, student_name="Anon 0001")
+
+  assert scored["length_score"] == 2
+  assert scored["accurate_word_count"] == 300
+  assert scored["student_name"] == "Anon 0001"
+  assert scored["total_grade"] == 8
+
+
+def test_score_calculator_needs_support_handles_string_and_bool():
+  assert ScoreCalculator.needs_support({"needs_support": "yes"}) is True
+  assert ScoreCalculator.needs_support({"needs_support": "false"}) is False
+  assert ScoreCalculator.needs_support({"needs_support": True}) is True
+  assert ScoreCalculator.needs_support({}) is False
 
 
 def test_text_submission_grader_is_alias_of_weekly_notes_grader():
