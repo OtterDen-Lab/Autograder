@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from Autograder import grade_assignments
+from Autograder import config_models
 from Autograder.config_models import parse_run_config
 
 
@@ -23,6 +24,86 @@ def test_parse_run_config_rejects_course_without_assignment_groups():
       },
       "courses": [{"id": 1, "assignments": [{"id": 2}]}]
     })
+
+
+def test_get_active_grader_compatibility_discovers_registry_metadata(monkeypatch):
+  class DummyGrader:
+    COMPATIBLE_KINDS = {"CustomAssignmentKind"}
+    _registry_name = "custom-grader"
+
+  monkeypatch.setattr(config_models, "_FALLBACK_ACTIVE_ASSIGNMENT_KINDS",
+                      {"FallbackAssignment"})
+  monkeypatch.setattr(config_models, "_FALLBACK_ACTIVE_GRADERS_BY_KIND",
+                      {"FallbackAssignment": {"fallback-grader"}})
+
+  from Autograder.registry import GraderRegistry
+  monkeypatch.setattr(GraderRegistry, "_scanned", True)
+  monkeypatch.setattr(GraderRegistry, "_registry",
+                      {"custom-grader": DummyGrader})
+
+  kinds, graders_by_kind = config_models.get_active_grader_compatibility()
+
+  assert kinds == {"CustomAssignmentKind"}
+  assert graders_by_kind == {
+    "CustomAssignmentKind": {"custom-grader"}
+  }
+
+
+def test_get_active_grader_compatibility_uses_fallback_when_metadata_missing(
+    monkeypatch):
+  class UnknownGrader:
+    _registry_name = "unknown-grader"
+
+  fallback_kinds = {"ProgrammingAssignment", "TextAssignment"}
+  fallback_graders = {
+    "ProgrammingAssignment": {"template-grader"},
+    "TextAssignment": {"TextSubmissionGrader"},
+  }
+
+  monkeypatch.setattr(config_models, "_FALLBACK_ACTIVE_ASSIGNMENT_KINDS",
+                      fallback_kinds)
+  monkeypatch.setattr(config_models, "_FALLBACK_ACTIVE_GRADERS_BY_KIND",
+                      fallback_graders)
+
+  from Autograder.registry import GraderRegistry
+  monkeypatch.setattr(GraderRegistry, "_scanned", True)
+  monkeypatch.setattr(GraderRegistry, "_registry",
+                      {"unknown-grader": UnknownGrader})
+
+  kinds, graders_by_kind = config_models.get_active_grader_compatibility()
+
+  assert kinds == fallback_kinds
+  assert graders_by_kind == fallback_graders
+
+
+def test_parse_run_config_uses_discovered_grader_compatibility(monkeypatch):
+  monkeypatch.setattr(config_models, "get_active_grader_compatibility",
+                      lambda: ({
+                        "CustomAssignmentKind"
+                      }, {
+                        "CustomAssignmentKind": {"custom-grader"}
+                      }))
+
+  run_config = parse_run_config({
+    "assignment_types": {
+      "custom": {
+        "kind": "CustomAssignmentKind",
+        "grader": "custom-grader"
+      }
+    },
+    "courses": [{
+      "id": 1,
+      "assignment_groups": [{
+        "type": "custom",
+        "assignments": [{
+          "id": 2
+        }]
+      }]
+    }]
+  })
+
+  assert run_config.assignment_types["custom"].kind == "CustomAssignmentKind"
+  assert run_config.assignment_types["custom"].grader == "custom-grader"
 
 
 def test_collect_assignments_to_grade_builds_typed_requests(monkeypatch):

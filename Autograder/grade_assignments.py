@@ -19,10 +19,9 @@ from Autograder.assignment import AssignmentRegistry
 from Autograder.grader import GraderRegistry
 from Autograder.docker_utils import DockerClient
 from Autograder.config_models import (
-  ACTIVE_ASSIGNMENT_KINDS,
-  ACTIVE_GRADERS_BY_KIND,
   RunConfig,
   AssignmentRunRequest,
+  get_active_grader_compatibility,
   normalize_grader_settings,
   parse_run_config,
 )
@@ -448,12 +447,14 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
     grader_name = assignment_data.grader_name
     assignment_kind = assignment_data.assignment_kind
 
-    if assignment_kind not in ACTIVE_ASSIGNMENT_KINDS:
-      supported = ", ".join(sorted(ACTIVE_ASSIGNMENT_KINDS))
+    active_assignment_kinds, active_graders_by_kind = (
+      get_active_grader_compatibility())
+    if assignment_kind not in active_assignment_kinds:
+      supported = ", ".join(sorted(active_assignment_kinds))
       raise ValueError(
         f"Assignment kind '{assignment_kind}' is not supported in this build. "
         f"Supported kinds: {supported}")
-    allowed_graders = ACTIVE_GRADERS_BY_KIND.get(assignment_kind, set())
+    allowed_graders = active_graders_by_kind.get(assignment_kind, set())
     if grader_name not in allowed_graders:
       allowed = ", ".join(sorted(allowed_graders)) or "(none)"
       raise ValueError(

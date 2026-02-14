@@ -433,6 +433,7 @@ class Grader__docker(FileBasedGrader):
 
 @GraderRegistry.register("template-grader")
 class Grader__template_grader(Grader__docker):
+  COMPATIBLE_KINDS = {"ProgrammingAssignment"}
   """
   Template-based grader that automatically sets up a course template repository
   and runs scripts/grader.py with minimal configuration required.

@@ -4,11 +4,60 @@ from dataclasses import dataclass, field
 import posixpath
 from typing import Any, Dict, List, Optional
 
-ACTIVE_ASSIGNMENT_KINDS = {"ProgrammingAssignment", "TextAssignment"}
-ACTIVE_GRADERS_BY_KIND = {
+_FALLBACK_ACTIVE_ASSIGNMENT_KINDS = {"ProgrammingAssignment", "TextAssignment"}
+_FALLBACK_ACTIVE_GRADERS_BY_KIND = {
   "ProgrammingAssignment": {"template-grader"},
   "TextAssignment": {"TextSubmissionGrader"},
 }
+
+
+def _copy_grader_map(raw: Dict[str, set[str]]) -> Dict[str, set[str]]:
+  return {kind: set(graders) for kind, graders in raw.items()}
+
+
+def get_active_grader_compatibility() -> tuple[set[str], Dict[str, set[str]]]:
+  """
+  Discover assignment-kind/grader compatibility from registered graders.
+
+  Falls back to conservative static defaults if discovery fails or no grader
+  compatibility metadata is available.
+  """
+  discovered_by_kind: Dict[str, set[str]] = {}
+  try:
+    from Autograder.registry import GraderRegistry
+
+    if not GraderRegistry._scanned:
+      GraderRegistry.load_premade_modules()
+
+    for registered_name, grader_cls in GraderRegistry._registry.items():
+      compatible_kinds = getattr(grader_cls, "COMPATIBLE_KINDS", None)
+      if compatible_kinds is None:
+        continue
+
+      if isinstance(compatible_kinds, str):
+        kinds = [compatible_kinds]
+      else:
+        kinds = list(compatible_kinds)
+
+      display_name = getattr(grader_cls, "_registry_name", registered_name)
+      for kind in kinds:
+        if not isinstance(kind, str):
+          continue
+        normalized_kind = kind.strip()
+        if not normalized_kind:
+          continue
+        discovered_by_kind.setdefault(normalized_kind, set()).add(display_name)
+  except Exception:
+    discovered_by_kind = {}
+
+  if discovered_by_kind:
+    return set(discovered_by_kind.keys()), discovered_by_kind
+  return (set(_FALLBACK_ACTIVE_ASSIGNMENT_KINDS),
+          _copy_grader_map(_FALLBACK_ACTIVE_GRADERS_BY_KIND))
+
+
+ACTIVE_ASSIGNMENT_KINDS, ACTIVE_GRADERS_BY_KIND = (
+  get_active_grader_compatibility())
 
 
 @dataclass
@@ -523,6 +572,8 @@ def _parse_course(raw_course: Any) -> CourseConfig:
 
 def _parse_assignment_types(
   raw_types: Any) -> Dict[str, AssignmentTypeConfig]:
+  active_assignment_kinds, active_graders_by_kind = (
+    get_active_grader_compatibility())
   assignment_types = _require_dict(raw_types, "assignment_types")
   parsed: Dict[str, AssignmentTypeConfig] = {}
 
@@ -532,8 +583,8 @@ def _parse_assignment_types(
     if not kind:
       raise _config_error(
         f"assignment_types.{name} is missing required key 'kind'")
-    if kind not in ACTIVE_ASSIGNMENT_KINDS:
-      supported = ", ".join(sorted(ACTIVE_ASSIGNMENT_KINDS))
+    if kind not in active_assignment_kinds:
+      supported = ", ".join(sorted(active_assignment_kinds))
       raise _config_error(
         f"assignment_types.{name}.kind '{kind}' is not supported in this build. "
         f"Supported kinds: {supported}")
@@ -543,7 +594,7 @@ def _parse_assignment_types(
       raise _config_error(
         f"assignment_types.{name} is missing required key 'grader'")
 
-    allowed_graders = ACTIVE_GRADERS_BY_KIND.get(kind, set())
+    allowed_graders = active_graders_by_kind.get(kind, set())
     if grader not in allowed_graders:
       allowed = ", ".join(sorted(allowed_graders)) or "(none)"
       raise _config_error(

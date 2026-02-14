@@ -247,6 +247,7 @@ EXPLANATION_QUALITY_POINTS = 2  # Depth of explanation
 
 @GraderRegistry.register("TextSubmissionGrader")
 class TextSubmissionGrader(Grader):
+  COMPATIBLE_KINDS = {"TextAssignment"}
   """
   Grader for text-based weekly study notes submissions.
 
