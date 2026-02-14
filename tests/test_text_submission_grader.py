@@ -1,3 +1,5 @@
+import json
+
 from Autograder.graders.text_submission_grader import TextSubmissionGrader
 from lms_interface.classes import Student, TextSubmission
 
@@ -41,3 +43,92 @@ def test_truncate_submission_text_applies_word_limit_first():
 
   assert was_truncated is True
   assert len(truncated.split()) == 1000
+
+
+def test_phase_1_aggregate_analysis_falls_back_to_openai_when_anthropic_fails(
+    monkeypatch):
+  from Autograder import ai_helper
+
+  class FailingAnthropic:
+    def query_ai(self, *args, **kwargs):
+      raise RuntimeError("Anthropic timeout")
+
+  class WorkingOpenAI:
+    def query_ai(self, *args, **kwargs):
+      return {
+        "common_themes": "Core concepts",
+        "core_topics": ["Processes"],
+        "related_topics": ["Scheduling"],
+        "off_topic_indicators": [],
+        "commonly_misunderstood_topics": [],
+        "misconception_details": "",
+        "key_insights": "",
+        "teaching_feedback": "",
+        "student_questions": []
+      }, {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15
+      }
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", FailingAnthropic)
+  monkeypatch.setattr(ai_helper, "AI_Helper__OpenAI", WorkingOpenAI)
+
+  grader = TextSubmissionGrader(phase1_tier="small")
+  grader.prefer_anthropic = True
+  grader.total_tokens = 0
+  grader.total_cost = 0.0
+  grader.usage_details = []
+
+  result = grader.phase_1_aggregate_analysis(["notes"], "Weekly Notes", "CST")
+
+  assert result["common_themes"] == "Core concepts"
+  assert "Processes" in grader.core_topics
+  assert any(detail["provider"] == "openai" for detail in grader.usage_details)
+
+
+def test_phase_1_aggregate_analysis_falls_back_to_anthropic_when_openai_fails(
+    monkeypatch):
+  from Autograder import ai_helper
+
+  class FailingOpenAI:
+    def query_ai(self, *args, **kwargs):
+      raise RuntimeError("OpenAI timeout")
+
+  class WorkingAnthropic:
+    def query_ai(self, *args, **kwargs):
+      return json.dumps({
+        "common_themes": "Fallback themes",
+        "core_topics": ["Memory"],
+        "related_topics": ["Pointers"],
+        "off_topic_indicators": [],
+        "commonly_misunderstood_topics": [],
+        "misconception_details": "",
+        "key_insights": "",
+        "teaching_feedback": "",
+        "student_questions": []
+      }), {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+        "prompt_tokens": 8,
+        "completion_tokens": 4,
+        "total_tokens": 12
+      }
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__OpenAI", FailingOpenAI)
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", WorkingAnthropic)
+
+  grader = TextSubmissionGrader(phase1_tier="small")
+  grader.prefer_anthropic = False
+  grader.total_tokens = 0
+  grader.total_cost = 0.0
+  grader.usage_details = []
+
+  result = grader.phase_1_aggregate_analysis(["notes"], "Weekly Notes", "CST")
+
+  assert result["common_themes"] == "Fallback themes"
+  assert "Memory" in grader.core_topics
+  assert any(detail["provider"] == "anthropic"
+             for detail in grader.usage_details)

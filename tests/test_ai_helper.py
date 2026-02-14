@@ -11,6 +11,7 @@ Covers:
 
 import json
 import pytest
+import httpx
 from unittest.mock import MagicMock, patch
 
 from Autograder import ai_helper
@@ -330,6 +331,36 @@ class TestOpenAIHelper:
         assert result["explanation_quality_score"] == 1
         assert result["needs_support"] is True
         assert result["topics_covered"] == ["Scheduling", "Locks"]
+
+    def test_query_ai_strict_validation_retries_then_raises(self, monkeypatch):
+        invalid_payload = {"topics_covered": "not-a-list"}
+        mock_client = MockOpenAIClient(responses=[json.dumps(invalid_payload)])
+        monkeypatch.setattr(
+            ai_helper.AI_Helper__OpenAI, "_client", mock_client
+        )
+
+        with pytest.raises(ai_helper.AIResponseValidationError):
+            ai_helper.AI_Helper__OpenAI.query_ai(
+                message="Grade this",
+                attachments=[],
+                schema_name="individual_grading",
+                strict_validation=True,
+                max_retries=1,
+            )
+
+        assert mock_client._chat.completions.call_count == 2
+
+    def test_query_ai_propagates_timeout_errors_for_upstream_fallback(self, monkeypatch):
+        mock_client = MockOpenAIClient(error=httpx.ReadTimeout("timed out"))
+        monkeypatch.setattr(
+            ai_helper.AI_Helper__OpenAI, "_client", mock_client
+        )
+
+        with pytest.raises(httpx.ReadTimeout):
+            ai_helper.AI_Helper__OpenAI.query_ai(
+                message="Grade this",
+                attachments=[],
+            )
 
 
 class TestGradingResultIntegration:

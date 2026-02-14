@@ -562,10 +562,16 @@ class DockerContainer:
       extra_args["workdir"] = workdir
 
     rc, (stdout,
-         stderr) = self.container.exec_run(cmd=f"bash -c \"timeout 60 {command}\"",
-                                           demux=True,
-                                           tty=True,
-                                           **extra_args)
+         stderr) = (0, (b"", b""))
+    try:
+      rc, (stdout,
+           stderr) = self.container.exec_run(cmd=f"bash -c \"timeout 60 {command}\"",
+                                             demux=True,
+                                             tty=True,
+                                             **extra_args)
+    except docker.errors.APIError as e:
+      raise Autograder.exceptions.ContainerError(
+        f"Failed to execute command in container: {e}") from e
 
     log.debug(f"Command '{command}' returned {rc}")
     log.debug(f"stdout: {stdout}")

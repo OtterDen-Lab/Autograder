@@ -333,6 +333,52 @@ class TestDockerContainerCommandExecution:
         call_kwargs = mock_container_obj.exec_run.call_args[1]
         assert call_kwargs.get("workdir") == "/app"
 
+    def test_execute_command_wraps_with_timeout_guard(self, mock_docker_client, mock_docker_module, monkeypatch):
+        monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)
+
+        mock_container_obj = MagicMock()
+        mock_container_obj.exec_run.return_value = (0, (b"", b""))
+        mock_docker_client.client.containers.run.return_value = mock_container_obj
+
+        container = DockerContainer(mock_docker_client, "test:image")
+        container.start()
+
+        container.execute_command("python main.py")
+
+        call_kwargs = mock_container_obj.exec_run.call_args.kwargs
+        assert call_kwargs["cmd"] == 'bash -c "timeout 60 python main.py"'
+
+    def test_execute_command_returns_timeout_exit_code(self, mock_docker_client, mock_docker_module, monkeypatch):
+        monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)
+
+        mock_container_obj = MagicMock()
+        mock_container_obj.exec_run.return_value = (124, (b"", b""))
+        mock_docker_client.client.containers.run.return_value = mock_container_obj
+
+        container = DockerContainer(mock_docker_client, "test:image")
+        container.start()
+
+        rc, stdout, stderr = container.execute_command("sleep 999")
+
+        assert rc == 124
+        assert stdout == b""
+        assert stderr == b""
+
+    def test_execute_command_wraps_api_error_as_container_error(self, mock_docker_client, mock_docker_module, monkeypatch):
+        monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)
+
+        mock_container_obj = MagicMock()
+        mock_container_obj.exec_run.side_effect = mock_docker_module.errors.APIError(
+            "exec failed"
+        )
+        mock_docker_client.client.containers.run.return_value = mock_container_obj
+
+        container = DockerContainer(mock_docker_client, "test:image")
+        container.start()
+
+        with pytest.raises(ContainerError, match="Failed to execute command in container"):
+            container.execute_command("echo hello")
+
     def test_execute_command_handles_none_output(self, mock_docker_client, mock_docker_module, monkeypatch):
         monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)
 
