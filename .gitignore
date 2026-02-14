@@ -14,6 +14,7 @@ debug.tex
 autograder_feedback_upload_*
 records/
 .autograder/
+.hypothesis/
 dist/
 scratch.yaml
 
