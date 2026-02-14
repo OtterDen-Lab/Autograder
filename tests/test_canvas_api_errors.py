@@ -14,6 +14,7 @@ import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 import time
 from types import SimpleNamespace
+import requests
 
 from lms_interface import canvas_interface
 from lms_interface.canvas_interface import (
@@ -339,6 +340,45 @@ class TestCanvasCourseRetry:
         assert result is False
         assert call_count[0] == 1  # Only tried once
 
+    @pytest.mark.parametrize("status_code", [401, 403])
+    def test_call_canvas_with_retry_does_not_retry_auth_errors(self, status_code):
+        """Authentication failures should fail immediately with no retry sleep."""
+        interface = CanvasInterface(
+            canvas_url="https://canvas.example.edu",
+            canvas_key="token",
+        )
+
+        mock_canvasapi_course = MagicMock()
+        mock_canvasapi_course.id = 123
+
+        course = CanvasCourse(
+            canvas_interface=interface,
+            canvasapi_course=mock_canvasapi_course,
+        )
+
+        call_count = [0]
+
+        def auth_error_func():
+            call_count[0] += 1
+            import canvasapi.exceptions
+            exc = canvasapi.exceptions.CanvasException("Unauthorized")
+            exc.status_code = status_code
+            raise exc
+
+        with patch.object(canvas_interface.time, "sleep") as mock_sleep:
+            result = course._call_canvas_with_retry(
+                label="test",
+                func=auth_error_func,
+                max_upload_retries=5,
+                retry_backoff_base=0.01,
+                retry_backoff_max=0.05,
+                backoff_controller=None,
+            )
+
+        assert result is False
+        assert call_count[0] == 1
+        mock_sleep.assert_not_called()
+
     def test_call_canvas_with_retry_uses_jittered_sleep(self):
         """Retry delay should include jitter when enabled."""
         interface = CanvasInterface(
@@ -525,6 +565,129 @@ class TestCanvasAssignmentPushFeedback:
             "/tmp/autograder_feedback_upload_test.txt"
         )
         assert removed_paths == ["/tmp/autograder_feedback_upload_test.txt"]
+
+    def test_push_feedback_recovers_from_timeout_fetching_previous_submission(self):
+        interface = CanvasInterface(
+            canvas_url="https://canvas.example.edu",
+            canvas_key="token",
+        )
+
+        mock_canvasapi_course = MagicMock()
+        mock_canvasapi_course.course = SimpleNamespace(id=123)
+
+        mock_submission = MagicMock()
+        mock_submission.score = None
+        mock_submission.submission_comments = []
+
+        mock_canvasapi_assignment = MagicMock()
+        mock_canvasapi_assignment.id = 456
+        mock_canvasapi_assignment.get_submission.side_effect = [
+            requests.exceptions.Timeout("timed out"),
+            mock_submission,
+        ]
+
+        assignment = CanvasAssignment(
+            canvasapi_interface=interface,
+            canvasapi_course=mock_canvasapi_course,
+            canvasapi_assignment=mock_canvasapi_assignment,
+        )
+
+        ok = assignment.push_feedback(user_id=42, score=10.0, comments="")
+
+        assert ok is True
+        assert mock_canvasapi_assignment.get_submission.call_count == 2
+        mock_canvasapi_assignment.submissions_bulk_update.assert_called_once_with(
+            grade_data={"submission[posted_grade]": 10.0},
+            student_ids=[42],
+        )
+        mock_submission.edit.assert_called_once_with(
+            submission={"posted_grade": 10.0},
+        )
+
+    @pytest.mark.parametrize("status_code", [401, 403])
+    def test_push_feedback_returns_false_on_auth_error_during_bulk_update(self, status_code):
+        interface = CanvasInterface(
+            canvas_url="https://canvas.example.edu",
+            canvas_key="token",
+        )
+
+        mock_canvasapi_course = MagicMock()
+        mock_canvasapi_course.course = SimpleNamespace(id=123)
+
+        mock_submission = MagicMock()
+        mock_submission.score = None
+        mock_submission.submission_comments = []
+
+        mock_canvasapi_assignment = MagicMock()
+        mock_canvasapi_assignment.id = 456
+        mock_canvasapi_assignment.get_submission.return_value = mock_submission
+
+        import canvasapi.exceptions
+        auth_exc = canvasapi.exceptions.CanvasException("Unauthorized")
+        auth_exc.status_code = status_code
+        mock_canvasapi_assignment.submissions_bulk_update.side_effect = auth_exc
+
+        assignment = CanvasAssignment(
+            canvasapi_interface=interface,
+            canvasapi_course=mock_canvasapi_course,
+            canvasapi_assignment=mock_canvasapi_assignment,
+        )
+
+        ok = assignment.push_feedback(user_id=42, score=10.0, comments="")
+
+        assert ok is False
+        mock_canvasapi_assignment.get_submission.assert_called_once_with(42)
+        mock_submission.edit.assert_not_called()
+
+
+class TestCanvasQuestionUploadErrorHandling:
+    """Tests for partial-failure behavior in question bulk uploads."""
+
+    def test_upload_question_payloads_continues_after_single_failure(self):
+        interface = CanvasInterface(
+            canvas_url="https://canvas.example.edu",
+            canvas_key="token",
+        )
+        mock_canvasapi_course = MagicMock()
+        mock_canvasapi_course.id = 123
+        course = CanvasCourse(
+            canvas_interface=interface,
+            canvasapi_course=mock_canvasapi_course,
+        )
+
+        mock_quiz = MagicMock()
+        mock_quiz.id = 987
+
+        payloads = [
+            {"question_name": "q1"},
+            {"question_name": "q2"},
+            {"question_name": "q3"},
+        ]
+        events = []
+        labels_seen = []
+
+        def fake_retry(label, func, **_kwargs):
+            labels_seen.append(label)
+            func()
+            return label != "q2"
+
+        with patch.object(course, "_call_canvas_with_retry", side_effect=fake_retry):
+            course._upload_question_payloads(
+                canvas_quiz=mock_quiz,
+                payloads=payloads,
+                max_workers=1,
+                progress_callback=events.append,
+                show_progress_bar=False,
+                total_questions=len(payloads),
+            )
+
+        assert labels_seen == ["q1", "q2", "q3"]
+        assert mock_quiz.create_question.call_count == 3
+        assert events[0]["event"] == "start"
+        assert events[-1]["event"] == "complete"
+        assert events[-1]["completed"] == 3
+        assert events[-1]["succeeded"] == 2
+        assert events[-1]["failed"] == 1
 
 
 class TestBackoffController:
