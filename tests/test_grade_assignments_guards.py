@@ -728,6 +728,151 @@ def test_main_dry_run_skips_execute_grading(monkeypatch):
   assert cleaned["called"] is True
 
 
+def test_main_mocked_smoke_run_without_canvas_credentials(monkeypatch, tmp_path):
+  yaml_path = tmp_path / "smoke.yaml"
+  yaml_path.write_text(
+    """
+assignment_types:
+  programming:
+    kind: ProgrammingAssignment
+    grader: template-grader
+courses:
+  - id: 101
+    name: CST334
+    assignment_groups:
+      - type: programming
+        assignments:
+          - id: 555
+            assignment_name: PA1
+push: true
+privacy_mode: blind
+""",
+    encoding="utf-8",
+  )
+
+  args = SimpleNamespace(
+    yaml=str(yaml_path),
+    env=None,
+    limit=None,
+    do_regrade=False,
+    max_workers=1,
+    test=False,
+    report=None,
+    error_slack_channel=None,
+    debug=False,
+    show_stage_timings=False,
+    reveal_identity=False,
+    idempotency_key=None,
+    idempotency_state_dir=None,
+    dump_config=False,
+    dry_run=False,
+  )
+
+  calls = {
+    "canvas_init": None,
+    "prepare": 0,
+    "grade": 0,
+    "finalize": 0,
+    "cleanup": 0,
+    "docker_cleanup": 0,
+    "push_flag": None,
+  }
+
+  class DummyLmsAssignment:
+    name = "PA1"
+
+  class DummyCourse:
+    name = "CST334"
+
+    def get_assignment(self, assignment_id):
+      assert assignment_id == 555
+      return DummyLmsAssignment()
+
+  class DummyCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      calls["canvas_init"] = kwargs
+
+    def get_course(self, course_id):
+      assert course_id == 101
+      return DummyCourse()
+
+  class DummyAssignment:
+    def __init__(self):
+      self.submissions = []
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+      return False
+
+    def prepare(self, *args, **kwargs):
+      calls["prepare"] += 1
+      self.submissions = [
+        Submission(student=Student(name="Anon 0001", user_id=1, _inner=None),
+                   status=Submission.Status.UNGRADED)
+      ]
+
+    def finalize(self, **kwargs):
+      calls["finalize"] += 1
+      calls["push_flag"] = kwargs.get("push")
+      graded = sum(1 for s in self.submissions if s.feedback is not None)
+      return {
+        "push_enabled": bool(kwargs.get("push")),
+        "push_attempted": len(self.submissions),
+        "push_succeeded": graded,
+        "push_failed": len(self.submissions) - graded,
+        "push_skipped": 0,
+      }
+
+  class DummyGrader:
+    ready_to_finalize = True
+
+    def assignment_needs_preparation(self):
+      return True
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+      return False
+
+    def grade_assignment(self, assignment, *args, **kwargs):
+      calls["grade"] += 1
+      for submission in assignment.submissions:
+        submission.feedback = Feedback(percentage_score=100.0, comments="ok")
+
+    def cleanup(self):
+      calls["cleanup"] += 1
+
+  @contextlib.contextmanager
+  def fake_lock():
+    yield
+
+  monkeypatch.setattr(grade_assignments, "parse_args", lambda: args)
+  monkeypatch.setattr(grade_assignments, "ensure_single_instance", fake_lock)
+  monkeypatch.setattr(grade_assignments, "CanvasInterface", DummyCanvasInterface)
+  monkeypatch.setattr(grade_assignments.GraderRegistry, "create",
+                      lambda *a, **k: DummyGrader())
+  monkeypatch.setattr(grade_assignments.AssignmentRegistry, "create",
+                      lambda *a, **k: DummyAssignment())
+  monkeypatch.setattr(
+    grade_assignments.DockerClient, "cleanup",
+    lambda: calls.__setitem__("docker_cleanup", calls["docker_cleanup"] + 1))
+
+  exit_code = grade_assignments.main()
+
+  assert exit_code == 0
+  assert calls["canvas_init"]["privacy_mode"] == "blind"
+  assert calls["canvas_init"]["reveal_identity"] is False
+  assert calls["prepare"] == 1
+  assert calls["grade"] == 1
+  assert calls["finalize"] == 1
+  assert calls["push_flag"] is True
+  assert calls["cleanup"] == 1
+  assert calls["docker_cleanup"] == 1
+
+
 def test_send_slack_run_summary_notifies_on_push_failures(monkeypatch):
   monkeypatch.setenv("SLACK_BOT_TOKEN", "token")
   sent = {}
