@@ -573,10 +573,26 @@ def test_resolve_reveal_identity_requires_break_glass(monkeypatch):
 
 
 def test_resolve_reveal_identity_with_break_glass(monkeypatch):
-  args = SimpleNamespace(reveal_identity=False)
+  args = SimpleNamespace(reveal_identity=False, yaml="/tmp/config.yaml")
   config = RunConfig(reveal_identity=True)
   monkeypatch.setenv("AUTOGRADER_BREAK_GLASS", "1")
+  monkeypatch.setenv("AUTOGRADER_REVEAL_AUDIT_LOG", "/tmp/reveal_audit_test.log")
   assert grade_assignments.resolve_reveal_identity(args, config) is True
+
+
+def test_resolve_reveal_identity_writes_audit_event(monkeypatch, tmp_path):
+  audit_path = tmp_path / "reveal_audit.log"
+  args = SimpleNamespace(reveal_identity=True, yaml="/tmp/config.yaml")
+  config = RunConfig(reveal_identity=False, privacy_mode="blind", prod=False)
+  monkeypatch.setenv("AUTOGRADER_BREAK_GLASS", "1")
+  monkeypatch.setenv("AUTOGRADER_REVEAL_AUDIT_LOG", str(audit_path))
+
+  assert grade_assignments.resolve_reveal_identity(args, config) is True
+  lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+  assert lines
+  payload = json.loads(lines[-1])
+  assert payload["yaml_path"] == "/tmp/config.yaml"
+  assert payload["privacy_mode"] == "blind"
 
 
 def test_resolve_idempotency_settings_uses_cli_over_config():

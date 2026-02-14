@@ -17,6 +17,7 @@ Grading Philosophy:
 from typing import List, Dict
 import logging
 import os
+import re
 import requests
 from datetime import datetime
 
@@ -249,6 +250,67 @@ RELEVANCE_POINTS = 2   # Coverage of class topics
 EXPLANATION_QUALITY_POINTS = 2  # Depth of explanation
 
 
+class SubmissionPIIRedactor:
+  """
+  Best-effort PII redaction for submission text before LLM calls.
+  """
+
+  EMAIL_PATTERN = re.compile(
+    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+  PHONE_PATTERN = re.compile(
+    r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?){2}\d{4}\b")
+  STUDENT_ID_PATTERN = re.compile(
+    r"\b(?:student\s*(?:id|number)|sid|canvas_user_id)\s*[:#=]?\s*\d{4,}\b",
+    re.IGNORECASE)
+  NAME_HEADER_PATTERN = re.compile(r"(?im)^\s*name\s*:\s*.+$")
+
+  @staticmethod
+  def _replace_all(pattern: re.Pattern, text: str,
+                   replacement: str) -> tuple[str, int]:
+    return pattern.subn(replacement, text)
+
+  def redact(self,
+             text: str,
+             *,
+             student_name: str | None = None,
+             student_id: int | str | None = None) -> tuple[str, Dict[str, int]]:
+    if not text:
+      return text, {"total_replacements": 0}
+
+    redacted = text
+    counts: Dict[str, int] = {}
+
+    redacted, count = self._replace_all(self.EMAIL_PATTERN, redacted,
+                                        "[REDACTED_EMAIL]")
+    counts["emails"] = count
+    redacted, count = self._replace_all(self.PHONE_PATTERN, redacted,
+                                        "[REDACTED_PHONE]")
+    counts["phones"] = count
+    redacted, count = self._replace_all(self.STUDENT_ID_PATTERN, redacted,
+                                        "[REDACTED_STUDENT_ID]")
+    counts["student_id_markers"] = count
+    redacted, count = self._replace_all(self.NAME_HEADER_PATTERN, redacted,
+                                        "Name: [REDACTED_NAME]")
+    counts["name_headers"] = count
+
+    if student_name:
+      escaped_name = re.escape(str(student_name).strip())
+      if escaped_name:
+        name_pattern = re.compile(escaped_name, re.IGNORECASE)
+        redacted, count = name_pattern.subn("[REDACTED_NAME]", redacted)
+        counts["explicit_student_name"] = count
+
+    if student_id is not None:
+      escaped_id = re.escape(str(student_id))
+      if escaped_id:
+        id_pattern = re.compile(rf"\b{escaped_id}\b")
+        redacted, count = id_pattern.subn("[REDACTED_STUDENT_ID]", redacted)
+        counts["explicit_student_id"] = count
+
+    counts["total_replacements"] = sum(counts.values())
+    return redacted, counts
+
+
 class ScoreCalculator:
   """
   Encapsulates score normalization and total-grade calculation for phase 2.
@@ -344,7 +406,6 @@ class BatchProcessor:
   def run(self, assignment: Assignment, *, assignment_name: str,
           course_name: str) -> bool:
     submission_data = assignment.get_submission_data()
-    submission_texts = assignment.get_all_submission_texts()
 
     if not submission_data:
       log.info(
@@ -352,12 +413,16 @@ class BatchProcessor:
       )
       return False
 
-    truncated_texts, truncation_count = self._truncate_batch(
-      submission_texts, submission_data)
+    truncated_texts, truncation_count, redaction_count = self._truncate_batch(
+      submission_data)
 
     if truncation_count > 0:
       log.info(
         f"Truncated {truncation_count} submission(s) exceeding {DEFAULT_MAX_WORDS} words or {DEFAULT_MAX_CHARACTERS} characters"
+      )
+    if redaction_count > 0:
+      log.info(
+        f"Redacted potential PII in {redaction_count} submission(s) before LLM analysis"
       )
 
     log.info(
@@ -384,26 +449,34 @@ class BatchProcessor:
                                         self.grader.individual_results)
     return True
 
-  def _truncate_batch(self, submission_texts: List[str],
-                      submission_data: List[Dict]) -> tuple[List[str], int]:
+  def _truncate_batch(self, submission_data: List[Dict]
+                      ) -> tuple[List[str], int, int]:
     truncated_texts = []
     truncation_count = 0
-
-    for text in submission_texts:
-      truncated, was_truncated = self.grader._truncate_submission_text(text)
-      truncated_texts.append(truncated)
-      if was_truncated:
-        truncation_count += 1
+    redaction_count = 0
 
     for submission_info in submission_data:
       original_text = submission_info.get('text', '')
       truncated, was_truncated = self.grader._truncate_submission_text(
         original_text)
+      prepared_text = truncated
       if was_truncated:
-        submission_info['text'] = truncated
         submission_info['was_truncated'] = True
+        truncation_count += 1
 
-    return truncated_texts, truncation_count
+      if hasattr(self.grader, "_redact_submission_text_for_ai"):
+        prepared_text, redaction_meta = self.grader._redact_submission_text_for_ai(
+          prepared_text,
+          student_name=submission_info.get("student_name"),
+          student_id=submission_info.get("student_id"))
+        if redaction_meta.get("total_replacements", 0) > 0:
+          submission_info["was_redacted"] = True
+          redaction_count += 1
+      submission_info['text'] = prepared_text
+      if prepared_text:
+        truncated_texts.append(prepared_text)
+
+    return truncated_texts, truncation_count, redaction_count
 
 
 class QuestionConsolidator:
@@ -833,12 +906,17 @@ class ReportCompiler:
       "students_needing_support": len(self.grader.support_needed_students),
       "support_details": self.grader.support_needed_students
     }
+    privacy_summary = {
+      "redacted_submission_count": len(self.grader.redaction_events),
+      "redaction_events": self.grader.redaction_events,
+    }
 
     return {
       "aggregate_insights": aggregate_results,
       "grade_statistics": grade_stats,
       "topic_coverage": topic_coverage,
       "support_summary": support_summary,
+      "privacy_summary": privacy_summary,
       "core_topics": self.grader.core_topics,
       "individual_results": individual_results
     }
@@ -995,6 +1073,8 @@ class BaseTextSubmissionGrader(Grader):
     self.records_dir = None
     self.reveal_identity = False
     self.score_calculator = ScoreCalculator()
+    self.pii_redactor = SubmissionPIIRedactor()
+    self.redaction_events: List[Dict] = []
     self.rubric_generator = RubricGenerator()
     self.batch_processor = BatchProcessor(self)
     self.question_consolidator = QuestionConsolidator(self)
@@ -1011,6 +1091,23 @@ class BaseTextSubmissionGrader(Grader):
     self.phase25_tier = kwargs.get('phase25_tier', 'small')  # Question consolidation
 
     log.info(f"{self.__class__.__name__} initialized with tiers: phase1={self.phase1_tier}, phase2={self.phase2_tier}, phase25={self.phase25_tier}")
+
+  def _redact_submission_text_for_ai(
+      self,
+      text: str,
+      *,
+      student_name: str | None = None,
+      student_id: int | str | None = None) -> tuple[str, Dict[str, int]]:
+    redacted, counts = self.pii_redactor.redact(text,
+                                                 student_name=student_name,
+                                                 student_id=student_id)
+    if counts.get("total_replacements", 0) > 0:
+      self.redaction_events.append({
+        "student_id": student_id,
+        "student_name": student_name,
+        "counts": counts,
+      })
+    return redacted, counts
 
   def _build_aggregate_analysis_prompt(self, submission_texts: List[str],
                                        assignment_name: str,

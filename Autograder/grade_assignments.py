@@ -2,6 +2,7 @@
 import argparse
 import contextlib
 import fcntl
+import getpass
 import os
 import threading
 import time
@@ -9,7 +10,7 @@ from dataclasses import dataclass, asdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
 import canvasapi.exceptions
 
@@ -148,7 +149,38 @@ def resolve_reveal_identity(args: argparse.Namespace,
   log.warning(
     "Break-glass identity reveal is enabled; Canvas numeric IDs may appear in logs."
   )
+  _record_reveal_identity_event(args, config)
   return True
+
+
+def _record_reveal_identity_event(args: argparse.Namespace,
+                                  config: RunConfig) -> None:
+  """
+  Write an audit record whenever break-glass identity reveal is used.
+  """
+  path = os.getenv("AUTOGRADER_REVEAL_AUDIT_LOG",
+                   "~/.autograder/privacy/reveal_identity_audit.log")
+  audit_path = os.path.abspath(os.path.expanduser(path))
+  try:
+    os.makedirs(os.path.dirname(audit_path), exist_ok=True)
+    payload = {
+      "timestamp_utc":
+      datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
+        "+00:00", "Z"),
+      "user": getpass.getuser(),
+      "pid": os.getpid(),
+      "yaml_path": getattr(args, "yaml", None),
+      "privacy_mode": getattr(config, "privacy_mode", None),
+      "prod": bool(getattr(config, "prod", False)),
+    }
+    with open(audit_path, "a", encoding="utf-8") as f:
+      f.write(json.dumps(payload) + "\n")
+    try:
+      os.chmod(audit_path, 0o600)
+    except Exception:
+      pass
+  except Exception as e:
+    log.warning(f"Failed to write reveal-identity audit event: {e}")
 
 
 def resolve_idempotency_settings(
@@ -485,13 +517,13 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
       get_active_grader_compatibility())
     if assignment_kind not in active_assignment_kinds:
       supported = ", ".join(sorted(active_assignment_kinds))
-      raise ValueError(
+      raise autograder_exceptions.ConfigurationError(
         f"Assignment kind '{assignment_kind}' is not supported in this build. "
         f"Supported kinds: {supported}")
     allowed_graders = active_graders_by_kind.get(assignment_kind, set())
     if grader_name not in allowed_graders:
       allowed = ", ".join(sorted(allowed_graders)) or "(none)"
-      raise ValueError(
+      raise autograder_exceptions.ConfigurationError(
         f"Grader '{grader_name}' is not supported for kind '{assignment_kind}'. "
         f"Allowed graders: {allowed}")
 
@@ -533,7 +565,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
       try:
         settings["records_dir"] = resolve_records_dir(settings.get("records_dir"))
       except ValueError as e:
-        raise ValueError(
+        raise autograder_exceptions.ConfigurationError(
           f"Invalid records configuration for assignment {assignment_id} "
           f"('{assignment_name or 'unknown'}'): {e}") from e
     elif settings.get("records_dir") is not None and str(grader_name).lower(
@@ -542,7 +574,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
       try:
         settings["records_dir"] = resolve_records_dir(settings.get("records_dir"))
       except ValueError as e:
-        raise ValueError(
+        raise autograder_exceptions.ConfigurationError(
           f"Invalid records configuration for assignment {assignment_id} "
           f"('{assignment_name or 'unknown'}'): {e}") from e
 

@@ -151,6 +151,71 @@ def test_batch_processor_returns_false_when_no_submissions():
   assert ran is False
 
 
+def test_batch_processor_redacts_pii_before_ai_calls():
+  class FakeGrader:
+    def __init__(self):
+      self.aggregate_results = {}
+      self.individual_results = []
+      self.core_topics = []
+      self.captured_phase1_texts = None
+      self.captured_phase2_data = None
+      self.redaction_events = []
+
+    def _truncate_submission_text(self, text):
+      return text, False
+
+    def _redact_submission_text_for_ai(self, text, **kwargs):
+      redacted = text.replace("alice@example.edu", "[REDACTED_EMAIL]")
+      if redacted != text:
+        self.redaction_events.append({"student_id": kwargs.get("student_id")})
+        return redacted, {"total_replacements": 1}
+      return redacted, {"total_replacements": 0}
+
+    def phase_1_aggregate_analysis(self, submission_texts, assignment_name, course_name):
+      self.captured_phase1_texts = submission_texts
+      self.core_topics = ["Processes"]
+      return {"core_topics": ["Processes"], "student_questions": []}
+
+    def phase_2_individual_grading(self, submission_data, core_topics):
+      self.captured_phase2_data = submission_data
+      return [{
+        "student_id": 1,
+        "total_grade": 10,
+        "feedback": "ok",
+      }]
+
+    def _apply_grades_to_submissions(self, submissions, individual_results):
+      return None
+
+    def phase_3_generate_report(self, aggregate_results, individual_results):
+      return None
+
+  class FakeAssignment:
+    def __init__(self):
+      self.submissions = [object()]
+      self.lms_assignment = SimpleNamespace(name="Weekly Notes")
+
+    def get_submission_data(self):
+      return [{
+        "student_id": 1,
+        "student_name": "Alice Example",
+        "text": "Reach me at alice@example.edu",
+        "word_count": 5,
+      }]
+
+  grader = FakeGrader()
+  processor = BatchProcessor(grader)
+
+  ran = processor.run(FakeAssignment(),
+                      assignment_name="Weekly Notes",
+                      course_name="CST334")
+
+  assert ran is True
+  assert "[REDACTED_EMAIL]" in grader.captured_phase1_texts[0]
+  assert "[REDACTED_EMAIL]" in grader.captured_phase2_data[0]["text"]
+  assert grader.redaction_events == [{"student_id": 1}]
+
+
 def test_individual_grading_processor_tracks_support_and_consolidates_questions():
   class FakeGrader:
     def __init__(self):
@@ -205,6 +270,25 @@ def test_individual_grading_processor_tracks_support_and_consolidates_questions(
   assert processor.grader.consolidated_questions[0]["topic"] == "Memory"
   assert results[0]["length_score"] == 2
   assert results[1]["length_score"] == 0
+
+
+def test_text_submission_grader_redacts_common_pii_patterns():
+  grader = TextSubmissionGrader()
+  text = ("Name: Alice Example\n"
+          "email alice@example.edu\n"
+          "phone 831-555-1212\n"
+          "student id: 1234567")
+  redacted, counts = grader._redact_submission_text_for_ai(
+    text,
+    student_name="Alice Example",
+    student_id=1234567,
+  )
+
+  assert "alice@example.edu" not in redacted
+  assert "831-555-1212" not in redacted
+  assert "Alice Example" not in redacted
+  assert "1234567" not in redacted
+  assert counts["total_replacements"] >= 4
 
 
 def test_text_submission_grader_is_alias_of_weekly_notes_grader():

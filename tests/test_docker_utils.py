@@ -436,6 +436,39 @@ class TestDockerContainerCommandExecution:
         assert stdout == b""
         assert stderr == b""
 
+    def test_execute_command_returns_nonzero_exit_code(self, mock_docker_client, mock_docker_module, monkeypatch):
+        monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)
+
+        mock_container_obj = MagicMock()
+        mock_container_obj.exec_run.return_value = (2, (b"", b"usage error"))
+        mock_docker_client.client.containers.run.return_value = mock_container_obj
+
+        container = DockerContainer(mock_docker_client, "test:image")
+        container.start()
+
+        rc, stdout, stderr = container.execute_command("python grader.py --bad-arg")
+
+        assert rc == 2
+        assert stdout == b""
+        assert stderr == b"usage error"
+
+    def test_execute_command_returns_resource_violation_exit_code(self, mock_docker_client, mock_docker_module, monkeypatch):
+        monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)
+
+        mock_container_obj = MagicMock()
+        # 137 is common for OOMKilled / SIGKILL-style termination in containers.
+        mock_container_obj.exec_run.return_value = (137, (b"", b"Killed"))
+        mock_docker_client.client.containers.run.return_value = mock_container_obj
+
+        container = DockerContainer(mock_docker_client, "test:image")
+        container.start()
+
+        rc, stdout, stderr = container.execute_command("python memory_hog.py")
+
+        assert rc == 137
+        assert stdout == b""
+        assert stderr == b"Killed"
+
     def test_execute_command_wraps_api_error_as_container_error(self, mock_docker_client, mock_docker_module, monkeypatch):
         monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)
 

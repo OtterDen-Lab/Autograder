@@ -29,6 +29,7 @@ from .classes import (
   Submission__Canvas,
   TextSubmission__Canvas,
 )
+from .privacy import PrivacyContext
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +114,8 @@ class CanvasInterface:
       canvas_url: str | None = None,
       canvas_key: str | None = None,
       privacy_mode: str | None = None,
-      reveal_identity: bool = False
+      reveal_identity: bool = False,
+      blind_id_map_path: str | None = None
   ):
     self.env_path = env_path
     if canvas_url is not None or canvas_key is not None:
@@ -132,8 +134,10 @@ class CanvasInterface:
     if self.privacy_mode not in {"none", "id_only", "blind"}:
       raise ValueError("privacy_mode must be one of: none, id_only, blind.")
     self.reveal_identity = reveal_identity
-    self._anon_by_user_id: dict[int, str] = {}
-    self._anon_lock = threading.Lock()
+    self.privacy_context = PrivacyContext(
+      privacy_mode=self.privacy_mode,
+      reveal_identity=self.reveal_identity,
+      blind_id_map_path=blind_id_map_path)
     if canvas_url is None and canvas_key is None:
       if self.prod:
         log.warning("Using canvas PROD!")
@@ -156,22 +160,10 @@ class CanvasInterface:
     # cap_canvas.Requester = RobustRequester
     self.canvas = canvasapi.Canvas(self.canvas_url, self.canvas_key)
 
-  def _anonymous_label_for_user(self, user_id: int) -> str:
-    with self._anon_lock:
-      if user_id not in self._anon_by_user_id:
-        self._anon_by_user_id[user_id] = f"Anon {len(self._anon_by_user_id) + 1:04d}"
-      return self._anon_by_user_id[user_id]
-
   def resolve_student_name(self,
                            user_id: int,
                            raw_name: str | None = None) -> str:
-    if self.privacy_mode == "none":
-      if raw_name:
-        return raw_name
-      return f"Student {user_id}"
-    if self.privacy_mode == "id_only":
-      return f"Student {user_id}"
-    return self._anonymous_label_for_user(user_id)
+    return self.privacy_context.resolve_student_name(user_id, raw_name=raw_name)
     
   def get_course(self, course_id: int) -> CanvasCourse:
     if course_id is None:

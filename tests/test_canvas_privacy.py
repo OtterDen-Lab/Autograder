@@ -31,6 +31,23 @@ def test_canvas_interface_resolve_student_name_blind_is_stable():
   assert first != third
 
 
+def test_canvas_interface_blind_mode_persists_labels_across_instances(tmp_path):
+  map_path = tmp_path / "blind_map.json"
+  first_interface = CanvasInterface(canvas_url="https://canvas.example.edu",
+                                    canvas_key="token",
+                                    privacy_mode="blind",
+                                    blind_id_map_path=str(map_path))
+  first_label = first_interface.resolve_student_name(12345, raw_name="Alice")
+  assert first_label.startswith("Anon ")
+
+  second_interface = CanvasInterface(canvas_url="https://canvas.example.edu",
+                                     canvas_key="token",
+                                     privacy_mode="blind",
+                                     blind_id_map_path=str(map_path))
+  second_label = second_interface.resolve_student_name(12345, raw_name="Alice")
+  assert second_label == first_label
+
+
 def test_format_submission_for_log_can_reveal_canvas_id():
   submission = Submission(student=Student(name="Anon 0001", user_id=12345, _inner=None),
                           status=Submission.Status.UNGRADED)
