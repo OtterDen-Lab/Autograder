@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 from typing import Any, Callable, Dict, TypeVar
 
 from Autograder import ai_helper
@@ -16,19 +15,17 @@ def extract_json_object(text: str) -> Dict[str, Any] | None:
   if not text:
     return None
 
-  json_match = re.search(r'\{.*\}', text, re.DOTALL)
-  if not json_match:
-    return None
-
-  try:
-    payload = json.loads(json_match.group())
-  except (TypeError, json.JSONDecodeError):
-    return None
-
-  if not isinstance(payload, dict):
-    return None
-
-  return payload
+  decoder = json.JSONDecoder()
+  for start_index, char in enumerate(text):
+    if char != "{":
+      continue
+    try:
+      payload, _ = decoder.raw_decode(text[start_index:])
+    except (TypeError, json.JSONDecodeError):
+      continue
+    if isinstance(payload, dict):
+      return payload
+  return None
 
 
 def parse_anthropic_json_payload(text: str,
