@@ -269,6 +269,17 @@ class SubmissionPIIRedactor:
                    replacement: str) -> tuple[str, int]:
     return pattern.subn(replacement, text)
 
+  @staticmethod
+  def _compile_explicit_name_pattern(student_name: str | None) -> re.Pattern | None:
+    if not student_name:
+      return None
+    normalized = " ".join(str(student_name).split())
+    if len(normalized) < 3:
+      return None
+
+    escaped = re.escape(normalized).replace(r"\ ", r"\s+")
+    return re.compile(rf"(?<!\w){escaped}(?!\w)", re.IGNORECASE)
+
   def redact(self,
              text: str,
              *,
@@ -293,12 +304,10 @@ class SubmissionPIIRedactor:
                                         "Name: [REDACTED_NAME]")
     counts["name_headers"] = count
 
-    if student_name:
-      escaped_name = re.escape(str(student_name).strip())
-      if escaped_name:
-        name_pattern = re.compile(escaped_name, re.IGNORECASE)
-        redacted, count = name_pattern.subn("[REDACTED_NAME]", redacted)
-        counts["explicit_student_name"] = count
+    name_pattern = self._compile_explicit_name_pattern(student_name)
+    if name_pattern is not None:
+      redacted, count = name_pattern.subn("[REDACTED_NAME]", redacted)
+      counts["explicit_student_name"] = count
 
     if student_id is not None:
       escaped_id = re.escape(str(student_id))

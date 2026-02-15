@@ -291,6 +291,19 @@ def test_text_submission_grader_redacts_common_pii_patterns():
   assert counts["total_replacements"] >= 4
 
 
+def test_text_submission_grader_does_not_redact_substrings_inside_words():
+  grader = TextSubmissionGrader()
+  text = "I studied algorithm design today."
+  redacted, counts = grader._redact_submission_text_for_ai(
+    text,
+    student_name="Al",
+    student_id=None,
+  )
+
+  assert redacted == text
+  assert counts["total_replacements"] == 0
+
+
 def test_text_submission_grader_is_alias_of_weekly_notes_grader():
   assert issubclass(TextSubmissionGrader, WeeklyStudyNotesGrader)
 

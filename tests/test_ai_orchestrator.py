@@ -13,6 +13,26 @@ def test_extract_json_object_parses_first_object_from_text():
   assert payload == {"x": 1, "y": "ok"}
 
 
+def test_extract_json_object_skips_non_json_braces_and_parses_next_payload():
+  payload = extract_json_object(
+    "prefix {not json} middle {\"x\": 1, \"y\": \"ok\"} suffix {ignored}")
+  assert payload == {"x": 1, "y": "ok"}
+
+
+def test_parse_anthropic_json_payload_handles_extra_braces_in_surrounding_text():
+  text = (
+    "analysis block {not-json}\n"
+    "```json\n"
+    "{\"common_themes\": \"threads\"}\n"
+    "```\n"
+    "trailer {still-not-json}"
+  )
+  parsed = parse_anthropic_json_payload(text, schema_name="aggregate_analysis")
+
+  assert parsed is not None
+  assert parsed["common_themes"] == "threads"
+
+
 def test_provider_fallback_orchestrator_uses_fallback_on_primary_failure():
   events = []
 
