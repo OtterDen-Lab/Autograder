@@ -46,11 +46,20 @@ class ReportCompiler:
         Returns:
             Dictionary containing compiled report data
         """
-        total_grades = [
-            result.get("total_grade", 0) for result in individual_results
+        graded_results = [
+            result for result in individual_results
+            if not result.get("grading_failed", False) and
+            result.get("total_grade") is not None
         ]
+        total_grades = [result.get("total_grade", 0) for result in graded_results]
+        total_submissions = len(individual_results)
+        total_graded = len(graded_results)
+        total_ungraded = total_submissions - total_graded
+
         grade_stats = {
-            "total_students": len(individual_results),
+            "total_students": total_submissions,
+            "graded_students": total_graded,
+            "ungraded_students": total_ungraded,
             "average_grade": sum(total_grades) / len(total_grades) if total_grades else 0,
             "grade_distribution": self._calculate_grade_distribution(total_grades),
             "students_below_70": sum(1 for grade in total_grades if grade < 7),
@@ -212,6 +221,10 @@ class ReportPresenter:
         log.debug("=" * 60)
 
         log.debug(f"Total Students: {stats.get('total_students', 0)}")
+        log.debug(f"Students Graded: {stats.get('graded_students', 0)}")
+        ungraded = stats.get('ungraded_students', 0)
+        if ungraded:
+            log.debug(f"Ungraded (provider/error): {ungraded}")
         log.debug(
             f"Average Grade: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)"
         )
@@ -219,8 +232,9 @@ class ReportPresenter:
         distribution = stats.get("grade_distribution", {})
         if distribution:
             log.debug("\nGrade Distribution:")
+            distribution_denominator = max(stats.get('graded_students', 0), 1)
             for letter, count in distribution.items():
-                percentage = (count / stats.get('total_students', 1)) * 100
+                percentage = (count / distribution_denominator) * 100
                 log.debug(f"   {letter}: {count} students ({percentage:.1f}%)")
 
         below_70 = stats.get("students_below_70", 0)

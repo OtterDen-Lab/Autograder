@@ -346,6 +346,38 @@ def test_compile_report_data_calculates_grade_and_topic_summaries():
   assert report["support_summary"]["students_needing_support"] == 1
 
 
+def test_compile_report_data_excludes_failed_submissions_from_grade_aggregates():
+  grader = TextSubmissionGrader()
+  grader.core_topics = ["Processes"]
+
+  report = grader._compile_report_data({}, [
+    {
+      "student_id": 1,
+      "total_grade": 9,
+      "topics_covered": ["Processes"]
+    },
+    {
+      "student_id": 2,
+      "grading_failed": True,
+      "support_reason": "Provider retries exhausted",
+      "topics_covered": []
+    },
+  ])
+
+  stats = report["grade_statistics"]
+  assert stats["total_students"] == 2
+  assert stats["graded_students"] == 1
+  assert stats["ungraded_students"] == 1
+  assert stats["average_grade"] == 9
+  assert stats["grade_distribution"] == {
+    "A": 1,
+    "B": 0,
+    "C": 0,
+    "D": 0,
+    "F": 0
+  }
+
+
 def test_apply_grades_to_submissions_maps_results_by_student_id():
   grader = TextSubmissionGrader()
   submissions = [_submission("Student A", 1), _submission("Student B", 2)]

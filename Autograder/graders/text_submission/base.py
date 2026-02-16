@@ -840,9 +840,12 @@ class BaseTextSubmissionGrader(Grader):
         lines.extend([
             "",
             "*Summary:*",
-            f"- {stats.get('total_students', 0)} students graded",
+            f"- {stats.get('graded_students', 0)} students graded",
             f"- Average: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)",
         ])
+        ungraded_students = stats.get("ungraded_students", 0)
+        if ungraded_students > 0:
+            lines.append(f"- Ungraded due to AI/provider failures: {ungraded_students}")
 
         # Add grade distribution summary
         distribution = stats.get("grade_distribution", {})
