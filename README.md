@@ -216,7 +216,8 @@ Install the repository-managed pre-commit hook so hygiene checks run before each
 bash scripts/install_git_hooks.sh
 ```
 
-This hook runs `scripts/check_repo_hygiene.sh` and blocks commits that include runtime artifacts (`records/`, `.autograder/`, `*.log`) or unsafe example paths.
+This hook runs `scripts/check_version_bump_vendoring.sh` and `scripts/check_repo_hygiene.sh`.
+On a staged `pyproject.toml` version bump, it auto-runs `scripts/vendor_lms_interface.py`, stages vendored updates, and asks for a second commit attempt after review.
 
 ## Documentation
 
