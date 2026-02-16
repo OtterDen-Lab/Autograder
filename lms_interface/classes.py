@@ -15,11 +15,9 @@ import canvasapi.canvas
 
 log = logging.getLogger(__name__)
 
-# BEGIN vendorable download validation defaults
 MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 30
 DOWNLOAD_CHUNK_BYTES = 64 * 1024
-# Allow generic binary and common source/text MIME types for expected coursework files.
 ALLOWED_CONTENT_TYPES_BY_EXTENSION = {
   ".c": {"text/plain", "text/x-c", "application/octet-stream"},
   ".h": {"text/plain", "text/x-c", "application/octet-stream"},
@@ -44,7 +42,6 @@ ALLOWED_CONTENT_TYPES_BY_EXTENSION = {
   ".tar": {"application/x-tar", "application/octet-stream"},
   ".gz": {"application/gzip", "application/x-gzip", "application/octet-stream"},
 }
-# END vendorable download validation defaults
 
 
 
@@ -190,7 +187,6 @@ class FileSubmission__Canvas(FileSubmission):
 
     return self._files
 
-  # BEGIN vendorable download validation helpers
   @staticmethod
   def _sanitize_filename(filename: str) -> str:
     basename = os.path.basename(str(filename or "submission_file"))
@@ -247,14 +243,12 @@ class FileSubmission__Canvas(FileSubmission):
     if observed in allowed:
       return
 
-    # Allow generic stream content-type for known extensions.
     if observed == "application/octet-stream":
       return
 
     raise ValueError(
       f"Attachment '{filename}' has content-type '{observed}', expected one of: {sorted(allowed)}"
     )
-  # END vendorable download validation helpers
 
 
 class TextSubmission(Submission):

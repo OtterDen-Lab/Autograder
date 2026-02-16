@@ -134,6 +134,7 @@ class CanvasInterface:
     if self.privacy_mode not in {"none", "id_only", "blind"}:
       raise ValueError("privacy_mode must be one of: none, id_only, blind.")
     self.reveal_identity = reveal_identity
+    self.blind_id_map_path = blind_id_map_path
     self.privacy_context = PrivacyContext(
       privacy_mode=self.privacy_mode,
       reveal_identity=self.reveal_identity,
@@ -164,7 +165,7 @@ class CanvasInterface:
                            user_id: int,
                            raw_name: str | None = None) -> str:
     return self.privacy_context.resolve_student_name(user_id, raw_name=raw_name)
-    
+
   def get_course(self, course_id: int) -> CanvasCourse:
     if course_id is None:
       raise ValueError("course_id is required to fetch a Canvas course.")
@@ -185,7 +186,27 @@ class CanvasCourse(LMSWrapper):
     self.canvas_interface = canvas_interface
     self.course = canvasapi_course
     super().__init__(_inner=self.course)
-  
+
+  @staticmethod
+  def _ensure_zero_weight_assignment_group(assignment_group) -> None:
+    """
+    Best-effort normalization so practice groups stay excluded from overall grade.
+    Handles common CanvasAPI edit signatures defensively.
+    """
+    edit_payloads = [
+      {"group_weight": 0.0, "position": 0},
+      {"assignment_group": {"group_weight": 0.0, "position": 0}},
+    ]
+    for payload in edit_payloads:
+      try:
+        assignment_group.edit(**payload)
+        return
+      except TypeError:
+        continue
+      except Exception as exc:
+        log.warning(f"Could not update assignment group weight to 0: {exc}")
+        return
+
   def create_assignment_group(self, name="dev", delete_existing=False) -> canvasapi.course.AssignmentGroup:
     env_name = os.environ.get("QUIZGEN_ASSIGNMENT_GROUP")
     if env_name:
@@ -200,6 +221,7 @@ class CanvasCourse(LMSWrapper):
         if delete_existing:
           assignment_group.delete()
           break
+        self._ensure_zero_weight_assignment_group(assignment_group)
         log.info("Found group existing, returning")
         return assignment_group
     assignment_group = self.course.create_assignment_group(
@@ -207,6 +229,7 @@ class CanvasCourse(LMSWrapper):
       group_weight=0.0,
       position=0,
     )
+    self._ensure_zero_weight_assignment_group(assignment_group)
     return assignment_group
   
   def add_quiz(
@@ -536,7 +559,8 @@ class CanvasCourse(LMSWrapper):
       canvas_url=self.canvas_interface.canvas_url,
       canvas_key=self.canvas_interface.canvas_key,
       privacy_mode=self.canvas_interface.privacy_mode,
-      reveal_identity=self.canvas_interface.reveal_identity
+      reveal_identity=self.canvas_interface.reveal_identity,
+      blind_id_map_path=self.canvas_interface.blind_id_map_path
     )
     course = canvas_interface.get_course(self.course.id)
     return course.course.get_quiz(quiz_id)
@@ -784,7 +808,7 @@ class CanvasAssignment(LMSWrapper):
       suffix = os.path.splitext(name)[1]  # keep extension if needed
       with tempfile.NamedTemporaryFile(mode="wb",
                                        delete=False,
-                                       prefix="autograder_feedback_upload_",
+                                       prefix="lms_interface_feedback_upload_",
                                        suffix=suffix) as tmp:
         tmp.write(buffer)
         tmp.flush()
@@ -817,8 +841,6 @@ class CanvasAssignment(LMSWrapper):
       limit = 1_000_000 # magically large number
     
     test_only = kwargs.get("test", False)
-    assignment_kind = kwargs.get("assignment_kind")
-    prefer_file_submissions = assignment_kind == "ProgrammingAssignment"
     
     submissions: list[Submission] = []
     
@@ -860,22 +882,7 @@ class CanvasAssignment(LMSWrapper):
         has_attachments = student_submission.get("attachments") is not None and len(student_submission.get("attachments", [])) > 0
         has_text_body = student_submission.get("body") is not None and student_submission.get("body").strip() != ""
 
-        if has_attachments and (prefer_file_submissions or not has_text_body):
-          if has_text_body and prefer_file_submissions:
-            log.debug(
-              f"Detected mixed content for {student.name}; prioritizing attachments for ProgrammingAssignment"
-            )
-          # File submission
-          log.debug(f"Detected file submission for {student.name}")
-          submissions.append(
-            FileSubmission__Canvas(
-              student=student,
-              status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
-              attachments=student_submission["attachments"],
-              submission_index=student_submission_index
-            )
-          )
-        elif has_text_body:
+        if has_text_body:
           # Text submission - create object-like structure from dict
           log.debug(f"Detected text submission for {student.name}")
           class SubmissionObject:
@@ -888,6 +895,17 @@ class CanvasAssignment(LMSWrapper):
               student=student,
               status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
               canvas_submission_data=SubmissionObject(student_submission),
+              submission_index=student_submission_index
+            )
+          )
+        elif has_attachments:
+          # File submission
+          log.debug(f"Detected file submission for {student.name}")
+          submissions.append(
+            FileSubmission__Canvas(
+              student=student,
+              status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
+              attachments=student_submission["attachments"],
               submission_index=student_submission_index
             )
           )
