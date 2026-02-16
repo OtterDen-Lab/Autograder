@@ -43,14 +43,14 @@ class BaseRegistry(abc.ABC):
   def create(cls, type_name: str, **kwargs) -> Any:
     """
         Factory method to instantiate a registered subclass.
-        
+
         Args:
             type_name: The name of the registered type to create
             **kwargs: Arguments to pass to the constructor
-            
+
         Returns:
             Instance of the requested type
-            
+
         Raises:
             ValueError: If the type_name is not registered
         """
@@ -64,6 +64,31 @@ class BaseRegistry(abc.ABC):
         f"Unknown {cls.get_type_description()} type: {type_name}")
 
     return cls._registry[type_name.lower()](**kwargs)
+
+  @classmethod
+  def get_class(cls, type_name: str) -> Type:
+    """
+        Look up a registered class without instantiating it.
+
+        Args:
+            type_name: The name of the registered type to look up
+
+        Returns:
+            The registered class
+
+        Raises:
+            ValueError: If the type_name is not registered
+        """
+    # If we haven't already loaded our premades, do so now
+    if not cls._scanned:
+      cls.load_premade_modules()
+
+    # Check to see if it's in the registry
+    if type_name.lower() not in cls._registry:
+      raise ValueError(
+        f"Unknown {cls.get_type_description()} type: {type_name}")
+
+    return cls._registry[type_name.lower()]
 
   @classmethod
   def load_premade_modules(cls) -> None:

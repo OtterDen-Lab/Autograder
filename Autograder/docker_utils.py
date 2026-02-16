@@ -8,6 +8,7 @@ import io
 import json
 import os
 import pathlib
+import shlex
 import tarfile
 import time
 import threading
@@ -540,16 +541,22 @@ class DockerContainer:
   def execute_command(
       self,
       command: str,
-      workdir: Optional[str] = None) -> Tuple[int, bytes, bytes]:
+      workdir: Optional[str] = None,
+      timeout_seconds: int = 60) -> Tuple[int, bytes, bytes]:
     """
     Execute a command in the container.
-    
+
     Args:
-        command: Command to execute
+        command: Command to execute (shell command string, must be trusted/instructor-controlled)
         workdir: Working directory for the command
-        
+        timeout_seconds: Command timeout in seconds (default 60)
+
     Returns:
         Tuple of (return_code, stdout, stderr)
+
+    Note:
+        The command is executed via bash -c with a timeout wrapper. Commands should come
+        from trusted configuration (e.g., grading scripts), not from student input.
     """
     if not self.container:
       raise Autograder.exceptions.ContainerError(
@@ -561,11 +568,15 @@ class DockerContainer:
     if workdir is not None:
       extra_args["workdir"] = workdir
 
-    rc, (stdout,
-         stderr) = (0, (b"", b""))
+    # Use list form for exec_run to avoid outer shell parsing.
+    # The command string is interpreted by bash -c with a timeout wrapper.
+    # Note: command must be trusted (from config) - not suitable for untrusted input.
+    shell_command = f"timeout {timeout_seconds} {command}"
+
+    rc, (stdout, stderr) = (0, (b"", b""))
     try:
       rc, (stdout,
-           stderr) = self.container.exec_run(cmd=f"bash -c \"timeout 60 {command}\"",
+           stderr) = self.container.exec_run(cmd=["bash", "-c", shell_command],
                                              demux=True,
                                              tty=True,
                                              **extra_args)
