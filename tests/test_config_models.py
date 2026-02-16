@@ -106,6 +106,46 @@ def test_parse_run_config_uses_discovered_grader_compatibility(monkeypatch):
   assert run_config.assignment_types["custom"].grader == "custom-grader"
 
 
+def test_normalize_grader_settings_falls_back_for_known_grader_when_registry_errors(
+    monkeypatch):
+  from Autograder.registry import GraderRegistry
+
+  def raise_import_error(_):
+    raise ModuleNotFoundError("simulated optional dependency missing")
+
+  monkeypatch.setattr(GraderRegistry, "get_class", raise_import_error)
+
+  normalized = config_models.normalize_grader_settings(
+    "TextSubmissionGrader",
+    {"phase2_tier": "medium"},
+    "assignment_types.text",
+  )
+
+  assert normalized["phase2_tier"] == "medium"
+  assert normalized["phase1_tier"] == "small"
+
+
+def test_normalize_grader_settings_reports_registry_error_for_unknown_grader(
+    monkeypatch):
+  from Autograder.registry import GraderRegistry
+
+  def raise_import_error(_):
+    raise ModuleNotFoundError("simulated optional dependency missing")
+
+  monkeypatch.setattr(GraderRegistry, "get_class", raise_import_error)
+
+  with pytest.raises(ValueError) as exc:
+    config_models.normalize_grader_settings(
+      "UnknownGrader",
+      {},
+      "assignment_types.unknown",
+    )
+
+  message = str(exc.value)
+  assert "Failed to load grader registry while validating 'UnknownGrader'" in message
+  assert "ModuleNotFoundError" in message
+
+
 def test_collect_assignments_to_grade_builds_typed_requests(monkeypatch):
   captured_init = {}
 

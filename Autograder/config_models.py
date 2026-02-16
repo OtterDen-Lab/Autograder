@@ -153,6 +153,16 @@ def _normalize_text_submission_grader_settings(
   return TextSubmissionGraderSettings.from_raw(settings, context_label).to_kwargs()
 
 
+def _normalize_known_grader_settings_without_registry(
+    grader_name: str, settings: Dict[str, Any],
+    context_label: str) -> Optional[Dict[str, Any]]:
+  if grader_name == "template-grader":
+    return _normalize_template_grader_settings(settings, context_label)
+  if grader_name in {"TextSubmissionGrader", "WeeklyStudyNotesGrader"}:
+    return _normalize_text_submission_grader_settings(settings, context_label)
+  return None
+
+
 def normalize_grader_settings(grader_name: str,
                               settings: Dict[str, Any],
                               context_label: str) -> Dict[str, Any]:
@@ -170,6 +180,15 @@ def normalize_grader_settings(grader_name: str,
   except ValueError:
     raise _config_error(
       f"Unknown grader for settings validation: {grader_name}")
+  except Exception as exc:
+    normalized = _normalize_known_grader_settings_without_registry(
+      grader_name, settings, context_label)
+    if normalized is not None:
+      return normalized
+    raise _config_error(
+      "Failed to load grader registry while validating "
+      f"'{grader_name}': {exc.__class__.__name__}: {exc}"
+    ) from exc
 
   # Check if the grader class has a normalize_settings method
   if hasattr(grader_cls, 'normalize_settings'):
