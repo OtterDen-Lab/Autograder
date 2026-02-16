@@ -177,7 +177,7 @@ class Assignment(abc.ABC):
                             records_dir: str, assignment_name: str) -> None:
     """
     Save feedback to records directory for record retention.
-    
+
     Args:
         student: Student object
         comments: Feedback comments to save
@@ -185,8 +185,8 @@ class Assignment(abc.ABC):
         assignment_name: Name of the assignment
     """
     try:
-      # Sanitize student name for filename (remove/replace unsafe characters)
-      student_name = re.sub(r'[^\w\-_.]', '', student.name.replace(' ', '_'))
+      # Use student user_id instead of name for privacy (avoids PII in filenames)
+      student_id = student.user_id
 
       # Sanitize assignment name for filename (remove/replace unsafe characters)
       assignment_safe = re.sub(r'[^\w\-_.]', '',
@@ -200,8 +200,9 @@ class Assignment(abc.ABC):
         os.makedirs(records_dir)
         log.debug(f"Created records directory: {records_dir}")
 
-      # Create filename: [timestamp].[assignment_name].[student_name].log
-      filename = f"{timestamp}.{assignment_safe}.{student_name}.log"
+      # Create filename: [timestamp].[assignment_name].student_[id].log
+      # Uses user_id instead of name to avoid PII in filenames
+      filename = f"{timestamp}.{assignment_safe}.student_{student_id}.log"
       filepath = os.path.join(records_dir, filename)
 
       # Write feedback to file
@@ -212,7 +213,7 @@ class Assignment(abc.ABC):
 
     except Exception as e:
       log.error(
-        f"Failed to save feedback record for student {student.name} "
+        f"Failed to save feedback record for student_id={student.user_id} "
         f"to records_dir='{records_dir}' for assignment '{assignment_name}': {e}"
       )
 

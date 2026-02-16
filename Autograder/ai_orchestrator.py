@@ -81,6 +81,80 @@ def query_anthropic_text(prompt: str,
       "Check API credentials, connectivity, and provider availability.") from e
 
 
+def query_anthropic_structured(
+    prompt: str,
+    *,
+    schema_name: str,
+    tier: str,
+    max_response_tokens: int,
+    max_retries: int = 3) -> tuple[Dict[str, Any], Dict[str, Any]]:
+  """
+  Query Anthropic and parse JSON response with retry logic.
+
+  Similar to query_openai_structured but handles Anthropic's text output
+  and parses JSON from it, retrying on parse failures.
+
+  Args:
+      prompt: The prompt to send
+      schema_name: Schema name for validation (from ai_helper.RESPONSE_SCHEMAS)
+      tier: Model tier (small, medium, large)
+      max_response_tokens: Maximum tokens in response
+      max_retries: Number of retries on JSON parse failure
+
+  Returns:
+      Tuple of (validated_payload, usage_info)
+
+  Raises:
+      AIProviderError: On API failures or exhausted retries
+  """
+  last_error = None
+  combined_usage = {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "provider": "anthropic",
+    "model": "unknown",
+    "retries": 0
+  }
+
+  for attempt in range(1, max_retries + 1):
+    try:
+      text, usage_info = query_anthropic_text(prompt,
+                                              tier=tier,
+                                              max_response_tokens=max_response_tokens)
+      # Accumulate usage across retries
+      combined_usage["prompt_tokens"] += usage_info.get("prompt_tokens", 0)
+      combined_usage["completion_tokens"] += usage_info.get("completion_tokens", 0)
+      combined_usage["total_tokens"] += usage_info.get("total_tokens", 0)
+      combined_usage["model"] = usage_info.get("model", "unknown")
+
+      payload = parse_anthropic_json_payload(text, schema_name=schema_name)
+      if payload is not None:
+        return payload, combined_usage
+
+      # JSON parsing failed - will retry if attempts remain
+      last_error = ValueError(
+        f"Failed to parse JSON from Anthropic response (attempt {attempt}/{max_retries})"
+      )
+      combined_usage["retries"] = attempt
+      log.warning(
+        f"Anthropic JSON parse failed (attempt {attempt}/{max_retries}), "
+        f"schema={schema_name}"
+      )
+
+    except autograder_exceptions.AIProviderError:
+      raise
+    except Exception as e:
+      last_error = e
+      log.warning(f"Anthropic query error (attempt {attempt}/{max_retries}): {e}")
+
+  # Exhausted retries
+  raise autograder_exceptions.AIProviderError(
+    f"Anthropic request failed after {max_retries} attempts (tier={tier}, schema={schema_name}). "
+    f"Last error: {last_error}"
+  ) from last_error
+
+
 class ProviderFallbackOrchestrator:
   """
   Execute provider calls with a consistent primary/fallback strategy.

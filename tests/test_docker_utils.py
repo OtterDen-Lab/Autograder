@@ -418,7 +418,8 @@ class TestDockerContainerCommandExecution:
         container.execute_command("python main.py")
 
         call_kwargs = mock_container_obj.exec_run.call_args.kwargs
-        assert call_kwargs["cmd"] == 'bash -c "timeout 60 python main.py"'
+        # Uses list form for exec_run to avoid outer shell parsing (defense-in-depth)
+        assert call_kwargs["cmd"] == ["bash", "-c", "timeout 60 python main.py"]
 
     def test_execute_command_returns_timeout_exit_code(self, mock_docker_client, mock_docker_module, monkeypatch):
         monkeypatch.setattr(docker_utils, 'docker', mock_docker_module)

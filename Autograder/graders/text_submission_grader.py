@@ -27,6 +27,7 @@ from Autograder.assignment import Assignment
 from Autograder.ai_orchestrator import (ProviderFallbackOrchestrator,
                                          parse_anthropic_json_payload,
                                          query_anthropic_text,
+                                         query_anthropic_structured,
                                          query_openai_structured)
 from lms_interface.classes import Feedback, Submission, TextSubmission
 
@@ -510,18 +511,14 @@ class QuestionConsolidator:
       operation = "Phase 2.5 - Question Consolidation (Anthropic)"
       if not self.grader.prefer_anthropic:
         operation = "Phase 2.5 - Question Consolidation (Anthropic fallback)"
-      analysis_text, usage = query_anthropic_text(
-        prompt, tier=self.grader.phase25_tier, max_response_tokens=2000)
-      self.grader._track_token_usage(usage, operation)
 
-      result = parse_anthropic_json_payload(
-        analysis_text, schema_name="question_consolidation")
-      if result is None:
-        if self.grader.prefer_anthropic:
-          log.warning("Could not parse JSON from Anthropic response")
-        else:
-          log.warning("Could not parse JSON from Anthropic fallback response")
-        return []
+      # Use query_anthropic_structured which has built-in JSON retry logic
+      result, usage = query_anthropic_structured(
+        prompt,
+        schema_name="question_consolidation",
+        tier=self.grader.phase25_tier,
+        max_response_tokens=2000)
+      self.grader._track_token_usage(usage, operation)
 
       consolidated = result.get("consolidated_questions", [])
       log.info(
