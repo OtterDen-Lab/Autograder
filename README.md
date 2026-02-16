@@ -225,6 +225,7 @@ For detailed documentation, see:
 - `documentation/instructor_onboarding.md` (minimal setup + common customizations)
 - `documentation/operations_runbook.md` (failure autopsy + rerun procedures)
 - `documentation/troubleshooting.md` (common runtime failures and recovery steps)
+- `documentation/architecture.md` (system data flow and component relationships)
 - `documentation/customization.md` (adding graders/kinds + common recipes)
 - `documentation/configuration_schema.md` (field-by-field config reference)
 - `documentation/privacy_audit.md` (PII surfaces and privacy controls)
