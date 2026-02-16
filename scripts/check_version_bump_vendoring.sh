@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${AUTOGRADER_SKIP_PRECOMMIT_VENDOR:-0}" == "1" ]]; then
+  echo "Skipping vendoring check (already handled by git bump)."
+  exit 0
+fi
+
 # When pyproject version is bumped, refresh vendored LMSInterface automatically.
 if ! git diff --cached -- pyproject.toml | grep -Eq '^[+-][[:space:]]*version[[:space:]]*='; then
   exit 0
@@ -13,7 +18,7 @@ after_snapshot="$(mktemp)"
 trap 'rm -f "$before_snapshot" "$after_snapshot"' EXIT
 
 git diff --cached -- lms_interface pyproject.toml >"$before_snapshot" || true
-python scripts/vendor_lms_interface.py
+python scripts/vendor_lms_interface.py --quiet
 git add lms_interface pyproject.toml
 git diff --cached -- lms_interface pyproject.toml >"$after_snapshot" || true
 

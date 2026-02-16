@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  git bump [patch|minor|major] [-m "commit message"] [--no-commit] [--dry-run]
+  git bump [patch|minor|major] [-m "commit message"] [--no-commit] [--dry-run] [--verbose]
 
 Behavior:
   1. Bump version via `uv version --bump <kind>`
@@ -15,6 +15,7 @@ Behavior:
 Notes:
   - Requires a clean index and working tree (tracked files).
   - Uses normal `git commit -m ...` (no pathspec commit).
+  - Uses quiet vendoring output by default; pass --verbose for full logs.
 EOF
 }
 
@@ -35,6 +36,7 @@ BUMP_KIND="patch"
 COMMIT_MESSAGE=""
 NO_COMMIT="0"
 DRY_RUN="0"
+VERBOSE="0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -56,6 +58,10 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN="1"
       shift
       ;;
+    --verbose)
+      VERBOSE="1"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -74,7 +80,11 @@ if [[ -n "$(git diff --name-only)" ]] || [[ -n "$(git diff --cached --name-only)
 fi
 
 run uv version --bump "$BUMP_KIND"
-run python scripts/vendor_lms_interface.py
+if [[ "$VERBOSE" == "1" ]]; then
+  run python scripts/vendor_lms_interface.py
+else
+  run python scripts/vendor_lms_interface.py --quiet
+fi
 run git add pyproject.toml uv.lock lms_interface
 
 if [[ "$NO_COMMIT" == "1" ]]; then
@@ -87,4 +97,4 @@ if [[ -z "$COMMIT_MESSAGE" ]]; then
   COMMIT_MESSAGE="Bump version to ${version} and vendor LMSInterface"
 fi
 
-run git commit -m "$COMMIT_MESSAGE"
+run env AUTOGRADER_SKIP_PRECOMMIT_VENDOR=1 git commit -m "$COMMIT_MESSAGE"
