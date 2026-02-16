@@ -489,12 +489,27 @@ def _normalize_text_submission_grader_settings(
 def normalize_grader_settings(grader_name: str,
                               settings: Dict[str, Any],
                               context_label: str) -> Dict[str, Any]:
-  if grader_name == "template-grader":
-    return _normalize_template_grader_settings(settings, context_label)
-  if grader_name in {"TextSubmissionGrader", "WeeklyStudyNotesGrader"}:
-    return _normalize_text_submission_grader_settings(settings, context_label)
+  """
+  Validate and normalize grader settings by dispatching to the grader class.
 
-  raise _config_error(f"Unsupported grader for settings validation: {grader_name}")
+  The grader class is looked up via the GraderRegistry, and its
+  normalize_settings() classmethod is called to perform validation.
+  This allows graders to own their own settings validation logic.
+  """
+  from Autograder.registry import GraderRegistry
+
+  try:
+    grader_cls = GraderRegistry.get_class(grader_name)
+  except ValueError:
+    raise _config_error(
+      f"Unknown grader for settings validation: {grader_name}")
+
+  # Check if the grader class has a normalize_settings method
+  if hasattr(grader_cls, 'normalize_settings'):
+    return grader_cls.normalize_settings(settings, context_label)
+
+  # Fall back to returning settings unchanged if no normalization defined
+  return dict(settings)
 
 
 def _extract_settings(source: Dict[str, Any], reserved_keys: set[str]) -> Dict[str, Any]:

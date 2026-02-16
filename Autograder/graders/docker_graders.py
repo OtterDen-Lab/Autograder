@@ -13,9 +13,10 @@ import subprocess
 import uuid
 
 import yaml
-from typing import Tuple, Optional, List
+from typing import Any, Dict, Tuple, Optional, List
 
 from Autograder.registry import GraderRegistry
+from Autograder import config_models
 from lms_interface.classes import Feedback
 from Autograder.docker_utils import DockerClient, DockerContainer
 import Autograder.exceptions
@@ -26,7 +27,7 @@ import logging
 log = logging.getLogger(__name__)
 
 
-class Grader__docker(FileBasedGrader):
+class DockerGrader(FileBasedGrader):
   """
   Base class for Docker-based graders.
 
@@ -434,18 +435,25 @@ class Grader__docker(FileBasedGrader):
 
 
 @GraderRegistry.register("template-grader")
-class Grader__template_grader(Grader__docker):
-  COMPATIBLE_KINDS = {"ProgrammingAssignment"}
+class TemplateGrader(DockerGrader):
   """
   Template-based grader that automatically sets up a course template repository
   and runs scripts/grader.py with minimal configuration required.
-  
+
   Automatically handles:
   - Default Python 3.11 environment
   - Cloning template repository (local or remote)
   - Installing uv and running uv sync
   - Running grader.py with assignment name
   """
+  COMPATIBLE_KINDS = {"ProgrammingAssignment"}
+
+  @classmethod
+  def normalize_settings(cls, settings: Dict[str, Any],
+                         context_label: str) -> Dict[str, Any]:
+    """Validate and normalize template grader settings."""
+    return config_models._normalize_template_grader_settings(
+      settings, context_label)
 
   def __init__(
       self,
@@ -908,3 +916,12 @@ class Grader__template_grader(Grader__docker):
     rc, stdout, stderr = self.execute_command_in_container(
       command=self.grading_script, workdir=self.working_dir)
     return rc, stdout.decode(), stderr.decode()
+
+
+# =============================================================================
+# Backwards Compatibility Aliases
+# =============================================================================
+# These aliases preserve backwards compatibility for code that imports the
+# old class names with double underscores.
+Grader__docker = DockerGrader
+Grader__template_grader = TemplateGrader

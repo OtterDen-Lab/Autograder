@@ -22,6 +22,26 @@ class Grader(abc.ABC):
   and generating feedback.
   """
 
+  @classmethod
+  def normalize_settings(cls, settings: dict, context_label: str) -> dict:
+    """
+    Validate and normalize grader-specific settings from config.
+
+    Subclasses should override this to validate their specific settings.
+    The base implementation returns settings unchanged.
+
+    Args:
+        settings: Raw settings dict from YAML config
+        context_label: Label for error messages (e.g., "assignment_types.programming")
+
+    Returns:
+        Normalized settings dict
+
+    Raises:
+        ValueError: If settings are invalid
+    """
+    return dict(settings)
+
   def __init__(self, *args, **kwargs):
     super().__init__()
     self.ready_to_finalize = True

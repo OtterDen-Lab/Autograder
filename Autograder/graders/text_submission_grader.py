@@ -24,6 +24,7 @@ from datetime import datetime
 from Autograder.grader import Grader
 from Autograder.registry import GraderRegistry
 from Autograder.assignment import Assignment
+from Autograder import config_models
 from Autograder.ai_orchestrator import (ProviderFallbackOrchestrator,
                                          parse_anthropic_json_payload,
                                          query_anthropic_text,
@@ -1050,7 +1051,6 @@ class ReportPresenter:
 
 
 class BaseTextSubmissionGrader(Grader):
-  COMPATIBLE_KINDS = {"TextAssignment"}
   """
   Grader for text-based weekly study notes submissions.
 
@@ -1065,6 +1065,14 @@ class BaseTextSubmissionGrader(Grader):
   - Relevance (2 pts): Coverage of class topics
   - Explanation Quality (2 pts): Depth of explanation, not correctness
   """
+  COMPATIBLE_KINDS = {"TextAssignment"}
+
+  @classmethod
+  def normalize_settings(cls, settings: Dict,
+                         context_label: str) -> Dict:
+    """Validate and normalize text submission grader settings."""
+    return config_models._normalize_text_submission_grader_settings(
+      settings, context_label)
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)

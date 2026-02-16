@@ -364,7 +364,7 @@ def get_model_pricing(provider: str, model: str) -> tuple:
   return (default_tier.get("input_cost", 0.0), default_tier.get("output_cost", 0.0))
 
 
-class AI_Helper(abc.ABC):
+class AIHelper(abc.ABC):
   _client = None
 
   def __init__(self) -> None:
@@ -379,7 +379,7 @@ class AI_Helper(abc.ABC):
     pass
 
 
-class AI_Helper__Anthropic(AI_Helper):
+class AnthropicAIHelper(AIHelper):
 
   def __init__(self) -> None:
     super().__init__()
@@ -440,7 +440,7 @@ class AI_Helper__Anthropic(AI_Helper):
     return response.content[0].text, usage_info
 
 
-class AI_Helper__OpenAI(AI_Helper):
+class OpenAIAIHelper(AIHelper):
 
   def __init__(self) -> None:
     super().__init__()
@@ -533,7 +533,7 @@ class AI_Helper__OpenAI(AI_Helper):
       return fallback, usage_info
 
 
-class AI_Helper__Ollama(AI_Helper):
+class OllamaAIHelper(AIHelper):
 
   def __init__(self):
     super().__init__()
@@ -644,3 +644,14 @@ class AI_Helper__Ollama(AI_Helper):
     except Exception as e:
       log.error(f"Ollama error ({type(e).__name__}): {str(e)}")
       raise
+
+
+# =============================================================================
+# Backwards Compatibility Aliases
+# =============================================================================
+# These aliases preserve backwards compatibility for code that imports the
+# old class names with underscores.
+AI_Helper = AIHelper
+AI_Helper__Anthropic = AnthropicAIHelper
+AI_Helper__OpenAI = OpenAIAIHelper
+AI_Helper__Ollama = OllamaAIHelper

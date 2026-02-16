@@ -318,7 +318,7 @@ class Assignment(abc.ABC):
 
 
 @AssignmentRegistry.register("ProgrammingAssignment")
-class Assignment__ProgrammingAssignment(Assignment):
+class ProgrammingAssignment(Assignment):
   """
   Assignment for programming assignment grading, where prepare will download files and finalize will upload feedback.
   Will hopefully be run automatically.
@@ -379,7 +379,7 @@ class Assignment__ProgrammingAssignment(Assignment):
 
 
 @AssignmentRegistry.register("TextAssignment")
-class Assignment_TextAssignment(Assignment):
+class TextAssignment(Assignment):
   """
   Assignment for text-based learning log submissions.
   Handles Canvas text submissions where students submit reflective writing.
@@ -567,3 +567,12 @@ class Assignment_TextAssignment(Assignment):
     Finalize grading by pushing scores and feedback to Canvas.
     """
     return super().finalize(*args, **kwargs)
+
+
+# =============================================================================
+# Backwards Compatibility Aliases
+# =============================================================================
+# These aliases preserve backwards compatibility for code that imports the
+# old class names with underscores.
+Assignment__ProgrammingAssignment = ProgrammingAssignment
+Assignment_TextAssignment = TextAssignment
