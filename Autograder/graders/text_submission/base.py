@@ -448,7 +448,7 @@ class BaseTextSubmissionGrader(Grader):
 
         for submission in submissions:
             result = results_by_student.get(submission.student.user_id)
-            if result:
+            if result and not result.get("grading_failed", False):
                 # Use pre-calculated total grade (out of 10) and convert to percentage
                 total_grade = result.get('total_grade', 0)
                 percentage_score = (total_grade / 10.0) * 100.0
@@ -456,10 +456,21 @@ class BaseTextSubmissionGrader(Grader):
                 # Create detailed rubric feedback
                 feedback_text = self.rubric_generator.generate(result)
                 submission.feedback = Feedback(percentage_score, feedback_text)
+            elif result and result.get("grading_failed", False):
+                submission.feedback = None
+                submission.set_extra({
+                    "grading_error": "llm_grading_failed",
+                    "grading_error_message": result.get(
+                        "support_reason", "LLM grading failed")
+                })
             else:
-                # Fallback for missing results
-                submission.feedback = Feedback(0.0,
-                                               "Error: Could not analyze submission")
+                # Keep ungraded if no result mapping is available.
+                submission.feedback = None
+                submission.set_extra({
+                    "grading_error": "missing_grading_result",
+                    "grading_error_message":
+                    "Could not map grading result to submission."
+                })
 
     def _generate_rubric_feedback(self, result: Dict) -> str:
         """Backward-compatible wrapper around RubricGenerator."""
@@ -613,6 +624,51 @@ class BaseTextSubmissionGrader(Grader):
 
         except Exception as e:
             log.warning(f"Failed to send Slack notification: {e}")
+
+    def _report_individual_grading_failure(self, student_id: int | str,
+                                           reason: str) -> None:
+        """
+        Send a targeted Slack alert when AI grading fails for a submission.
+
+        Args:
+            student_id: Canvas user ID for the affected submission
+            reason: Failure reason for operator triage
+        """
+        slack_token = os.getenv('SLACK_BOT_TOKEN')
+        slack_channel = self.slack_channel
+        if not slack_token or not slack_channel:
+            return
+
+        safe_reason = (reason or "").strip()
+        if len(safe_reason) > 500:
+            safe_reason = safe_reason[:500] + "... [truncated]"
+
+        message = (
+            f":warning: *LLM grading failed for one submission*\n"
+            f"*Course:* {self.course_name}\n"
+            f"*Assignment:* {self.assignment_name}\n"
+            f"*Student ID:* {student_id}\n"
+            f"*Reason:* {safe_reason}\n"
+            "Submission left ungraded for manual follow-up.")
+
+        try:
+            response = requests.post(
+                "https://slack.com/api/chat.postMessage",
+                headers={"Authorization": f"Bearer {slack_token}"},
+                json={
+                    "channel": slack_channel,
+                    "text": message,
+                    "mrkdwn": True,
+                    "unfurl_links": False,
+                    "unfurl_media": False
+                },
+                timeout=10)
+            if not response.json().get('ok'):
+                log.warning(
+                    f"Failed to send per-submission LLM failure alert: {response.json().get('error')}"
+                )
+        except Exception as e:
+            log.warning(f"Failed to send per-submission LLM failure alert: {e}")
 
     def _upload_questions_to_slack(self, slack_token: str,
                                    slack_channel: str) -> None:

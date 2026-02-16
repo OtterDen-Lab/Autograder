@@ -101,9 +101,16 @@ class Grader(abc.ABC):
         log.exception(
           f"[{assignment_id}] Failed to grade submission for {student_name}: {e}"
         )
-        submission.feedback = Feedback(
-          0.0,
-          "Autograder internal error while grading this submission.")
+        # Leave feedback unset so finalize() can skip publishing a grade for
+        # this submission instead of silently pushing a zero.
+        submission.feedback = None
+        try:
+          submission.set_extra({
+            "grading_error": "internal_grader_error",
+            "grading_error_type": type(e).__name__,
+          })
+        except Exception:
+          pass
 
     log.info(
       f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions"
@@ -244,9 +251,16 @@ class FileBasedGrader(Grader):
         log.exception(
           f"[{assignment_id}] Failed to grade submission for {student_name}: {e}"
         )
-        submission.feedback = Feedback(
-          0.0,
-          "Autograder internal error while grading this submission.")
+        # Leave feedback unset so finalize() can skip publishing a grade for
+        # this submission instead of silently pushing a zero.
+        submission.feedback = None
+        try:
+          submission.set_extra({
+            "grading_error": "internal_grader_error",
+            "grading_error_type": type(e).__name__,
+          })
+        except Exception:
+          pass
 
     log.info(
       f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions"

@@ -79,8 +79,15 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
         assignment_kind = assignment_data.assignment_kind
 
         # Validate grader compatibility
-        active_assignment_kinds, active_graders_by_kind = (
-            get_active_grader_compatibility())
+        try:
+            try:
+                active_assignment_kinds, active_graders_by_kind = (
+                    get_active_grader_compatibility(strict=True))
+            except TypeError:
+                active_assignment_kinds, active_graders_by_kind = (
+                    get_active_grader_compatibility())
+        except ValueError as e:
+            raise autograder_exceptions.ConfigurationError(str(e)) from e
         if assignment_kind not in active_assignment_kinds:
             supported = ", ".join(sorted(active_assignment_kinds))
             raise autograder_exceptions.ConfigurationError(
@@ -125,6 +132,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
         settings = settings.copy()
         settings["course_name"] = assignment_data.course_name
         settings["slack_channel"] = assignment_data.slack_channel
+        settings["assignment_kind"] = assignment_kind
 
         do_regrade = args.do_regrade
         record_retention = bool(settings.get('record_retention'))

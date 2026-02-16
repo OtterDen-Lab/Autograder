@@ -169,9 +169,12 @@ class TemplateGraderSettings:
   record_retention: bool = False
   records_dir: Optional[str] = None
   report_errors: bool = True
+  upload_error_artifacts: bool = False
   slack_webhook: Optional[str] = None
   slack_token: Optional[str] = None
   slack_channel: Optional[str] = None
+  grading_script: Optional[str] = None
+  grading_workdir: Optional[str] = None
   num_repeats: Optional[int] = None
 
   def __post_init__(self) -> None:
@@ -219,9 +222,12 @@ class TemplateGraderSettings:
       "record_retention",
       "records_dir",
       "report_errors",
+      "upload_error_artifacts",
       "slack_webhook",
       "slack_token",
       "slack_channel",
+      "grading_script",
+      "grading_workdir",
       "num_repeats",
     }
     unknown = sorted(k for k in raw.keys() if k not in allowed)
@@ -272,12 +278,19 @@ class TemplateGraderSettings:
                                         f"{context_label}.records_dir"),
       report_errors=_require_bool(raw.get("report_errors", True),
                                   f"{context_label}.report_errors"),
+      upload_error_artifacts=_require_bool(
+        raw.get("upload_error_artifacts", False),
+        f"{context_label}.upload_error_artifacts"),
       slack_webhook=_require_optional_str(raw.get("slack_webhook"),
                                           f"{context_label}.slack_webhook"),
       slack_token=_require_optional_str(raw.get("slack_token"),
                                         f"{context_label}.slack_token"),
       slack_channel=_require_optional_str(raw.get("slack_channel"),
                                           f"{context_label}.slack_channel"),
+      grading_script=_require_optional_str(raw.get("grading_script"),
+                                           f"{context_label}.grading_script"),
+      grading_workdir=_require_optional_str(raw.get("grading_workdir"),
+                                            f"{context_label}.grading_workdir"),
       num_repeats=_require_optional_int(raw.get("num_repeats"),
                                         f"{context_label}.num_repeats"),
     )
@@ -313,9 +326,12 @@ class TemplateGraderSettings:
       "record_retention": self.record_retention,
       "records_dir": self.records_dir,
       "report_errors": self.report_errors,
+      "upload_error_artifacts": self.upload_error_artifacts,
       "slack_webhook": self.slack_webhook,
       "slack_token": self.slack_token,
       "slack_channel": self.slack_channel,
+      "grading_script": self.grading_script,
+      "grading_workdir": self.grading_workdir,
       "num_repeats": self.num_repeats,
     }
 
@@ -406,4 +422,3 @@ class TextSubmissionGraderSettings:
       "slack_token": self.slack_token,
       "slack_channel": self.slack_channel,
     }
-

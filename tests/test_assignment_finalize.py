@@ -361,13 +361,13 @@ class TestEdgeCases:
         submission.feedback = None
         assignment.submissions = [submission]
 
-        # Should not crash when trying to access feedback
-        # The current implementation may fail, which would be a bug to fix
-        try:
-            assignment.finalize(
-                push=True,
-                idempotency_key="test",
-                idempotency_state_dir=str(tmp_path)
-            )
-        except AttributeError:
-            pytest.skip("None feedback not handled - potential improvement")
+        summary = assignment.finalize(
+            push=True,
+            idempotency_key="test",
+            idempotency_state_dir=str(tmp_path)
+        )
+
+        # Should not push a synthetic zero grade when grading produced no feedback
+        assert lms_assignment.push_calls == []
+        assert summary["push_attempted"] == 0
+        assert summary["push_skipped_ungraded"] == 1

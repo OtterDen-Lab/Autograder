@@ -367,9 +367,8 @@ def test_apply_grades_to_submissions_maps_results_by_student_id():
   assert submissions[0].feedback is not None
   assert submissions[0].feedback.percentage_score == 80.0
 
-  assert submissions[1].feedback is not None
-  assert submissions[1].feedback.percentage_score == 0.0
-  assert "could not analyze" in submissions[1].feedback.comments.lower()
+  assert submissions[1].feedback is None
+  assert submissions[1].extra_info.get("grading_error") == "missing_grading_result"
 
 
 def test_truncate_submission_text_applies_word_limit_first():
@@ -620,9 +619,9 @@ def test_grade_individual_submission_returns_safe_default_when_both_providers_fa
   )
 
   assert result["student_id"] == 7
-  assert result["engagement_score"] == 0
+  assert result["grading_failed"] is True
   assert result["needs_support"] is True
-  assert result["support_reason"] == "Error analyzing submission"
+  assert result["support_reason"] == "LLM grading failed after retries"
 
 
 def test_question_consolidation_falls_back_to_anthropic_when_openai_fails(

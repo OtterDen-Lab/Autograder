@@ -64,9 +64,8 @@ def test_grade_assignment_isolates_submission_failures():
 
   grader.grade_assignment(_make_assignment([failing, passing]))
 
-  assert failing.feedback is not None
-  assert failing.feedback.percentage_score == 0.0
-  assert "internal error" in failing.feedback.comments.lower()
+  assert failing.feedback is None
+  assert failing.extra_info.get("grading_error") == "internal_grader_error"
 
   assert passing.feedback is not None
   assert passing.feedback.percentage_score == 100.0
