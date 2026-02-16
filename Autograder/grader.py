@@ -43,7 +43,6 @@ class Grader(abc.ABC):
     :param assignment: Takes in an assignment.Assignment object to grade
     :param kwargs: Additional arguments including:
                    - do_regrade: If True, regrade already-graded submissions
-                   - merge_only: If True, only merge results without grading
     :return:
     """
     total_submissions = len(assignment.submissions)

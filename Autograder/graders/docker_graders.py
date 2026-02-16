@@ -17,7 +17,7 @@ from typing import Tuple, Optional, List
 
 from Autograder.registry import GraderRegistry
 from lms_interface.classes import Feedback
-from Autograder.docker_utils import DockerClient, DockerContainer, DockerError
+from Autograder.docker_utils import DockerClient, DockerContainer
 import Autograder.exceptions
 from Autograder.grader import FileBasedGrader
 
@@ -40,7 +40,7 @@ class Grader__docker(FileBasedGrader):
     # Set up docker client
     try:
       self.docker_client = DockerClient()
-    except DockerError as e:
+    except Autograder.exceptions.DockerError as e:
       log.error(f"Failed to initialize Docker client: {e}")
       raise Autograder.exceptions.ConfigurationError(
         f"Docker client initialization failed: {e}") from e
@@ -105,7 +105,9 @@ class Grader__docker(FileBasedGrader):
     """
     target_container = container if container is not None else self.container
     if not target_container:
-      raise RuntimeError("No container available for command execution")
+      raise Autograder.exceptions.ContainerError(
+        "No container available for command execution. "
+        "Call start_container() before execute_command_in_container().")
 
     return target_container.execute_command(command, workdir)
 
@@ -433,6 +435,7 @@ class Grader__docker(FileBasedGrader):
 
 @GraderRegistry.register("template-grader")
 class Grader__template_grader(Grader__docker):
+  COMPATIBLE_KINDS = {"ProgrammingAssignment"}
   """
   Template-based grader that automatically sets up a course template repository
   and runs scripts/grader.py with minimal configuration required.
@@ -451,6 +454,8 @@ class Grader__template_grader(Grader__docker):
       base_image_name: str = "python:3.11-slim",  # assume this is based on linux
       source_repo:
     str = "https://github.com/CSUMB-SCD-instructors/course-template",
+      additional_repos=None,
+      container_repo_path: str = "/repo/programming-assignments",
       student_code_path: str = "",
       extra_installs=None,  # todo: these will be tough, do later
       extra_dockerfile_lines=None,
@@ -469,6 +474,9 @@ class Grader__template_grader(Grader__docker):
     self.assignment_name = assignment_name
     self.base_image_name = base_image_name
     self.source_repo = source_repo
+    self.additional_repos = self._normalize_additional_repos(additional_repos)
+    self.container_repo_path = self._normalize_container_repo_path(
+      container_repo_path)
     self.student_code_path = student_code_path
     self.extra_installs = extra_installs
     self.extra_dockerfile_lines = extra_dockerfile_lines
@@ -487,11 +495,119 @@ class Grader__template_grader(Grader__docker):
     return
 
   @staticmethod
+  def _normalize_container_repo_path(container_repo_path: str) -> str:
+    if not isinstance(container_repo_path, str):
+      raise ValueError(
+        "container_repo_path must be a string (example: '/repo/programming-assignments')."
+      )
+
+    normalized = os.path.normpath(container_repo_path.strip())
+    if not normalized.startswith("/"):
+      raise ValueError(
+        "container_repo_path must be an absolute path under /repo "
+        "(example: '/repo/programming-assignments').")
+    if normalized != "/repo" and not normalized.startswith("/repo/"):
+      raise ValueError(
+        f"container_repo_path must be within /repo, got '{container_repo_path}'.")
+    return normalized
+
+  def _normalize_additional_repos(self, additional_repos) -> List[dict]:
+    if additional_repos is None:
+      return []
+    if not isinstance(additional_repos, list):
+      raise ValueError(
+        "additional_repos must be a list of mappings with keys: "
+        "source_repo, container_path, optional depth.")
+
+    normalized_repos = []
+    for i, repo_config in enumerate(additional_repos):
+      if not isinstance(repo_config, dict):
+        raise ValueError(
+          f"additional_repos[{i}] must be a mapping. "
+          "Expected keys: source_repo, container_path, optional depth.")
+      unknown_keys = sorted(
+        k for k in repo_config.keys() if k not in {"source_repo", "container_path", "depth"})
+      if unknown_keys:
+        raise ValueError(
+          f"additional_repos[{i}] has unsupported key(s): {', '.join(unknown_keys)}")
+
+      source_repo = repo_config.get("source_repo")
+      if not isinstance(source_repo, str) or not source_repo.strip():
+        raise ValueError(
+          f"additional_repos[{i}].source_repo is required and must be a non-empty string."
+        )
+
+      container_path = self._normalize_container_repo_path(
+        repo_config.get("container_path"))
+      if container_path == "/repo":
+        raise ValueError(
+          "additional_repos cannot target /repo (reserved for source_repo). "
+          "Use a subpath such as /repo/tools.")
+
+      depth = repo_config.get("depth", 1)
+      if depth is not None and (not isinstance(depth, int) or depth <= 0):
+        raise ValueError(
+          f"additional_repos[{i}].depth must be an integer >= 1 when provided.")
+
+      normalized_repos.append({
+        "source_repo": source_repo,
+        "container_path": container_path,
+        "depth": depth,
+      })
+
+    sorted_paths = sorted(repo["container_path"] for repo in normalized_repos)
+    for i, path_i in enumerate(sorted_paths):
+      for path_j in sorted_paths[i + 1:]:
+        if path_j.startswith(f"{path_i}/") or path_i.startswith(f"{path_j}/"):
+          raise ValueError(
+            "additional_repos contain overlapping container_path values: "
+            f"'{path_i}' and '{path_j}'. Choose disjoint mount targets.")
+
+    return normalized_repos
+
+  def _repo_mounts(self) -> List[dict]:
+    mounts = [{
+      "container_path": "/repo",
+      "context_dir": "repo",
+    }]
+    for i, repo in enumerate(self.additional_repos):
+      mounts.append({
+        "container_path": repo["container_path"],
+        "context_dir": f"repo_extra_{i}",
+      })
+    return mounts
+
+  def _container_assignment_root(self) -> str:
+    return os.path.join(self.container_repo_path, self.assignment_name)
+
+  @staticmethod
+  def _resolve_local_path_for_container_path(temp_build_dir: str,
+                                             container_path: str,
+                                             repo_mounts: List[dict]) -> str:
+    normalized_target = os.path.normpath(container_path)
+    for mount in sorted(repo_mounts,
+                        key=lambda entry: len(entry["container_path"]),
+                        reverse=True):
+      mount_path = mount["container_path"]
+      if (normalized_target == mount_path
+          or normalized_target.startswith(f"{mount_path}/")):
+        relative = os.path.relpath(normalized_target, mount_path)
+        base = os.path.join(temp_build_dir, mount["context_dir"])
+        return base if relative == "." else os.path.join(base, relative)
+    raise ValueError(
+      f"container path '{container_path}' is not mounted by any configured repository. "
+      f"Configured mounts: {', '.join(sorted(m['container_path'] for m in repo_mounts))}"
+    )
+
+  @staticmethod
   def _get_repo(repo_path: str, dest="repo", depth=None, deploy_key_path=None):
 
     dest = pathlib.Path(dest).expanduser().resolve()
     if dest.exists():
-      raise FileExistsError(f"{dest} already exists")
+      raise FileExistsError(
+        f"Destination path '{dest}' already exists while preparing repository "
+        f"source '{repo_path}'. Remove the existing path or choose a different target."
+      )
 
     # If it's local, copy it from local
     if pathlib.Path(repo_path).expanduser().exists():
@@ -525,8 +641,12 @@ class Grader__template_grader(Grader__docker):
       except subprocess.CalledProcessError as e:
         stderr = (getattr(e, "stderr", None) or "").strip()
         if stderr:
-          raise RuntimeError(f"git clone failed for {repo_path}: {stderr}") from e
-        raise RuntimeError(f"git clone failed for {repo_path}") from e
+          raise RuntimeError(
+            f"git clone failed for '{repo_path}': {stderr}. "
+            "Check repository URL/access permissions and network connectivity.") from e
+        raise RuntimeError(
+          f"git clone failed for '{repo_path}'. "
+          "Check repository URL/access permissions and network connectivity.") from e
 
   def _match_files_to_paths(self,
                             submission) -> Tuple[List[Tuple], Optional[str]]:
@@ -583,8 +703,8 @@ class Grader__template_grader(Grader__docker):
             subpath = target_config.get('path', '')
             target_name = target_config.get('name', file_identifier)
 
-            target_directory = os.path.join(
-              f"/repo/programming-assignments/{self.assignment_name}", subpath)
+            target_directory = os.path.join(self._container_assignment_root(),
+                                            subpath)
 
             # We need to provide a target file path, not just directory
             # The Docker copy will handle creating directories
@@ -611,11 +731,16 @@ class Grader__template_grader(Grader__docker):
 
     with tempfile.TemporaryDirectory() as temp_build_dir:
       log.debug(f"temp_build_dir: {temp_build_dir}")
+      repo_mounts = self._repo_mounts()
 
       # Get the main repo
       self._get_repo(self.source_repo,
                      os.path.join(temp_build_dir, "repo"),
                      depth=1)
+      for mount, repo in zip(repo_mounts[1:], self.additional_repos):
+        self._get_repo(repo["source_repo"],
+                       os.path.join(temp_build_dir, mount["context_dir"]),
+                       depth=repo.get("depth"))
 
       # If we have a golden repo, let's use it to set the extra files
       if self.golden_repo:
@@ -624,14 +749,22 @@ class Grader__template_grader(Grader__docker):
                                                       "golden"))
 
         logging.debug(temp_build_dir)
+        golden_mounts = [{
+          "container_path": "/repo",
+          "context_dir": "golden",
+        }]
+        source_assignment_root = self._resolve_local_path_for_container_path(
+          temp_build_dir, self._container_assignment_root(), golden_mounts)
+        target_assignment_root = self._resolve_local_path_for_container_path(
+          temp_build_dir, self._container_assignment_root(), repo_mounts)
 
         for f in self.files_from_golden:
           log.debug(f"Copying over golden file: {f}")
+          target_file = os.path.join(target_assignment_root, f)
+          os.makedirs(os.path.dirname(target_file), exist_ok=True)
           shutil.copy(
-            os.path.join(temp_build_dir, "golden", "programming-assignments",
-                         self.assignment_name, f),
-            os.path.join(temp_build_dir, "repo", "programming-assignments",
-                         self.assignment_name, f),
+            os.path.join(source_assignment_root, f),
+            target_file,
           )
 
         # Remove the golden for now
@@ -656,6 +789,11 @@ class Grader__template_grader(Grader__docker):
       dockerfile_lines.extend([
         "",  # Empty line for readability
         "COPY repo /repo",
+      ])
+      for mount in repo_mounts[1:]:
+        dockerfile_lines.append(
+          f"COPY {mount['context_dir']} {mount['container_path']}")
+      dockerfile_lines.extend([
         "COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /bin/",
         "WORKDIR /repo",
         "RUN rm -rf .venv",
@@ -707,8 +845,8 @@ class Grader__template_grader(Grader__docker):
         submission_files.append(
           (f,
            os.path.join(
-             f"/repo/programming-assignments/{self.assignment_name}",
-             self.student_code_path, original_name)))
+             self._container_assignment_root(), self.student_code_path,
+             original_name)))
       log.debug(f"submission.files: {submission.files}")
       log.debug(f"submission_files: {submission_files}")
 

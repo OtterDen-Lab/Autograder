@@ -11,7 +11,11 @@ imgs/
 debug.tex
 .claude
 *.log
+autograder_feedback_upload_*
 records/
 .autograder/
+.hypothesis/
 dist/
 scratch.yaml
+
+todo.md

@@ -14,6 +14,12 @@ courses:
         settings:
           base_image_name: "samogden/cst334"
           source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
+          # Optional: mount extra repositories in the grading container
+          # additional_repos:
+          #   - source_repo: "https://github.com/your-org/shared-tests"
+          #     container_path: "/repo/shared-tests"
+          # Optional: override when templates live somewhere other than /repo/programming-assignments/<PA>
+          # container_repo_path: "/repo/programming-assignments"
           golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
           files_from_golden:
             - "tests/unittests_reserved.c"

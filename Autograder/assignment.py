@@ -82,18 +82,6 @@ class Assignment(abc.ABC):
     :return:
     """
 
-    # If we are only merging then we should exit right here
-    if kwargs.get("merge_only", False):
-      return {
-        "push_enabled": False,
-        "merge_only": True,
-        "push_attempted": 0,
-        "push_succeeded": 0,
-        "push_failed": 0,
-        "push_skipped": 0,
-        "push_failed_students": [],
-      }
-
     push_enabled = bool(kwargs.get("push", False))
     idempotency_key = kwargs.get("idempotency_key")
     idempotency_state_dir = kwargs.get("idempotency_state_dir")
@@ -146,7 +134,9 @@ class Assignment(abc.ABC):
           push_failed += 1
           push_failed_students.append(str(submission.student.name))
           log.exception(
-            f"Failed to push feedback for {submission.student.name} (canvas_user_id={user_id}): {e}. Continuing to next submission."
+            f"Failed to push feedback for assignment '{self.lms_assignment.name}', "
+            f"student '{submission.student.name}' (canvas_user_id={user_id}): {e}. "
+            "Continuing to next submission. Verify Canvas API access, assignment publish state, and score validity."
           )
           continue
 
@@ -156,7 +146,9 @@ class Assignment(abc.ABC):
           push_failed += 1
           push_failed_students.append(str(submission.student.name))
           log.warning(
-            f"Push feedback returned unsuccessful for {submission.student.name} (canvas_user_id={user_id}). Continuing to next submission."
+            f"Push feedback returned unsuccessful for assignment '{self.lms_assignment.name}', "
+            f"student '{submission.student.name}' (canvas_user_id={user_id}). "
+            "Continuing to next submission. Check Canvas assignment settings and submission state."
           )
 
         if pushed and processed_user_ids is not None:
@@ -174,7 +166,6 @@ class Assignment(abc.ABC):
 
     return {
       "push_enabled": push_enabled,
-      "merge_only": False,
       "push_attempted": push_attempted,
       "push_succeeded": push_succeeded,
       "push_failed": push_failed,
@@ -221,7 +212,9 @@ class Assignment(abc.ABC):
 
     except Exception as e:
       log.error(
-        f"Failed to save feedback record for student {student.name}: {e}")
+        f"Failed to save feedback record for student {student.name} "
+        f"to records_dir='{records_dir}' for assignment '{assignment_name}': {e}"
+      )
 
   def _idempotency_state_path(self, idempotency_key: str,
                               idempotency_state_dir: str | None) -> str:
@@ -248,7 +241,8 @@ class Assignment(abc.ABC):
       return {int(u) for u in user_ids}
     except Exception as e:
       log.warning(
-        f"Failed to load idempotency state from {path}: {e}. Continuing without prior state.")
+        f"Failed to load idempotency state from '{path}': {e}. "
+        "Continuing without prior state; previously pushed submissions may be retried.")
       return set()
 
   def _save_idempotency_user_ids(self, idempotency_key: str,
@@ -542,7 +536,11 @@ class Assignment_TextAssignment(Assignment):
 
     except Exception as e:
       log.warning(
-        f"Error checking assignment dates: {e}. Defaulting to unlocked.")
+        f"Error checking assignment dates for '{self.lms_assignment.name}' "
+        f"(due_at={getattr(self.lms_assignment, 'due_at', None)}, "
+        f"lock_at={getattr(self.lms_assignment, 'lock_at', None)}): {e}. "
+        "Defaulting to unlocked."
+      )
       return False
 
   def get_submission_data(self) -> List[Dict]:

@@ -17,12 +17,17 @@ Grading Philosophy:
 from typing import List, Dict
 import logging
 import os
+import re
 import requests
 from datetime import datetime
 
 from Autograder.grader import Grader
 from Autograder.registry import GraderRegistry
 from Autograder.assignment import Assignment
+from Autograder.ai_orchestrator import (ProviderFallbackOrchestrator,
+                                         parse_anthropic_json_payload,
+                                         query_anthropic_text,
+                                         query_openai_structured)
 from lms_interface.classes import Feedback, Submission, TextSubmission
 
 log = logging.getLogger(__name__)
@@ -245,8 +250,810 @@ RELEVANCE_POINTS = 2   # Coverage of class topics
 EXPLANATION_QUALITY_POINTS = 2  # Depth of explanation
 
 
-@GraderRegistry.register("TextSubmissionGrader")
-class TextSubmissionGrader(Grader):
+class SubmissionPIIRedactor:
+  """
+  Best-effort PII redaction for submission text before LLM calls.
+  """
+
+  EMAIL_PATTERN = re.compile(
+    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+  PHONE_PATTERN = re.compile(
+    r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?){2}\d{4}\b")
+  STUDENT_ID_PATTERN = re.compile(
+    r"\b(?:student\s*(?:id|number)|sid|canvas_user_id)\s*[:#=]?\s*\d{4,}\b",
+    re.IGNORECASE)
+  NAME_HEADER_PATTERN = re.compile(r"(?im)^\s*name\s*:\s*.+$")
+
+  @staticmethod
+  def _replace_all(pattern: re.Pattern, text: str,
+                   replacement: str) -> tuple[str, int]:
+    return pattern.subn(replacement, text)
+
+  @staticmethod
+  def _compile_explicit_name_pattern(student_name: str | None) -> re.Pattern | None:
+    if not student_name:
+      return None
+    normalized = " ".join(str(student_name).split())
+    if len(normalized) < 3:
+      return None
+
+    escaped = re.escape(normalized).replace(r"\ ", r"\s+")
+    return re.compile(rf"(?<!\w){escaped}(?!\w)", re.IGNORECASE)
+
+  def redact(self,
+             text: str,
+             *,
+             student_name: str | None = None,
+             student_id: int | str | None = None) -> tuple[str, Dict[str, int]]:
+    if not text:
+      return text, {"total_replacements": 0}
+
+    redacted = text
+    counts: Dict[str, int] = {}
+
+    redacted, count = self._replace_all(self.EMAIL_PATTERN, redacted,
+                                        "[REDACTED_EMAIL]")
+    counts["emails"] = count
+    redacted, count = self._replace_all(self.PHONE_PATTERN, redacted,
+                                        "[REDACTED_PHONE]")
+    counts["phones"] = count
+    redacted, count = self._replace_all(self.STUDENT_ID_PATTERN, redacted,
+                                        "[REDACTED_STUDENT_ID]")
+    counts["student_id_markers"] = count
+    redacted, count = self._replace_all(self.NAME_HEADER_PATTERN, redacted,
+                                        "Name: [REDACTED_NAME]")
+    counts["name_headers"] = count
+
+    name_pattern = self._compile_explicit_name_pattern(student_name)
+    if name_pattern is not None:
+      redacted, count = name_pattern.subn("[REDACTED_NAME]", redacted)
+      counts["explicit_student_name"] = count
+
+    if student_id is not None:
+      escaped_id = re.escape(str(student_id))
+      if escaped_id:
+        id_pattern = re.compile(rf"\b{escaped_id}\b")
+        redacted, count = id_pattern.subn("[REDACTED_STUDENT_ID]", redacted)
+        counts["explicit_student_id"] = count
+
+    counts["total_replacements"] = sum(counts.values())
+    return redacted, counts
+
+
+class ScoreCalculator:
+  """
+  Encapsulates score normalization and total-grade calculation for phase 2.
+  """
+
+  def __init__(self,
+               *,
+               word_threshold: int = DEFAULT_WORD_THRESHOLD,
+               length_points: int = LENGTH_POINTS):
+    self.word_threshold = word_threshold
+    self.length_points = length_points
+
+  def apply_scores(self, result: Dict, *, word_count: int,
+                   student_name: str) -> Dict:
+    # Length score is computed locally from measured word count.
+    result["length_score"] = (
+      self.length_points if word_count >= self.word_threshold else 0)
+    result["accurate_word_count"] = word_count
+    result["student_name"] = student_name
+
+    total_grade = (int(result.get("engagement_score", 0)) +
+                   int(result.get("length_score", 0)) +
+                   int(result.get("relevance_score", 0)) +
+                   int(result.get("explanation_quality_score", 0)))
+    result["total_grade"] = total_grade
+    return result
+
+  @staticmethod
+  def needs_support(result: Dict) -> bool:
+    value = result.get("needs_support", False)
+    if isinstance(value, str):
+      value = value.lower() in ['true', '1', 'yes']
+    return bool(value)
+
+
+class RubricGenerator:
+  """
+  Encapsulates student-facing rubric feedback rendering.
+  """
+
+  def __init__(self,
+               *,
+               engagement_points: int = ENGAGEMENT_POINTS,
+               length_points: int = LENGTH_POINTS,
+               relevance_points: int = RELEVANCE_POINTS,
+               explanation_quality_points: int = EXPLANATION_QUALITY_POINTS,
+               rubric_total: int = DEFAULT_RUBRIC_TOTAL):
+    self.engagement_points = engagement_points
+    self.length_points = length_points
+    self.relevance_points = relevance_points
+    self.explanation_quality_points = explanation_quality_points
+    self.rubric_total = rubric_total
+
+  def generate(self, result: Dict) -> str:
+    engagement_score = result.get('engagement_score', 0)
+    length_score = result.get('length_score', 0)
+    relevance_score = result.get('relevance_score', 0)
+    quality_score = result.get('explanation_quality_score', 0)
+    total_score = result.get('total_grade', 0)
+    word_count = result.get('accurate_word_count', 0)
+    ai_feedback = result.get('feedback', '')
+    topics_needing_review = result.get('topics_needing_review', [])
+
+    feedback_lines = [
+      "Study Notes Feedback", "=" * 50, "", "GRADE BREAKDOWN:",
+      f"- Engagement ({self.engagement_points} pts): {engagement_score}/{self.engagement_points} - Effort to process and explain material",
+      f"- Length ({self.length_points} pts): {length_score}/{self.length_points} - {'Met 250+ word requirement' if length_score == self.length_points else 'Under 250 words required'}",
+      f"- Relevance ({self.relevance_points} pts): {relevance_score}/{self.relevance_points} - Coverage of class topics",
+      f"- Explanation Quality ({self.explanation_quality_points} pts): {quality_score}/{self.explanation_quality_points} - Depth of explanation",
+      "",
+      f"TOTAL SCORE: {total_score}/{self.rubric_total} ({(total_score/self.rubric_total)*100:.0f}%)",
+      f"Word Count: {word_count} words"
+    ]
+
+    if topics_needing_review:
+      feedback_lines.append("")
+      feedback_lines.append("TOPICS TO REVIEW:")
+      for topic in topics_needing_review:
+        feedback_lines.append(f"- {topic}")
+
+    feedback_lines.extend(["", "FEEDBACK:", ai_feedback])
+    return "\n".join(feedback_lines)
+
+
+class BatchProcessor:
+  """
+  Coordinates truncation and the 3-phase text grading pipeline.
+  """
+
+  def __init__(self, grader: "BaseTextSubmissionGrader"):
+    self.grader = grader
+
+  def run(self, assignment: Assignment, *, assignment_name: str,
+          course_name: str) -> bool:
+    submission_data = assignment.get_submission_data()
+
+    if not submission_data:
+      log.info(
+        f"No submissions to grade for '{assignment_name}' - assignment may be unlocked"
+      )
+      return False
+
+    truncated_texts, truncation_count, redaction_count = self._truncate_batch(
+      submission_data)
+
+    if truncation_count > 0:
+      log.info(
+        f"Truncated {truncation_count} submission(s) exceeding {DEFAULT_MAX_WORDS} words or {DEFAULT_MAX_CHARACTERS} characters"
+      )
+    if redaction_count > 0:
+      log.info(
+        f"Redacted potential PII in {redaction_count} submission(s) before LLM analysis"
+      )
+
+    log.info(
+      f"Starting 3-phase grading for '{assignment_name}' with {len(submission_data)} submissions"
+    )
+
+    # Phase 1: Aggregate Analysis
+    log.info("Phase 1/3: Aggregate analysis")
+    self.grader.aggregate_results = self.grader.phase_1_aggregate_analysis(
+      truncated_texts, assignment_name, course_name)
+
+    # Phase 2: Individual Grading
+    log.info("Phase 2/3: Individual grading")
+    self.grader.individual_results = self.grader.phase_2_individual_grading(
+      submission_data, self.grader.core_topics)
+
+    # Apply grades to submissions
+    self.grader._apply_grades_to_submissions(assignment.submissions,
+                                             self.grader.individual_results)
+
+    # Phase 3: Report Generation
+    log.info("Phase 3/3: Report generation")
+    self.grader.phase_3_generate_report(self.grader.aggregate_results,
+                                        self.grader.individual_results)
+    return True
+
+  def _truncate_batch(self, submission_data: List[Dict]
+                      ) -> tuple[List[str], int, int]:
+    truncated_texts = []
+    truncation_count = 0
+    redaction_count = 0
+
+    for submission_info in submission_data:
+      original_text = submission_info.get('text', '')
+      truncated, was_truncated = self.grader._truncate_submission_text(
+        original_text)
+      prepared_text = truncated
+      if was_truncated:
+        submission_info['was_truncated'] = True
+        truncation_count += 1
+
+      if hasattr(self.grader, "_redact_submission_text_for_ai"):
+        prepared_text, redaction_meta = self.grader._redact_submission_text_for_ai(
+          prepared_text,
+          student_name=submission_info.get("student_name"),
+          student_id=submission_info.get("student_id"))
+        if redaction_meta.get("total_replacements", 0) > 0:
+          submission_info["was_redacted"] = True
+          redaction_count += 1
+      submission_info['text'] = prepared_text
+      if prepared_text:
+        truncated_texts.append(prepared_text)
+
+    return truncated_texts, truncation_count, redaction_count
+
+
+class QuestionConsolidator:
+  """
+  Encapsulates Phase 2.5 question consolidation with provider fallback.
+  """
+
+  def __init__(self, grader: "BaseTextSubmissionGrader"):
+    self.grader = grader
+
+  def consolidate(self, all_questions: List[str]) -> List[Dict]:
+    if not all_questions:
+      log.info("No questions found to consolidate")
+      return []
+
+    log.info(f"Consolidating {len(all_questions)} questions from students...")
+
+    prompt = self.grader._build_question_consolidation_prompt(all_questions)
+    orchestrator = ProviderFallbackOrchestrator(self.grader.prefer_anthropic)
+
+    def _run_anthropic() -> List[Dict]:
+      operation = "Phase 2.5 - Question Consolidation (Anthropic)"
+      if not self.grader.prefer_anthropic:
+        operation = "Phase 2.5 - Question Consolidation (Anthropic fallback)"
+      analysis_text, usage = query_anthropic_text(
+        prompt, tier=self.grader.phase25_tier, max_response_tokens=2000)
+      self.grader._track_token_usage(usage, operation)
+
+      result = parse_anthropic_json_payload(
+        analysis_text, schema_name="question_consolidation")
+      if result is None:
+        if self.grader.prefer_anthropic:
+          log.warning("Could not parse JSON from Anthropic response")
+        else:
+          log.warning("Could not parse JSON from Anthropic fallback response")
+        return []
+
+      consolidated = result.get("consolidated_questions", [])
+      log.info(
+        f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+      )
+      return consolidated
+
+    def _run_openai() -> List[Dict]:
+      result, usage = query_openai_structured(
+        prompt,
+        schema_name="question_consolidation",
+        tier=self.grader.phase25_tier,
+        max_response_tokens=2000)
+      self.grader._track_token_usage(
+        usage, "Phase 2.5 - Question Consolidation (OpenAI)")
+      consolidated = result.get("consolidated_questions", [])
+      log.info(
+        f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+      )
+      return consolidated
+
+    def _on_openai_error(error: Exception, is_fallback: bool) -> None:
+      log.debug(f"OpenAI question consolidation failed: {error}")
+      if not is_fallback:
+        log.debug("Trying Anthropic as fallback...")
+
+    def _on_anthropic_error(error: Exception, is_fallback: bool) -> None:
+      if not is_fallback:
+        log.debug(
+          f"Anthropic question consolidation failed: {error}. Trying OpenAI..."
+        )
+      else:
+        log.debug(f"Anthropic question consolidation failed: {error}")
+
+    def _on_both_fail(_primary_error: Exception,
+                      secondary_error: Exception) -> List[Dict]:
+      log.error(
+        f"Both AI providers failed for question consolidation: {secondary_error}"
+      )
+      return []
+
+    return orchestrator.run(run_openai=_run_openai,
+                            run_anthropic=_run_anthropic,
+                            on_openai_error=_on_openai_error,
+                            on_anthropic_error=_on_anthropic_error,
+                            on_both_fail=_on_both_fail)
+
+
+class IndividualGradingProcessor:
+  """
+  Encapsulates Phase 2 individual grading orchestration.
+  """
+
+  def __init__(self, grader: "BaseTextSubmissionGrader"):
+    self.grader = grader
+
+  def grade_batch(self, submission_data: List[Dict],
+                  core_topics: List[str]) -> List[Dict]:
+    log.info(f"Grading {len(submission_data)} individual submissions...")
+
+    if not core_topics:
+      log.warning("No core topics available for individual grading")
+      core_topics = ["General class content"]
+
+    individual_results = []
+    self.grader.support_needed_students = []
+
+    for i, submission_info in enumerate(submission_data, 1):
+      student_id = submission_info.get('student_id')
+      student_name = submission_info.get('student_name', 'Unknown')
+      submission_text = submission_info.get('text', '')
+      word_count = submission_info.get('word_count', 0)
+      display_name = student_name
+      if self.grader.reveal_identity and student_id is not None and str(
+          student_id) not in str(student_name):
+        display_name = f"{student_name} [canvas_user_id={student_id}]"
+
+      log.debug(
+        f"   Grading {i}/{len(submission_data)}: {display_name} ({word_count} words)"
+      )
+
+      if not submission_text.strip():
+        # Handle empty submissions
+        result = {
+          "student_id": student_id,
+          "engagement_score": 0,
+          "relevance_score": 0,
+          "explanation_quality_score": 0,
+          "topics_covered": [],
+          "topics_missing": core_topics,
+          "topics_needing_review": [],
+          "misconception_notes": "",
+          "word_count": 0,
+          "needs_support": True,
+          "support_reason": "No submission content",
+          "feedback": "Please submit your study notes for grading."
+        }
+      else:
+        # Grade the submission using AI
+        result = self.grader._grade_individual_submission(
+          submission_text, core_topics, student_id)
+
+      result = self.grader.score_calculator.apply_scores(
+        result, word_count=word_count, student_name=student_name)
+
+      # Track students needing support.
+      if self.grader.score_calculator.needs_support(result):
+        self.grader.support_needed_students.append({
+          "student_id":
+          student_id,
+          "student_name":
+          student_name,
+          "reason":
+          result.get("support_reason", "Unknown reason")
+        })
+
+      individual_results.append(result)
+
+    log.info(
+      f"Individual grading completed. {len(self.grader.support_needed_students)} students may need support."
+    )
+
+    # Phase 2.5: Consolidate questions (using questions from aggregate analysis)
+    log.info("Phase 2.5/3: Question consolidation")
+    student_questions = self.grader.aggregate_results.get("student_questions",
+                                                          [])
+    self.grader.consolidated_questions = self.grader._consolidate_questions(
+      student_questions)
+
+    return individual_results
+
+
+class AggregateAnalyzer:
+  """
+  Encapsulates Phase 1 aggregate analysis with provider fallback.
+  """
+
+  def __init__(self, grader: "BaseTextSubmissionGrader"):
+    self.grader = grader
+
+  def analyze(self, submission_texts: List[str], assignment_name: str,
+              course_name: str = "Unknown Course") -> Dict:
+    log.info(
+      f"Analyzing {len(submission_texts)} submissions for aggregate insights..."
+    )
+
+    if not submission_texts:
+      log.warning("No submissions to analyze")
+      return {
+        "core_topics": [],
+        "common_themes": "",
+        "key_insights": "",
+        "commonly_misunderstood_topics": [],
+        "misconception_details": "",
+        "teaching_feedback": "",
+        "student_questions": []
+      }
+
+    prompt = self.grader._build_aggregate_analysis_prompt(
+      submission_texts, assignment_name, course_name)
+    orchestrator = ProviderFallbackOrchestrator(self.grader.prefer_anthropic)
+
+    def _run_anthropic() -> Dict:
+      operation = "Phase 1 - Aggregate Analysis (Anthropic)"
+      if not self.grader.prefer_anthropic:
+        operation = "Phase 1 - Aggregate Analysis (Anthropic fallback)"
+      analysis_text, usage = query_anthropic_text(
+        prompt, tier=self.grader.phase1_tier, max_response_tokens=2000)
+      self.grader._track_token_usage(usage, operation)
+
+      result = parse_anthropic_json_payload(analysis_text,
+                                            schema_name="aggregate_analysis")
+      if result is None:
+        # Keep text fallback behavior when Anthropic returns no parseable JSON.
+        result = {
+          "common_themes": analysis_text,
+          "commonly_misunderstood_topics": [],
+          "misconception_details": "",
+          "key_insights": "",
+          "teaching_feedback": "",
+          "core_topics": [],
+          "related_topics": [],
+          "off_topic_indicators": [],
+          "student_questions": []
+        }
+
+      self.grader._store_topics_from_result(result)
+      provider_label = "Anthropic" if self.grader.prefer_anthropic else "Anthropic fallback"
+      log.info(
+        f"Aggregate analysis completed ({provider_label}). Identified {len(self.grader.core_topics)} core topics, {len(self.grader.related_topics)} related topics"
+      )
+      return result
+
+    def _run_openai() -> Dict:
+      log.debug(
+        f"Attempting aggregate analysis with OpenAI (tier={self.grader.phase1_tier})..."
+      )
+      result, usage = query_openai_structured(
+        prompt,
+        schema_name="aggregate_analysis",
+        tier=self.grader.phase1_tier,
+        max_response_tokens=2000)
+      self.grader._track_token_usage(usage,
+                                     "Phase 1 - Aggregate Analysis (OpenAI)")
+      self.grader._store_topics_from_result(result)
+      log.info(
+        f"Aggregate analysis completed (OpenAI). Identified {len(self.grader.core_topics)} core topics, {len(self.grader.related_topics)} related topics"
+      )
+      return result
+
+    def _on_openai_error(error: Exception, is_fallback: bool) -> None:
+      log.error(f"OpenAI aggregate analysis failed: {error}")
+      if not is_fallback:
+        log.info("Falling back to Anthropic...")
+
+    def _on_anthropic_error(error: Exception, is_fallback: bool) -> None:
+      if not is_fallback:
+        log.error(f"Anthropic aggregate analysis failed: {error}")
+        log.info("Falling back to OpenAI...")
+      else:
+        log.error(f"Anthropic fallback also failed: {error}")
+
+    def _on_both_fail(primary_error: Exception, _secondary_error: Exception) -> Dict:
+      if self.grader.prefer_anthropic:
+        return {
+          "common_themes": "Error performing analysis",
+          "key_insights": "",
+          "misconception_details": "",
+          "teaching_feedback": "",
+          "core_topics": [],
+          "related_topics": [],
+          "off_topic_indicators": [],
+          "commonly_misunderstood_topics": [],
+          "student_questions": []
+        }
+
+      return {
+        "common_themes": f"Error performing analysis: {primary_error}",
+        "key_insights": "",
+        "misconception_details": "",
+        "teaching_feedback": "",
+        "core_topics": [],
+        "related_topics": [],
+        "off_topic_indicators": [],
+        "commonly_misunderstood_topics": [],
+        "student_questions": []
+      }
+
+    return orchestrator.run(run_openai=_run_openai,
+                            run_anthropic=_run_anthropic,
+                            on_openai_error=_on_openai_error,
+                            on_anthropic_error=_on_anthropic_error,
+                            on_both_fail=_on_both_fail)
+
+
+class IndividualSubmissionAnalyzer:
+  """
+  Encapsulates AI evaluation for a single student submission.
+  """
+
+  def __init__(self, grader: "BaseTextSubmissionGrader"):
+    self.grader = grader
+
+  def analyze(self, submission_text: str, core_topics: List[str],
+              student_id: str) -> Dict:
+    prompt = self.grader._build_individual_grading_prompt(submission_text,
+                                                          core_topics)
+    orchestrator = ProviderFallbackOrchestrator(self.grader.prefer_anthropic)
+
+    def _default_from_text(analysis_text: str) -> Dict:
+      return {
+        "student_id": student_id,
+        "engagement_score": 3,  # Default to moderate score
+        "relevance_score": 1,
+        "explanation_quality_score": 1,
+        "topics_covered": [],
+        "topics_missing": core_topics,
+        "topics_needing_review": [],
+        "misconception_notes": "",
+        "needs_support": False,
+        "support_reason": "",
+        "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
+      }
+
+    def _run_anthropic() -> Dict:
+      operation = f"Phase 2 - Individual Grading ({student_id}) - Anthropic"
+      if not self.grader.prefer_anthropic:
+        operation = f"Phase 2 - Individual Grading ({student_id}) - Anthropic fallback"
+      analysis_text, usage = query_anthropic_text(
+        prompt, tier=self.grader.phase2_tier, max_response_tokens=1000)
+      self.grader._track_token_usage(usage, operation)
+
+      result = parse_anthropic_json_payload(analysis_text,
+                                            schema_name="individual_grading")
+      if result is None:
+        return _default_from_text(analysis_text)
+      result["student_id"] = student_id
+      return result
+
+    def _run_openai() -> Dict:
+      result, usage = query_openai_structured(
+        prompt,
+        schema_name="individual_grading",
+        tier=self.grader.phase2_tier,
+        max_response_tokens=1000)
+      self.grader._track_token_usage(
+        usage, f"Phase 2 - Individual Grading ({student_id}) - OpenAI")
+      result["student_id"] = student_id
+      return result
+
+    def _on_openai_error(error: Exception, is_fallback: bool) -> None:
+      if is_fallback and self.grader.prefer_anthropic:
+        log.debug(f"OpenAI failed for {student_id}: {error}")
+      else:
+        log.debug(f"OpenAI failed for {student_id}: {error}")
+        if not is_fallback:
+          log.debug("Trying Anthropic...")
+
+    def _on_anthropic_error(error: Exception, is_fallback: bool) -> None:
+      if is_fallback and not self.grader.prefer_anthropic:
+        log.error(f"Both AI providers failed for {student_id}: {error}")
+      elif not is_fallback:
+        log.debug(f"Anthropic failed for {student_id}: {error}. Trying OpenAI...")
+      else:
+        log.debug(f"Anthropic failed for {student_id}: {error}")
+
+    def _on_both_fail(primary_error: Exception, _secondary_error: Exception) -> Dict:
+      if not self.grader.prefer_anthropic:
+        return {
+          "student_id": student_id,
+          "engagement_score": 0,
+          "relevance_score": 0,
+          "explanation_quality_score": 0,
+          "topics_covered": [],
+          "topics_missing": core_topics,
+          "topics_needing_review": [],
+          "misconception_notes": "",
+          "needs_support": True,
+          "support_reason": "Error analyzing submission",
+          "feedback": f"Error analyzing submission: {primary_error}"
+        }
+
+      return {
+        "student_id": student_id,
+        "engagement_score": 0,
+        "relevance_score": 0,
+        "explanation_quality_score": 0,
+        "topics_covered": [],
+        "topics_missing": core_topics,
+        "topics_needing_review": [],
+        "misconception_notes": "",
+        "needs_support": True,
+        "support_reason": "Error analyzing submission",
+        "feedback": "Error analyzing submission"
+      }
+
+    return orchestrator.run(run_openai=_run_openai,
+                            run_anthropic=_run_anthropic,
+                            on_openai_error=_on_openai_error,
+                            on_anthropic_error=_on_anthropic_error,
+                            on_both_fail=_on_both_fail)
+
+
+class ReportCompiler:
+  """
+  Encapsulates report-data compilation and summary statistics.
+  """
+
+  def __init__(self, grader: "BaseTextSubmissionGrader"):
+    self.grader = grader
+
+  def compile(self, aggregate_results: Dict,
+              individual_results: List[Dict]) -> Dict:
+    total_grades = [
+      result.get("total_grade", 0) for result in individual_results
+    ]
+    grade_stats = {
+      "total_students":
+      len(individual_results),
+      "average_grade":
+      sum(total_grades) / len(total_grades) if total_grades else 0,
+      "grade_distribution":
+      self._calculate_grade_distribution(total_grades),
+      "students_below_70":
+      sum(1 for grade in total_grades if grade < 7),  # Below 70%
+    }
+
+    topic_coverage = self._analyze_topic_coverage(individual_results)
+
+    support_summary = {
+      "students_needing_support": len(self.grader.support_needed_students),
+      "support_details": self.grader.support_needed_students
+    }
+    privacy_summary = {
+      "redacted_submission_count": len(self.grader.redaction_events),
+      "redaction_events": self.grader.redaction_events,
+    }
+
+    return {
+      "aggregate_insights": aggregate_results,
+      "grade_statistics": grade_stats,
+      "topic_coverage": topic_coverage,
+      "support_summary": support_summary,
+      "privacy_summary": privacy_summary,
+      "core_topics": self.grader.core_topics,
+      "individual_results": individual_results
+    }
+
+  def _calculate_grade_distribution(self, grades: List[float]) -> Dict:
+    if not grades:
+      return {}
+
+    distribution = {"A": 0, "B": 0, "C": 0, "D": 0, "F": 0}
+    for grade in grades:
+      percentage = (grade / 10) * 100  # Convert to percentage
+      if percentage >= 90:
+        distribution["A"] += 1
+      elif percentage >= 80:
+        distribution["B"] += 1
+      elif percentage >= 70:
+        distribution["C"] += 1
+      elif percentage >= 60:
+        distribution["D"] += 1
+      else:
+        distribution["F"] += 1
+
+    return distribution
+
+  def _analyze_topic_coverage(self, individual_results: List[Dict]) -> Dict:
+    if not self.grader.core_topics:
+      return {}
+
+    topic_stats = {}
+    for topic in self.grader.core_topics:
+      covered_count = sum(1 for result in individual_results
+                          if topic in result.get("topics_covered", []))
+      topic_stats[topic] = {
+        "students_covered":
+        covered_count,
+        "coverage_percentage": (covered_count / len(individual_results)) *
+        100 if individual_results else 0
+      }
+
+    return topic_stats
+
+
+class ReportPresenter:
+  """
+  Encapsulates report presentation/logging output.
+  """
+
+  def __init__(self, grader: "BaseTextSubmissionGrader"):
+    self.grader = grader
+
+  def present(self, report_data: Dict) -> None:
+    self.display_aggregate_insights(report_data)
+    self.display_grade_summary(report_data)
+    self.display_support_recommendations(report_data)
+
+  def display_aggregate_insights(self, report_data: Dict) -> None:
+    insights = report_data.get("aggregate_insights", {})
+
+    log.debug("\nCLASS-WIDE INSIGHTS")
+    log.debug("=" * 60)
+
+    if insights.get("common_themes"):
+      log.debug(f"Common themes:\n{insights['common_themes']}")
+
+    if insights.get("key_insights"):
+      log.debug(f"\nKey learning insights:\n{insights['key_insights']}")
+
+    misunderstood = insights.get("commonly_misunderstood_topics", [])
+    if misunderstood:
+      log.debug(f"\nTopics needing review ({len(misunderstood)}):")
+      for topic in misunderstood:
+        log.debug(f"   - {topic}")
+      if insights.get("misconception_details"):
+        log.debug(f"   Details: {insights['misconception_details']}")
+
+    if insights.get("teaching_feedback"):
+      log.debug(
+        f"\nTeaching recommendations:\n{insights['teaching_feedback']}")
+
+    core_topics = report_data.get("core_topics", [])
+    if core_topics:
+      log.debug(f"\nCore topics identified ({len(core_topics)}):")
+      for i, topic in enumerate(core_topics, 1):
+        coverage = report_data["topic_coverage"].get(topic, {})
+        coverage_pct = coverage.get("coverage_percentage", 0)
+        log.debug(f"   {i}. {topic} ({coverage_pct:.1f}% of students)")
+
+  def display_grade_summary(self, report_data: Dict) -> None:
+    stats = report_data.get("grade_statistics", {})
+
+    log.debug("\nGRADE SUMMARY")
+    log.debug("=" * 60)
+
+    log.debug(f"Total Students: {stats.get('total_students', 0)}")
+    log.debug(
+      f"Average Grade: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)"
+    )
+
+    distribution = stats.get("grade_distribution", {})
+    if distribution:
+      log.debug("\nGrade Distribution:")
+      for letter, count in distribution.items():
+        percentage = (count / stats.get('total_students', 1)) * 100
+        log.debug(f"   {letter}: {count} students ({percentage:.1f}%)")
+
+    below_70 = stats.get("students_below_70", 0)
+    if below_70 > 0:
+      log.debug(f"\n{below_70} students scored below 70%")
+
+  def display_support_recommendations(self, report_data: Dict) -> None:
+    support = report_data.get("support_summary", {})
+    students_needing_support = support.get("students_needing_support", 0)
+
+    if students_needing_support > 0:
+      log.debug("\nSTUDENTS WHO MAY BENEFIT FROM OFFICE HOURS")
+      log.debug("=" * 60)
+
+      for student_info in support.get("support_details", []):
+        student_id = student_info.get("student_id", "Unknown")
+        reason = student_info.get("reason", "No reason provided")
+        log.debug(f"- {student_id}: {reason}")
+    else:
+      log.debug(
+        "\nAll students appear to be engaging well with the material.")
+
+
+class BaseTextSubmissionGrader(Grader):
+  COMPATIBLE_KINDS = {"TextAssignment"}
   """
   Grader for text-based weekly study notes submissions.
 
@@ -274,6 +1081,17 @@ class TextSubmissionGrader(Grader):
     self.slack_channel = kwargs.get('slack_channel')
     self.records_dir = None
     self.reveal_identity = False
+    self.score_calculator = ScoreCalculator()
+    self.pii_redactor = SubmissionPIIRedactor()
+    self.redaction_events: List[Dict] = []
+    self.rubric_generator = RubricGenerator()
+    self.batch_processor = BatchProcessor(self)
+    self.question_consolidator = QuestionConsolidator(self)
+    self.individual_grading_processor = IndividualGradingProcessor(self)
+    self.aggregate_analyzer = AggregateAnalyzer(self)
+    self.individual_submission_analyzer = IndividualSubmissionAnalyzer(self)
+    self.report_compiler = ReportCompiler(self)
+    self.report_presenter = ReportPresenter(self)
 
     # Model tier settings for each phase (small, medium, large)
     # Can be configured via grader settings in YAML
@@ -281,7 +1099,43 @@ class TextSubmissionGrader(Grader):
     self.phase2_tier = kwargs.get('phase2_tier', 'small')  # Individual grading
     self.phase25_tier = kwargs.get('phase25_tier', 'small')  # Question consolidation
 
-    log.info(f"TextSubmissionGrader initialized with tiers: phase1={self.phase1_tier}, phase2={self.phase2_tier}, phase25={self.phase25_tier}")
+    log.info(f"{self.__class__.__name__} initialized with tiers: phase1={self.phase1_tier}, phase2={self.phase2_tier}, phase25={self.phase25_tier}")
+
+  def _redact_submission_text_for_ai(
+      self,
+      text: str,
+      *,
+      student_name: str | None = None,
+      student_id: int | str | None = None) -> tuple[str, Dict[str, int]]:
+    redacted, counts = self.pii_redactor.redact(text,
+                                                 student_name=student_name,
+                                                 student_id=student_id)
+    if counts.get("total_replacements", 0) > 0:
+      self.redaction_events.append({
+        "student_id": student_id,
+        "student_name": student_name,
+        "counts": counts,
+      })
+    return redacted, counts
+
+  def _build_aggregate_analysis_prompt(self, submission_texts: List[str],
+                                       assignment_name: str,
+                                       course_name: str) -> str:
+    return get_aggregate_analysis_prompt(submission_texts, assignment_name,
+                                         course_name)
+
+  def _build_individual_grading_prompt(self,
+                                       submission_text: str,
+                                       core_topics: List[str]) -> str:
+    return get_individual_grading_prompt(
+      submission_text, core_topics,
+      related_topics=self.related_topics,
+      off_topic_indicators=self.off_topic_indicators
+    )
+
+  def _build_question_consolidation_prompt(self,
+                                           all_questions: List[str]) -> str:
+    return get_question_consolidation_prompt(all_questions)
 
   def can_grade_submission(self, submission: Submission) -> bool:
     """
@@ -354,60 +1208,9 @@ class TextSubmissionGrader(Grader):
     self.usage_details = []
 
     assignment_name = assignment.lms_assignment.name
-    submission_data = assignment.get_submission_data()
-    submission_texts = assignment.get_all_submission_texts()
-
-    # Check if assignment was skipped due to lock date
-    if not submission_data:
-      log.info(
-        f"No submissions to grade for '{assignment_name}' - assignment may be unlocked"
-      )
-      return
-
-    # Truncate all submission texts before processing
-    truncated_texts = []
-    truncation_count = 0
-    for text in submission_texts:
-      truncated, was_truncated = self._truncate_submission_text(text)
-      truncated_texts.append(truncated)
-      if was_truncated:
-        truncation_count += 1
-
-    if truncation_count > 0:
-      log.info(
-        f"Truncated {truncation_count} submission(s) exceeding {DEFAULT_MAX_WORDS} words or {DEFAULT_MAX_CHARACTERS} characters"
-      )
-
-    # Also truncate in submission_data for phase 2
-    for submission_info in submission_data:
-      original_text = submission_info.get('text', '')
-      truncated, was_truncated = self._truncate_submission_text(original_text)
-      if was_truncated:
-        submission_info['text'] = truncated
-        submission_info['was_truncated'] = True
-
-    log.info(
-      f"Starting 3-phase grading for '{assignment_name}' with {len(submission_data)} submissions"
-    )
-
-    # Phase 1: Aggregate Analysis
-    log.info("Phase 1/3: Aggregate analysis")
-    self.aggregate_results = self.phase_1_aggregate_analysis(
-      truncated_texts, assignment_name, self.course_name)
-
-    # Phase 2: Individual Grading
-    log.info("Phase 2/3: Individual grading")
-    self.individual_results = self.phase_2_individual_grading(
-      submission_data, self.core_topics)
-
-    # Apply grades to submissions
-    self._apply_grades_to_submissions(assignment.submissions,
-                                      self.individual_results)
-
-    # Phase 3: Report Generation
-    log.info("Phase 3/3: Report generation")
-    self.phase_3_generate_report(self.aggregate_results,
-                                 self.individual_results)
+    self.batch_processor.run(assignment,
+                             assignment_name=assignment_name,
+                             course_name=self.course_name)
 
   def phase_1_aggregate_analysis(self, submission_texts: List[str],
                                  assignment_name: str,
@@ -423,137 +1226,8 @@ class TextSubmissionGrader(Grader):
     Returns:
         Dictionary containing aggregate analysis results
     """
-    from Autograder.ai_helper import AI_Helper__OpenAI, AI_Helper__Anthropic
-    import json
-    import re
-
-    log.info(
-      f"Analyzing {len(submission_texts)} submissions for aggregate insights..."
-    )
-
-    if not submission_texts:
-      log.warning("No submissions to analyze")
-      return {
-        "core_topics": [],
-        "common_themes": "",
-        "key_insights": "",
-        "commonly_misunderstood_topics": [],
-        "misconception_details": "",
-        "teaching_feedback": "",
-        "student_questions": []
-      }
-
-    # Get the prompt
-    prompt = get_aggregate_analysis_prompt(submission_texts, assignment_name, course_name)
-
-    if self.prefer_anthropic:
-      # Try Anthropic first if preferred
-      try:
-        log.debug(
-          f"Attempting aggregate analysis with Anthropic (preferred, tier={self.phase1_tier})...")
-        ai_helper = AI_Helper__Anthropic()
-        analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                  max_response_tokens=2000,
-                                                  tier=self.phase1_tier)
-
-        # Track token usage
-        self._track_token_usage(usage,
-                                "Phase 1 - Aggregate Analysis (Anthropic)")
-
-        # Try to parse JSON from Anthropic response
-        json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-        if json_match:
-          result = json.loads(json_match.group())
-        else:
-          # If no JSON found, create structured response from text
-          result = {
-            "common_themes": analysis_text,
-            "key_insights": "",
-            "learning_patterns": "",
-            "teaching_feedback": "",
-            "core_topics": []
-          }
-
-        # Store topics for use in Phase 2
-        self._store_topics_from_result(result)
-
-        log.info(
-          f"Aggregate analysis completed (Anthropic). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
-        )
-
-        return result
-
-      except Exception as e:
-        log.error(f"Anthropic aggregate analysis failed: {e}")
-        log.info("Falling back to OpenAI...")
-
-    try:
-      # Try OpenAI (either first choice or fallback)
-      log.debug(f"Attempting aggregate analysis with OpenAI (tier={self.phase1_tier})...")
-      ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000,
-                                         tier=self.phase1_tier)
-
-      # Track token usage
-      self._track_token_usage(usage, "Phase 1 - Aggregate Analysis (OpenAI)")
-
-      # Store topics for use in Phase 2
-      self._store_topics_from_result(result)
-
-      log.info(
-        f"Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
-      )
-
-      return result
-
-    except Exception as e:
-      log.error(f"OpenAI aggregate analysis failed: {e}")
-
-      if not self.prefer_anthropic:
-        log.info("Falling back to Anthropic...")
-        try:
-          # Fallback to Anthropic when OpenAI was first choice
-          ai_helper = AI_Helper__Anthropic()
-          analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                    max_response_tokens=2000,
-                                                    tier=self.phase1_tier)
-
-          # Track token usage
-          self._track_token_usage(
-            usage, "Phase 1 - Aggregate Analysis (Anthropic fallback)")
-
-          # Try to parse JSON from Anthropic response
-          json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-          if json_match:
-            result = json.loads(json_match.group())
-          else:
-            # If no JSON found, create structured response from text
-            result = {
-              "common_themes": analysis_text,
-              "key_insights": "",
-              "learning_patterns": "",
-              "teaching_feedback": "",
-              "core_topics": []
-            }
-
-          # Store topics for use in Phase 2
-          self._store_topics_from_result(result)
-
-          log.info(
-            f"Aggregate analysis completed (Anthropic fallback). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
-          )
-
-          return result
-
-        except Exception as fallback_error:
-          log.error(f"Anthropic fallback also failed: {fallback_error}")
-          return {
-            "common_themes": f"Error performing analysis: {e}",
-            "key_insights": "",
-            "learning_patterns": "",
-            "teaching_feedback": "",
-            "core_topics": []
-          }
+    return self.aggregate_analyzer.analyze(submission_texts, assignment_name,
+                                           course_name)
 
   def phase_2_individual_grading(self, submission_data: List[Dict],
                                  core_topics: List[str]) -> List[Dict]:
@@ -567,95 +1241,8 @@ class TextSubmissionGrader(Grader):
     Returns:
         List of individual grading results
     """
-    from Autograder.ai_helper import AI_Helper__OpenAI, AI_Helper__Anthropic
-    import json
-    import re
-
-    log.info(f"Grading {len(submission_data)} individual submissions...")
-
-    if not core_topics:
-      log.warning("No core topics available for individual grading")
-      core_topics = ["General class content"]
-
-    individual_results = []
-    self.support_needed_students = []
-
-    for i, submission_info in enumerate(submission_data, 1):
-      student_id = submission_info.get('student_id')
-      student_name = submission_info.get('student_name', 'Unknown')
-      submission_text = submission_info.get('text', '')
-      word_count = submission_info.get('word_count', 0)
-      display_name = student_name
-      if self.reveal_identity and student_id is not None and str(
-          student_id) not in str(student_name):
-        display_name = f"{student_name} [canvas_user_id={student_id}]"
-
-      log.debug(
-        f"   Grading {i}/{len(submission_data)}: {display_name} ({word_count} words)"
-      )
-
-      if not submission_text.strip():
-        # Handle empty submissions
-        result = {
-          "student_id": student_id,
-          "engagement_score": 0,
-          "relevance_score": 0,
-          "explanation_quality_score": 0,
-          "topics_covered": [],
-          "topics_missing": core_topics,
-          "topics_needing_review": [],
-          "misconception_notes": "",
-          "word_count": 0,
-          "needs_support": True,
-          "support_reason": "No submission content",
-          "feedback": "Please submit your study notes for grading."
-        }
-      else:
-        # Grade the submission using AI
-        result = self._grade_individual_submission(submission_text,
-                                                   core_topics, student_id)
-
-      # Calculate length score (separate from AI analysis) and store accurate word count
-      result["length_score"] = 2 if word_count >= 250 else 0
-      result["accurate_word_count"] = word_count  # Store our accurate count
-      result["student_name"] = student_name  # Store student name for reporting
-
-      # Calculate total grade (ensure all scores are integers)
-      # AI provides 8 points (engagement + relevance + explanation_quality)
-      # Length (2 points) is calculated locally
-      total_grade = (int(result.get("engagement_score", 0)) +
-                     int(result.get("length_score", 0)) +
-                     int(result.get("relevance_score", 0)) +
-                     int(result.get("explanation_quality_score", 0)))
-      result["total_grade"] = total_grade
-
-      # Track students needing support (handle string boolean from AI)
-      needs_support = result.get("needs_support", False)
-      if isinstance(needs_support, str):
-        needs_support = needs_support.lower() in ['true', '1', 'yes']
-
-      if needs_support:
-        self.support_needed_students.append({
-          "student_id":
-          student_id,
-          "student_name":
-          student_name,
-          "reason":
-          result.get("support_reason", "Unknown reason")
-        })
-
-      individual_results.append(result)
-
-    log.info(
-      f"Individual grading completed. {len(self.support_needed_students)} students may need support."
-    )
-
-    # Phase 2.5: Consolidate questions (using questions from aggregate analysis)
-    log.info("Phase 2.5/3: Question consolidation")
-    student_questions = self.aggregate_results.get("student_questions", [])
-    self.consolidated_questions = self._consolidate_questions(student_questions)
-
-    return individual_results
+    return self.individual_grading_processor.grade_batch(submission_data,
+                                                         core_topics)
 
   def _consolidate_questions(self,
                              all_questions: List[str]) -> List[Dict]:
@@ -668,99 +1255,7 @@ class TextSubmissionGrader(Grader):
     Returns:
         List of consolidated question dictionaries
     """
-    import json
-    import re
-    from Autograder.ai_helper import AI_Helper__OpenAI, AI_Helper__Anthropic
-
-    if not all_questions:
-      log.info("No questions found to consolidate")
-      return []
-
-    log.info(f"Consolidating {len(all_questions)} questions from students...")
-
-    # Get the consolidation prompt
-    prompt = get_question_consolidation_prompt(all_questions)
-
-    if self.prefer_anthropic:
-      # Try Anthropic first if preferred
-      try:
-        ai_helper = AI_Helper__Anthropic()
-        analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                  max_response_tokens=2000,
-                                                  tier=self.phase25_tier)
-
-        # Track token usage
-        self._track_token_usage(
-          usage, "Phase 2.5 - Question Consolidation (Anthropic)")
-
-        # Try to parse JSON from response
-        json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-        if json_match:
-          result = json.loads(json_match.group())
-          consolidated = result.get("consolidated_questions", [])
-          log.info(
-            f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
-          )
-          return consolidated
-        else:
-          log.warning("Could not parse JSON from Anthropic response")
-          return []
-
-      except Exception as e:
-        log.debug(
-          f"Anthropic question consolidation failed: {e}. Trying OpenAI...")
-
-    try:
-      # Try OpenAI (either first choice or fallback)
-      ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=2000,
-                                         tier=self.phase25_tier)
-
-      # Track token usage
-      self._track_token_usage(usage,
-                              "Phase 2.5 - Question Consolidation (OpenAI)")
-
-      consolidated = result.get("consolidated_questions", [])
-      log.info(
-        f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
-      )
-      return consolidated
-
-    except Exception as e:
-      log.debug(f"OpenAI question consolidation failed: {e}")
-
-      if not self.prefer_anthropic:
-        log.debug("Trying Anthropic as fallback...")
-        try:
-          # Fallback to Anthropic when OpenAI was first choice
-          ai_helper = AI_Helper__Anthropic()
-          analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                    max_response_tokens=2000,
-                                                    tier=self.phase25_tier)
-
-          # Track token usage
-          self._track_token_usage(
-            usage, "Phase 2.5 - Question Consolidation (Anthropic fallback)")
-
-          # Try to parse JSON from response
-          json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-          if json_match:
-            result = json.loads(json_match.group())
-            consolidated = result.get("consolidated_questions", [])
-            log.info(
-              f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
-            )
-            return consolidated
-          else:
-            log.warning(
-              "Could not parse JSON from Anthropic fallback response")
-            return []
-
-        except Exception as fallback_error:
-          log.error(
-            f"Both AI providers failed for question consolidation: {fallback_error}"
-          )
-          return []
+    return self.question_consolidator.consolidate(all_questions)
 
   def _grade_individual_submission(self, submission_text: str,
                                    core_topics: List[str],
@@ -776,122 +1271,8 @@ class TextSubmissionGrader(Grader):
     Returns:
         Dictionary with grading results
     """
-    from Autograder.ai_helper import AI_Helper__OpenAI, AI_Helper__Anthropic
-    import json
-    import re
-
-    prompt = get_individual_grading_prompt(
-      submission_text, core_topics,
-      related_topics=self.related_topics,
-      off_topic_indicators=self.off_topic_indicators
-    )
-
-    if self.prefer_anthropic:
-      # Try Anthropic first if preferred
-      try:
-        ai_helper = AI_Helper__Anthropic()
-        analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                  max_response_tokens=1000,
-                                                  tier=self.phase2_tier)
-
-        # Track token usage
-        self._track_token_usage(
-          usage, f"Phase 2 - Individual Grading ({student_id}) - Anthropic")
-
-        # Try to parse JSON from response
-        json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-        if json_match:
-          result = json.loads(json_match.group())
-          result["student_id"] = student_id
-          return result
-        else:
-          # If no JSON, create structured response from text
-          return {
-            "student_id": student_id,
-            "engagement_score": 3,  # Default to moderate score
-            "relevance_score": 1,
-            "explanation_quality_score": 1,
-            "topics_covered": [],
-            "topics_missing": core_topics,
-            "topics_needing_review": [],
-            "misconception_notes": "",
-            "needs_support": False,
-            "support_reason": "",
-            "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
-          }
-
-      except Exception as e:
-        log.debug(f"Anthropic failed for {student_id}: {e}. Trying OpenAI...")
-
-    try:
-      # Try OpenAI (either first choice or fallback)
-      ai_helper = AI_Helper__OpenAI()
-      result, usage = ai_helper.query_ai(prompt, [], max_response_tokens=1000,
-                                         tier=self.phase2_tier)
-
-      # Track token usage
-      self._track_token_usage(
-        usage, f"Phase 2 - Individual Grading ({student_id}) - OpenAI")
-
-      result["student_id"] = student_id
-      return result
-
-    except Exception as e:
-      log.debug(f"OpenAI failed for {student_id}: {e}")
-
-      if not self.prefer_anthropic:
-        log.debug("Trying Anthropic...")
-        try:
-          # Fallback to Anthropic when OpenAI was first choice
-          ai_helper = AI_Helper__Anthropic()
-          analysis_text, usage = ai_helper.query_ai(prompt, [],
-                                                    max_response_tokens=1000,
-                                                    tier=self.phase2_tier)
-
-          # Track token usage
-          self._track_token_usage(
-            usage,
-            f"Phase 2 - Individual Grading ({student_id}) - Anthropic fallback"
-          )
-
-          # Try to parse JSON from response
-          json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-          if json_match:
-            result = json.loads(json_match.group())
-            result["student_id"] = student_id
-            return result
-          else:
-            # If no JSON, create structured response from text
-            return {
-              "student_id": student_id,
-              "engagement_score": 3,  # Default to moderate score
-              "relevance_score": 1,
-              "explanation_quality_score": 1,
-              "topics_covered": [],
-              "topics_missing": core_topics,
-              "topics_needing_review": [],
-              "misconception_notes": "",
-              "needs_support": False,
-              "support_reason": "",
-              "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
-            }
-
-        except Exception as fallback_error:
-          log.error(
-            f"Both AI providers failed for {student_id}: {fallback_error}")
-          return {
-            "student_id": student_id,
-            "engagement_score": 0,
-            "relevance_score": 0,
-            "explanation_quality_score": 0,
-            "topics_covered": [],
-            "topics_missing": core_topics,
-            "topics_needing_review": [],
-            "misconception_notes": "",
-            "needs_support": True,
-            "support_reason": "Error analyzing submission",
-            "feedback": f"Error analyzing submission: {e}"
-          }
+    return self.individual_submission_analyzer.analyze(submission_text,
+                                                       core_topics, student_id)
 
   def phase_3_generate_report(self, aggregate_results: Dict,
                               individual_results: List[Dict]) -> None:
@@ -909,9 +1290,7 @@ class TextSubmissionGrader(Grader):
                                             individual_results)
 
     # Display the report
-    self._display_aggregate_insights(report_data)
-    self._display_grade_summary(report_data)
-    self._display_support_recommendations(report_data)
+    self.report_presenter.present(report_data)
 
     # Use output hook for custom delivery
     self.output_report_hook(report_data)
@@ -930,152 +1309,27 @@ class TextSubmissionGrader(Grader):
     Returns:
         Dictionary containing all compiled report data
     """
-    # Calculate grade statistics
-    total_grades = [
-      result.get("total_grade", 0) for result in individual_results
-    ]
-    grade_stats = {
-      "total_students":
-      len(individual_results),
-      "average_grade":
-      sum(total_grades) / len(total_grades) if total_grades else 0,
-      "grade_distribution":
-      self._calculate_grade_distribution(total_grades),
-      "students_below_70":
-      sum(1 for grade in total_grades if grade < 7),  # Below 70%
-    }
-
-    # Topic coverage analysis
-    topic_coverage = self._analyze_topic_coverage(individual_results)
-
-    # Support needs
-    support_summary = {
-      "students_needing_support": len(self.support_needed_students),
-      "support_details": self.support_needed_students
-    }
-
-    return {
-      "aggregate_insights": aggregate_results,
-      "grade_statistics": grade_stats,
-      "topic_coverage": topic_coverage,
-      "support_summary": support_summary,
-      "core_topics": self.core_topics,
-      "individual_results": individual_results
-    }
+    return self.report_compiler.compile(aggregate_results, individual_results)
 
   def _calculate_grade_distribution(self, grades: List[float]) -> Dict:
     """Calculate distribution of grades by letter grade ranges."""
-    if not grades:
-      return {}
-
-    distribution = {"A": 0, "B": 0, "C": 0, "D": 0, "F": 0}
-    for grade in grades:
-      percentage = (grade / 10) * 100  # Convert to percentage
-      if percentage >= 90:
-        distribution["A"] += 1
-      elif percentage >= 80:
-        distribution["B"] += 1
-      elif percentage >= 70:
-        distribution["C"] += 1
-      elif percentage >= 60:
-        distribution["D"] += 1
-      else:
-        distribution["F"] += 1
-
-    return distribution
+    return self.report_compiler._calculate_grade_distribution(grades)
 
   def _analyze_topic_coverage(self, individual_results: List[Dict]) -> Dict:
     """Analyze how well topics were covered across all students."""
-    if not self.core_topics:
-      return {}
-
-    topic_stats = {}
-    for topic in self.core_topics:
-      covered_count = sum(1 for result in individual_results
-                          if topic in result.get("topics_covered", []))
-      topic_stats[topic] = {
-        "students_covered":
-        covered_count,
-        "coverage_percentage": (covered_count / len(individual_results)) *
-        100 if individual_results else 0
-      }
-
-    return topic_stats
+    return self.report_compiler._analyze_topic_coverage(individual_results)
 
   def _display_aggregate_insights(self, report_data: Dict) -> None:
     """Display aggregate analysis insights."""
-    insights = report_data.get("aggregate_insights", {})
-
-    log.debug("\nCLASS-WIDE INSIGHTS")
-    log.debug("=" * 60)
-
-    if insights.get("common_themes"):
-      log.debug(f"Common themes:\n{insights['common_themes']}")
-
-    if insights.get("key_insights"):
-      log.debug(f"\nKey learning insights:\n{insights['key_insights']}")
-
-    # Display commonly misunderstood topics
-    misunderstood = insights.get("commonly_misunderstood_topics", [])
-    if misunderstood:
-      log.debug(f"\nTopics needing review ({len(misunderstood)}):")
-      for topic in misunderstood:
-        log.debug(f"   - {topic}")
-      if insights.get("misconception_details"):
-        log.debug(f"   Details: {insights['misconception_details']}")
-
-    if insights.get("teaching_feedback"):
-      log.debug(
-        f"\nTeaching recommendations:\n{insights['teaching_feedback']}")
-
-    # Display core topics
-    core_topics = report_data.get("core_topics", [])
-    if core_topics:
-      log.debug(f"\nCore topics identified ({len(core_topics)}):")
-      for i, topic in enumerate(core_topics, 1):
-        coverage = report_data["topic_coverage"].get(topic, {})
-        coverage_pct = coverage.get("coverage_percentage", 0)
-        log.debug(f"   {i}. {topic} ({coverage_pct:.1f}% of students)")
+    self.report_presenter.display_aggregate_insights(report_data)
 
   def _display_grade_summary(self, report_data: Dict) -> None:
     """Display grade summary statistics."""
-    stats = report_data.get("grade_statistics", {})
-
-    log.debug("\nGRADE SUMMARY")
-    log.debug("=" * 60)
-
-    log.debug(f"Total Students: {stats.get('total_students', 0)}")
-    log.debug(
-      f"Average Grade: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)"
-    )
-
-    distribution = stats.get("grade_distribution", {})
-    if distribution:
-      log.debug("\nGrade Distribution:")
-      for letter, count in distribution.items():
-        percentage = (count / stats.get('total_students', 1)) * 100
-        log.debug(f"   {letter}: {count} students ({percentage:.1f}%)")
-
-    below_70 = stats.get("students_below_70", 0)
-    if below_70 > 0:
-      log.debug(f"\n{below_70} students scored below 70%")
+    self.report_presenter.display_grade_summary(report_data)
 
   def _display_support_recommendations(self, report_data: Dict) -> None:
     """Display support recommendations for students."""
-    support = report_data.get("support_summary", {})
-    students_needing_support = support.get("students_needing_support", 0)
-
-    if students_needing_support > 0:
-      log.debug("\nSTUDENTS WHO MAY BENEFIT FROM OFFICE HOURS")
-      log.debug("=" * 60)
-
-      for student_info in support.get("support_details", []):
-        student_id = student_info.get("student_id", "Unknown")
-        reason = student_info.get("reason", "No reason provided")
-        log.debug(f"- {student_id}: {reason}")
-    else:
-      log.debug(
-        "\nAll students appear to be engaging well with the material.")
+    self.report_presenter.display_support_recommendations(report_data)
 
   def _apply_grades_to_submissions(self, submissions: List[Submission],
                                    individual_results: List[Dict]) -> None:
@@ -1100,7 +1354,7 @@ class TextSubmissionGrader(Grader):
         percentage_score = (total_grade / 10.0) * 100.0
 
         # Create detailed rubric feedback
-        feedback_text = self._generate_rubric_feedback(result)
+        feedback_text = self.rubric_generator.generate(result)
         submission.feedback = Feedback(percentage_score, feedback_text)
       else:
         # Fallback for missing results
@@ -1108,45 +1362,8 @@ class TextSubmissionGrader(Grader):
                                        "Error: Could not analyze submission")
 
   def _generate_rubric_feedback(self, result: Dict) -> str:
-    """
-    Generate detailed rubric breakdown for student feedback.
-
-    Args:
-        result: Individual grading result dictionary
-
-    Returns:
-        Formatted feedback string with rubric breakdown
-    """
-    engagement_score = result.get('engagement_score', 0)
-    length_score = result.get('length_score', 0)
-    relevance_score = result.get('relevance_score', 0)
-    quality_score = result.get('explanation_quality_score', 0)
-    total_score = result.get('total_grade', 0)
-    # Always use our accurate word count
-    word_count = result.get('accurate_word_count', 0)
-    ai_feedback = result.get('feedback', '')
-    topics_needing_review = result.get('topics_needing_review', [])
-
-    feedback_lines = [
-      "Study Notes Feedback", "=" * 50, "", "GRADE BREAKDOWN:",
-      f"- Engagement (4 pts): {engagement_score}/4 - Effort to process and explain material",
-      f"- Length (2 pts): {length_score}/2 - {'Met 250+ word requirement' if length_score == 2 else 'Under 250 words required'}",
-      f"- Relevance (2 pts): {relevance_score}/2 - Coverage of class topics",
-      f"- Explanation Quality (2 pts): {quality_score}/2 - Depth of explanation",
-      "", f"TOTAL SCORE: {total_score}/10 ({(total_score/10)*100:.0f}%)",
-      f"Word Count: {word_count} words"
-    ]
-
-    # Add topics needing review if any
-    if topics_needing_review:
-      feedback_lines.append("")
-      feedback_lines.append("TOPICS TO REVIEW:")
-      for topic in topics_needing_review:
-        feedback_lines.append(f"- {topic}")
-
-    feedback_lines.extend(["", "FEEDBACK:", ai_feedback])
-
-    return "\n".join(feedback_lines)
+    """Backward-compatible wrapper around RubricGenerator."""
+    return self.rubric_generator.generate(result)
 
   # Hook methods for customization
   def _store_topics_from_result(self, result: Dict) -> None:
@@ -1632,3 +1849,19 @@ class TextSubmissionGrader(Grader):
     Text assignments need preparation to fetch submissions.
     """
     return True
+
+
+@GraderRegistry.register("WeeklyStudyNotesGrader")
+class WeeklyStudyNotesGrader(BaseTextSubmissionGrader):
+  """
+  Concrete weekly-study-notes implementation of the text grading pipeline.
+  """
+  COMPATIBLE_KINDS = {"TextAssignment"}
+
+
+@GraderRegistry.register("TextSubmissionGrader")
+class TextSubmissionGrader(WeeklyStudyNotesGrader):
+  """
+  Backward-compatible alias for the weekly study notes grader.
+  """
+  COMPATIBLE_KINDS = {"TextAssignment"}

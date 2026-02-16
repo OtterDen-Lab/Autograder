@@ -31,7 +31,9 @@ class BaseRegistry(abc.ABC):
 
     def decorator(subclass: Type) -> Type:
       # Use the provided name or fall back to the class name
-      name = (type_name.lower() if type_name else subclass.__name__.lower())
+      canonical_name = type_name if type_name else subclass.__name__
+      name = canonical_name.lower()
+      setattr(subclass, "_registry_name", canonical_name)
       cls._registry[name] = subclass
       return subclass
 

@@ -38,6 +38,7 @@ courses:
       - type: programming
         settings:
           base_image_name: "python:3.11-slim"
+          container_repo_path: "/repo/programming-assignments"
           student_code_path: "src"
         assignments:
           - id: 67890
@@ -48,6 +49,12 @@ courses:
 ```
 
 ## 2) First Safe Run
+
+Start with a preflight check:
+
+```bash
+grade-assignments --yaml your_config.yaml --dry-run
+```
 
 Run in non-push mode first:
 
@@ -67,12 +74,30 @@ Optional idempotent rerun protection:
 grade-assignments --yaml your_config.yaml --idempotency-key your-run-key
 ```
 
+Useful diagnostics:
+
+```bash
+grade-assignments --yaml your_config.yaml --dump-config
+grade-assignments --yaml your_config.yaml --report ./run-report.json
+grade-assignments --yaml your_config.yaml --debug
+```
+
+If you need run-specific idempotency state location:
+
+```bash
+grade-assignments --yaml your_config.yaml --idempotency-key your-run-key --idempotency-state-dir ~/.autograder/state
+```
+
 ## 3) Common Customizations
 
 - Add Docker packages:
   - Use `extra_dockerfile_lines` under programming settings.
 - Map uploaded filenames to target locations:
   - Use `file_paths` regex mapping under programming settings.
+- Use a non-default template repo layout:
+  - Set `container_repo_path` (must be under `/repo`; default is `/repo/programming-assignments`).
+- Mount multiple template/helper repos in one grading image:
+  - Use `additional_repos` with `source_repo` + `container_path` (paths must be under `/repo`).
 - Tune text-grading cost/performance:
   - Adjust `phase1_tier`, `phase2_tier`, `phase25_tier` (`small|medium|large`).
 - Control privacy in logs:

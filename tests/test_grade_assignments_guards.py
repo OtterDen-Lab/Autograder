@@ -2,12 +2,15 @@ import os
 import sys
 import json
 import logging
+import contextlib
 from types import SimpleNamespace
+import requests
 
 import pytest
 
 from Autograder import grade_assignments
-from Autograder.config_models import AssignmentRunRequest, RunConfig
+from Autograder import exceptions as autograder_exceptions
+from Autograder.config_models import AssignmentRunRequest, CourseConfig, RunConfig
 from lms_interface.classes import Feedback, Submission, Student
 
 
@@ -29,7 +32,7 @@ def test_grade_single_assignment_rejects_unsupported_assignment_kind():
       repo_path=None,
       assignment_name=None,
       args=SimpleNamespace(
-        do_regrade=False, merge_only=False, limit=None, test=False),
+        do_regrade=False, limit=None, test=False),
       push_grades=False,
       slack_channel=None,
     ))
@@ -51,13 +54,69 @@ def test_grade_single_assignment_rejects_unsupported_grader_for_kind():
       repo_path=None,
       assignment_name=None,
       args=SimpleNamespace(
-        do_regrade=False, merge_only=False, limit=None, test=False),
+        do_regrade=False, limit=None, test=False),
       push_grades=False,
       slack_channel=None,
     ))
 
   assert result["success"] is False
   assert "not supported" in result["error"].lower()
+
+
+def test_grade_single_assignment_wraps_assignment_lookup_as_lms_error():
+  class FailingCourse:
+    def get_assignment(self, assignment_id):
+      raise requests.exceptions.Timeout(f"timeout for assignment {assignment_id}")
+
+  result = grade_assignments.grade_single_assignment(
+    AssignmentRunRequest(
+      course=FailingCourse(),
+      course_name="CST",
+      assignment_id=2,
+      assignment_type="assignment",
+      assignment_kind="ProgrammingAssignment",
+      grader_name="template-grader",
+      settings={},
+      repo_path=None,
+      assignment_name=None,
+      args=SimpleNamespace(
+        do_regrade=False, limit=None, test=False),
+      push_grades=False,
+      slack_channel=None,
+    ))
+
+  assert result["success"] is False
+  assert result.get("error_type") == "LMSError"
+  assert "failed to load canvas assignment" in result["error"].lower()
+
+
+def test_grade_single_assignment_wraps_assignment_metadata_errors_as_lms_error():
+  class MaintenanceCourse:
+    def get_assignment(self, assignment_id):
+      raise ValueError(
+        f"Canvas returned incomplete metadata for assignment id={assignment_id} (missing: name)."
+      )
+
+  result = grade_assignments.grade_single_assignment(
+    AssignmentRunRequest(
+      course=MaintenanceCourse(),
+      course_name="CST",
+      assignment_id=42,
+      assignment_type="assignment",
+      assignment_kind="ProgrammingAssignment",
+      grader_name="template-grader",
+      settings={},
+      repo_path=None,
+      assignment_name=None,
+      args=SimpleNamespace(
+        do_regrade=False, limit=None, test=False),
+      push_grades=False,
+      slack_channel=None,
+    ))
+
+  assert result["success"] is False
+  assert result.get("error_type") == "LMSError"
+  assert "maintenance" in result["error"].lower()
 
 
 def test_parse_args_requires_yaml(monkeypatch):
@@ -69,6 +128,19 @@ def test_parse_args_requires_yaml(monkeypatch):
 
 def test_parse_args_rejects_legacy_test_subcommand(monkeypatch):
   monkeypatch.setattr(sys, "argv", ["grade-assignments", "TEST"])
+  with pytest.raises(SystemExit) as exc:
+    grade_assignments.parse_args()
+  assert exc.value.code == 2
+
+
+def test_parse_args_rejects_removed_merge_only_flag(monkeypatch, tmp_path):
+  yaml_file = tmp_path / "config.yaml"
+  yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
+
+  monkeypatch.setattr(
+    sys, "argv",
+    ["grade-assignments", "--yaml",
+     str(yaml_file), "--merge_only"])
   with pytest.raises(SystemExit) as exc:
     grade_assignments.parse_args()
   assert exc.value.code == 2
@@ -122,6 +194,30 @@ def test_parse_args_accepts_show_stage_timings(monkeypatch, tmp_path):
      str(yaml_file), "--show-stage-timings"])
   args = grade_assignments.parse_args()
   assert args.show_stage_timings is True
+
+
+def test_parse_args_accepts_dump_config(monkeypatch, tmp_path):
+  yaml_file = tmp_path / "config.yaml"
+  yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
+
+  monkeypatch.setattr(
+    sys, "argv",
+    ["grade-assignments", "--yaml",
+     str(yaml_file), "--dump-config"])
+  args = grade_assignments.parse_args()
+  assert args.dump_config is True
+
+
+def test_parse_args_accepts_dry_run(monkeypatch, tmp_path):
+  yaml_file = tmp_path / "config.yaml"
+  yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
+
+  monkeypatch.setattr(
+    sys, "argv",
+    ["grade-assignments", "--yaml",
+     str(yaml_file), "--dry-run"])
+  args = grade_assignments.parse_args()
+  assert args.dry_run is True
 
 
 def test_parse_args_rejects_non_positive_max_workers(monkeypatch, tmp_path):
@@ -230,7 +326,7 @@ def test_record_retention_requires_explicit_records_dir(monkeypatch):
       repo_path=None,
       assignment_name=None,
       args=SimpleNamespace(
-        do_regrade=False, merge_only=False, limit=None, test=False),
+        do_regrade=False, limit=None, test=False),
       push_grades=False,
       slack_channel=None,
     ))
@@ -305,7 +401,7 @@ def test_record_retention_false_does_not_validate_records_dir(monkeypatch):
       repo_path=None,
       assignment_name=None,
       args=SimpleNamespace(
-        do_regrade=False, merge_only=False, limit=None, test=False),
+        do_regrade=False, limit=None, test=False),
       push_grades=False,
       slack_channel=None,
     ))
@@ -376,7 +472,7 @@ def test_grade_single_assignment_emits_stage_contract_on_success(monkeypatch):
       repo_path=None,
       assignment_name=None,
       args=SimpleNamespace(
-        do_regrade=False, merge_only=False, limit=None, test=False),
+        do_regrade=False, limit=None, test=False),
       push_grades=False,
       slack_channel=None,
     ))
@@ -449,7 +545,7 @@ def test_grade_single_assignment_no_submissions_stage_contract(monkeypatch):
       repo_path=None,
       assignment_name=None,
       args=SimpleNamespace(
-        do_regrade=False, merge_only=False, limit=None, test=False),
+        do_regrade=False, limit=None, test=False),
       push_grades=False,
       slack_channel=None,
     ))
@@ -477,10 +573,26 @@ def test_resolve_reveal_identity_requires_break_glass(monkeypatch):
 
 
 def test_resolve_reveal_identity_with_break_glass(monkeypatch):
-  args = SimpleNamespace(reveal_identity=False)
+  args = SimpleNamespace(reveal_identity=False, yaml="/tmp/config.yaml")
   config = RunConfig(reveal_identity=True)
   monkeypatch.setenv("AUTOGRADER_BREAK_GLASS", "1")
+  monkeypatch.setenv("AUTOGRADER_REVEAL_AUDIT_LOG", "/tmp/reveal_audit_test.log")
   assert grade_assignments.resolve_reveal_identity(args, config) is True
+
+
+def test_resolve_reveal_identity_writes_audit_event(monkeypatch, tmp_path):
+  audit_path = tmp_path / "reveal_audit.log"
+  args = SimpleNamespace(reveal_identity=True, yaml="/tmp/config.yaml")
+  config = RunConfig(reveal_identity=False, privacy_mode="blind", prod=False)
+  monkeypatch.setenv("AUTOGRADER_BREAK_GLASS", "1")
+  monkeypatch.setenv("AUTOGRADER_REVEAL_AUDIT_LOG", str(audit_path))
+
+  assert grade_assignments.resolve_reveal_identity(args, config) is True
+  lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+  assert lines
+  payload = json.loads(lines[-1])
+  assert payload["yaml_path"] == "/tmp/config.yaml"
+  assert payload["privacy_mode"] == "blind"
 
 
 def test_resolve_idempotency_settings_uses_cli_over_config():
@@ -500,6 +612,48 @@ def test_resolve_idempotency_settings_uses_config_defaults():
   key, state_dir = grade_assignments.resolve_idempotency_settings(args, config)
   assert key == "run-1"
   assert state_dir.endswith(".autograder/idempotency")
+
+
+def test_collect_assignments_wraps_canvas_interface_initialization_errors(
+    monkeypatch):
+  class FailingCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      raise ValueError("missing credentials")
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface",
+                      FailingCanvasInterface)
+
+  args = SimpleNamespace(env=None,
+                         reveal_identity=False,
+                         idempotency_key=None,
+                         idempotency_state_dir=None)
+  config = RunConfig(courses=[])
+
+  with pytest.raises(autograder_exceptions.LMSError,
+                     match="Failed to initialize Canvas interface"):
+    grade_assignments.collect_assignments_to_grade(config, args)
+
+
+def test_collect_assignments_wraps_course_lookup_errors(monkeypatch):
+  class FailingCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      pass
+
+    def get_course(self, course_id):
+      raise requests.exceptions.Timeout(f"timeout for {course_id}")
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface",
+                      FailingCanvasInterface)
+
+  args = SimpleNamespace(env=None,
+                         reveal_identity=False,
+                         idempotency_key=None,
+                         idempotency_state_dir=None)
+  config = RunConfig(courses=[CourseConfig(id=101, name="CST334")])
+
+  with pytest.raises(autograder_exceptions.LMSError,
+                     match="Failed to load Canvas course id=101"):
+    grade_assignments.collect_assignments_to_grade(config, args)
 
 
 def test_resolve_records_dir_requires_absolute_path():
@@ -551,6 +705,288 @@ def test_collect_push_failure_lines_summarizes_results():
   assert len(lines) == 1
   assert "PA1" in lines[0]
   assert "Student 10" in lines[0]
+
+
+def test_build_dump_config_payload_includes_effective_assignment_settings():
+  args = SimpleNamespace(yaml="/tmp/config.yaml")
+  config = RunConfig(
+    prod=True,
+    push=True,
+    privacy_mode="blind",
+    reveal_identity=False,
+    idempotency_key=None,
+    idempotency_state_dir="~/.autograder/idempotency",
+  )
+
+  assignment = AssignmentRunRequest(
+    course=SimpleNamespace(name="CST334"),
+    course_name="CST334",
+    assignment_id=123,
+    assignment_type="programming",
+    assignment_kind="ProgrammingAssignment",
+    grader_name="template-grader",
+    settings={"base_image_name": "python:3.12"},
+    repo_path="PA1",
+    assignment_name="PA1",
+    args=SimpleNamespace(),
+    push_grades=True,
+    slack_channel="C123",
+    reveal_identity=True,
+    privacy_mode="blind",
+    idempotency_key="run-42",
+    idempotency_state_dir="/tmp/idempotency",
+  )
+
+  payload = grade_assignments.build_dump_config_payload(config, [assignment], args)
+  assert payload["yaml_path"] == "/tmp/config.yaml"
+  assert payload["run"]["assignment_count"] == 1
+  assert payload["run"]["privacy_mode"] == "blind"
+  assert payload["run"]["reveal_identity"] is True
+  assert payload["assignments"][0]["assignment_id"] == 123
+  assert payload["assignments"][0]["push_grades"] is True
+  assert payload["assignments"][0]["settings"]["base_image_name"] == "python:3.12"
+
+
+def test_print_dry_run_summary_logs_plan(monkeypatch):
+  messages = []
+
+  monkeypatch.setattr(grade_assignments.log, "info",
+                      lambda msg: messages.append(msg))
+  assignment = AssignmentRunRequest(
+    course=None,
+    course_name="CST334",
+    assignment_id=123,
+    assignment_type="programming",
+    assignment_kind="ProgrammingAssignment",
+    grader_name="template-grader",
+    settings={},
+    repo_path="PA1",
+    assignment_name="PA1",
+    args=SimpleNamespace(),
+    push_grades=True,
+    slack_channel=None,
+  )
+
+  grade_assignments.print_dry_run_summary([assignment])
+
+  rendered = "\n".join(messages)
+  assert "Dry-run mode enabled" in rendered
+  assert "CST334 / PA1" in rendered
+  assert "kind=ProgrammingAssignment" in rendered
+  assert "grader=template-grader" in rendered
+
+
+def test_main_dry_run_skips_execute_grading(monkeypatch):
+  args = SimpleNamespace(
+    yaml="config.yaml",
+    env=None,
+    limit=None,
+    do_regrade=False,
+    max_workers=None,
+    test=False,
+    report=None,
+    error_slack_channel=None,
+    debug=False,
+    show_stage_timings=False,
+    reveal_identity=False,
+    idempotency_key=None,
+    idempotency_state_dir=None,
+    dump_config=False,
+    dry_run=True,
+  )
+  cleaned = {"called": False}
+  dry_run_called = {"called": False}
+  execute_called = {"called": False}
+  assignments = [
+    AssignmentRunRequest(
+      course=None,
+      course_name="CST334",
+      assignment_id=123,
+      assignment_type="programming",
+      assignment_kind="ProgrammingAssignment",
+      grader_name="template-grader",
+      settings={},
+      repo_path="PA1",
+      assignment_name="PA1",
+      args=args,
+      push_grades=False,
+      slack_channel=None,
+    )
+  ]
+
+  @contextlib.contextmanager
+  def fake_lock():
+    yield
+
+  def fake_execute(assignments_to_grade, parsed_args):
+    execute_called["called"] = True
+    return []
+
+  monkeypatch.setattr(grade_assignments, "parse_args", lambda: args)
+  monkeypatch.setattr(grade_assignments, "ensure_single_instance", fake_lock)
+  monkeypatch.setattr(grade_assignments, "load_and_validate_config",
+                      lambda _: RunConfig())
+  monkeypatch.setattr(grade_assignments, "collect_assignments_to_grade",
+                      lambda _config, _args: assignments)
+  monkeypatch.setattr(grade_assignments, "execute_grading", fake_execute)
+  monkeypatch.setattr(
+    grade_assignments, "print_dry_run_summary",
+    lambda _assignments: dry_run_called.__setitem__("called", True))
+  monkeypatch.setattr(
+    grade_assignments.DockerClient, "cleanup",
+    lambda: cleaned.__setitem__("called", True))
+
+  exit_code = grade_assignments.main()
+
+  assert exit_code == 0
+  assert dry_run_called["called"] is True
+  assert execute_called["called"] is False
+  assert cleaned["called"] is True
+
+
+def test_main_mocked_smoke_run_without_canvas_credentials(monkeypatch, tmp_path):
+  yaml_path = tmp_path / "smoke.yaml"
+  yaml_path.write_text(
+    """
+assignment_types:
+  programming:
+    kind: ProgrammingAssignment
+    grader: template-grader
+courses:
+  - id: 101
+    name: CST334
+    assignment_groups:
+      - type: programming
+        assignments:
+          - id: 555
+            assignment_name: PA1
+push: true
+privacy_mode: blind
+""",
+    encoding="utf-8",
+  )
+
+  args = SimpleNamespace(
+    yaml=str(yaml_path),
+    env=None,
+    limit=None,
+    do_regrade=False,
+    max_workers=1,
+    test=False,
+    report=None,
+    error_slack_channel=None,
+    debug=False,
+    show_stage_timings=False,
+    reveal_identity=False,
+    idempotency_key=None,
+    idempotency_state_dir=None,
+    dump_config=False,
+    dry_run=False,
+  )
+
+  calls = {
+    "canvas_init": None,
+    "prepare": 0,
+    "grade": 0,
+    "finalize": 0,
+    "cleanup": 0,
+    "docker_cleanup": 0,
+    "push_flag": None,
+  }
+
+  class DummyLmsAssignment:
+    name = "PA1"
+
+  class DummyCourse:
+    name = "CST334"
+
+    def get_assignment(self, assignment_id):
+      assert assignment_id == 555
+      return DummyLmsAssignment()
+
+  class DummyCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      calls["canvas_init"] = kwargs
+
+    def get_course(self, course_id):
+      assert course_id == 101
+      return DummyCourse()
+
+  class DummyAssignment:
+    def __init__(self):
+      self.submissions = []
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+      return False
+
+    def prepare(self, *args, **kwargs):
+      calls["prepare"] += 1
+      self.submissions = [
+        Submission(student=Student(name="Anon 0001", user_id=1, _inner=None),
+                   status=Submission.Status.UNGRADED)
+      ]
+
+    def finalize(self, **kwargs):
+      calls["finalize"] += 1
+      calls["push_flag"] = kwargs.get("push")
+      graded = sum(1 for s in self.submissions if s.feedback is not None)
+      return {
+        "push_enabled": bool(kwargs.get("push")),
+        "push_attempted": len(self.submissions),
+        "push_succeeded": graded,
+        "push_failed": len(self.submissions) - graded,
+        "push_skipped": 0,
+      }
+
+  class DummyGrader:
+    ready_to_finalize = True
+
+    def assignment_needs_preparation(self):
+      return True
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+      return False
+
+    def grade_assignment(self, assignment, *args, **kwargs):
+      calls["grade"] += 1
+      for submission in assignment.submissions:
+        submission.feedback = Feedback(percentage_score=100.0, comments="ok")
+
+    def cleanup(self):
+      calls["cleanup"] += 1
+
+  @contextlib.contextmanager
+  def fake_lock():
+    yield
+
+  monkeypatch.setattr(grade_assignments, "parse_args", lambda: args)
+  monkeypatch.setattr(grade_assignments, "ensure_single_instance", fake_lock)
+  monkeypatch.setattr(grade_assignments, "CanvasInterface", DummyCanvasInterface)
+  monkeypatch.setattr(grade_assignments.GraderRegistry, "create",
+                      lambda *a, **k: DummyGrader())
+  monkeypatch.setattr(grade_assignments.AssignmentRegistry, "create",
+                      lambda *a, **k: DummyAssignment())
+  monkeypatch.setattr(
+    grade_assignments.DockerClient, "cleanup",
+    lambda: calls.__setitem__("docker_cleanup", calls["docker_cleanup"] + 1))
+
+  exit_code = grade_assignments.main()
+
+  assert exit_code == 0
+  assert calls["canvas_init"]["privacy_mode"] == "blind"
+  assert calls["canvas_init"]["reveal_identity"] is False
+  assert calls["prepare"] == 1
+  assert calls["grade"] == 1
+  assert calls["finalize"] == 1
+  assert calls["push_flag"] is True
+  assert calls["cleanup"] == 1
+  assert calls["docker_cleanup"] == 1
 
 
 def test_send_slack_run_summary_notifies_on_push_failures(monkeypatch):

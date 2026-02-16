@@ -8,11 +8,43 @@ import io
 import logging
 import os
 import typing
+import urllib.parse
 import urllib.request
 
 import canvasapi.canvas
 
 log = logging.getLogger(__name__)
+
+# BEGIN vendorable download validation defaults
+MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+DOWNLOAD_TIMEOUT_SECONDS = 30
+DOWNLOAD_CHUNK_BYTES = 64 * 1024
+# Allow generic binary and common source/text MIME types for expected coursework files.
+ALLOWED_CONTENT_TYPES_BY_EXTENSION = {
+  ".c": {"text/plain", "text/x-c", "application/octet-stream"},
+  ".h": {"text/plain", "text/x-c", "application/octet-stream"},
+  ".cpp": {"text/plain", "text/x-c++src", "application/octet-stream"},
+  ".hpp": {"text/plain", "text/x-c++hdr", "application/octet-stream"},
+  ".cc": {"text/plain", "text/x-c++src", "application/octet-stream"},
+  ".py": {"text/plain", "text/x-python", "application/octet-stream"},
+  ".java": {"text/plain", "text/x-java-source", "application/octet-stream"},
+  ".js": {"text/plain", "application/javascript", "text/javascript", "application/octet-stream"},
+  ".ts": {"text/plain", "application/typescript", "application/octet-stream"},
+  ".go": {"text/plain", "text/x-go", "application/octet-stream"},
+  ".rs": {"text/plain", "text/rust", "application/octet-stream"},
+  ".rb": {"text/plain", "application/x-ruby", "application/octet-stream"},
+  ".sh": {"text/plain", "application/x-sh", "application/octet-stream"},
+  ".txt": {"text/plain", "application/octet-stream"},
+  ".md": {"text/plain", "text/markdown", "application/octet-stream"},
+  ".csv": {"text/csv", "text/plain", "application/octet-stream"},
+  ".json": {"application/json", "text/plain", "application/octet-stream"},
+  ".yaml": {"application/x-yaml", "text/yaml", "text/plain", "application/octet-stream"},
+  ".yml": {"application/x-yaml", "text/yaml", "text/plain", "application/octet-stream"},
+  ".zip": {"application/zip", "application/octet-stream"},
+  ".tar": {"application/x-tar", "application/octet-stream"},
+  ".gz": {"application/gzip", "application/x-gzip", "application/octet-stream"},
+}
+# END vendorable download validation defaults
 
 
 
@@ -124,13 +156,105 @@ class FileSubmission__Canvas(FileSubmission):
 
         # Generate a local file name with a number of options
         # local_file_name = f"{self.student.name.replace(' ', '-')}_{self.student.user_id}_{attachment['filename']}"
-        local_file_name = f"{attachment['filename']}"
-        with urllib.request.urlopen(attachment['url']) as response:
-          buffer = io.BytesIO(response.read())
+        local_file_name = self._sanitize_filename(attachment.get('filename', 'submission_file'))
+        download_url = attachment.get('url')
+        if not isinstance(download_url, str) or not download_url:
+          raise ValueError(
+            f"Attachment missing valid URL for file '{local_file_name}'.")
+
+        self._validate_url(download_url, local_file_name)
+        attachment_content_type = self._extract_content_type(
+          attachment.get('content-type') or attachment.get('content_type'))
+
+        with urllib.request.urlopen(download_url,
+                                    timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+          response_content_type = self._response_content_type(response)
+          self._validate_content_type(local_file_name, attachment_content_type,
+                                      response_content_type)
+
+          buffer = io.BytesIO()
+          total_bytes = 0
+          while True:
+            chunk = response.read(DOWNLOAD_CHUNK_BYTES)
+            if not chunk:
+              break
+            total_bytes += len(chunk)
+            if total_bytes > MAX_DOWNLOAD_BYTES:
+              raise ValueError(
+                f"Attachment '{local_file_name}' exceeds max size of {MAX_DOWNLOAD_BYTES} bytes."
+              )
+            buffer.write(chunk)
+          buffer.seek(0)
           buffer.name = local_file_name
           self._files.append(buffer)
 
     return self._files
+
+  # BEGIN vendorable download validation helpers
+  @staticmethod
+  def _sanitize_filename(filename: str) -> str:
+    basename = os.path.basename(str(filename or "submission_file"))
+    basename = basename.replace('\x00', '').strip()
+    safe = ''.join(
+      c if (c.isalnum() or c in {'-', '_', '.', ' '}) else '_'
+      for c in basename)
+    safe = safe.strip().strip('.')
+    if safe in {"", ".", ".."}:
+      return "submission_file"
+    return safe
+
+  @staticmethod
+  def _extract_content_type(value) -> str | None:
+    if not value:
+      return None
+    return str(value).split(';', 1)[0].strip().lower() or None
+
+  @staticmethod
+  def _response_content_type(response) -> str | None:
+    try:
+      info = response.info()
+      if info is None:
+        return None
+      if hasattr(info, "get_content_type"):
+        return FileSubmission__Canvas._extract_content_type(
+          info.get_content_type())
+      return FileSubmission__Canvas._extract_content_type(
+        info.get("Content-Type"))
+    except Exception:
+      return None
+
+  @staticmethod
+  def _validate_url(url: str, filename: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme.lower() not in {"http", "https"}:
+      raise ValueError(
+        f"Attachment '{filename}' has unsupported URL scheme '{parsed.scheme}'."
+      )
+
+  @staticmethod
+  def _validate_content_type(filename: str,
+                             attachment_content_type: str | None,
+                             response_content_type: str | None) -> None:
+    ext = os.path.splitext(filename)[1].lower()
+    allowed = ALLOWED_CONTENT_TYPES_BY_EXTENSION.get(ext)
+    if not allowed:
+      return
+
+    observed = response_content_type or attachment_content_type
+    if observed is None:
+      return
+
+    if observed in allowed:
+      return
+
+    # Allow generic stream content-type for known extensions.
+    if observed == "application/octet-stream":
+      return
+
+    raise ValueError(
+      f"Attachment '{filename}' has content-type '{observed}', expected one of: {sorted(allowed)}"
+    )
+  # END vendorable download validation helpers
 
 
 class TextSubmission(Submission):

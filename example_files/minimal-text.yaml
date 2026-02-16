@@ -1,0 +1,21 @@
+prod: false
+push: false
+privacy_mode: blind
+
+assignment_types:
+  weekly_notes:
+    kind: TextAssignment
+    grader: WeeklyStudyNotesGrader
+    settings:
+      prefer_anthropic: false
+      phase1_tier: small
+      phase2_tier: small
+      phase25_tier: small
+
+courses:
+  - id: 12345
+    name: "Example Course"
+    assignment_groups:
+      - type: weekly_notes
+        assignments:
+          - id: 67891

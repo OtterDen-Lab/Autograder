@@ -35,6 +35,11 @@ assignment_types:
     grader: template-grader
     settings:
       base_image_name: "your-docker-image"
+      # Optional: mount extra repositories into specific container paths
+      # additional_repos:
+      #   - source_repo: "https://github.com/your-org/shared-tests"
+      #     container_path: "/repo/shared-tests"
+      container_repo_path: "/repo/programming-assignments"  # optional override; default shown
       record_retention: true
       records_dir: "~/autograder-records/your-course"  # required when record_retention=true
 
@@ -128,6 +133,42 @@ grade-assignments --yaml config.yaml --max_workers 2
 grade-assignments --yaml config.yaml --show-stage-timings
 ```
 
+### Dry-run preflight (no grading)
+
+```bash
+grade-assignments --yaml config.yaml --dry-run
+```
+
+### Dump effective merged assignment config
+
+```bash
+grade-assignments --yaml config.yaml --dump-config
+```
+
+### Write a run report JSON
+
+```bash
+grade-assignments --yaml config.yaml --report ./run-report.json
+```
+
+### Override Slack channel for run-level failure summaries
+
+```bash
+grade-assignments --yaml config.yaml --error-slack-channel C0123456789
+```
+
+### Set custom idempotency state directory
+
+```bash
+grade-assignments --yaml config.yaml --idempotency-key spring26-ll2 --idempotency-state-dir ~/.autograder/state
+```
+
+### Enable debug logging
+
+```bash
+grade-assignments --yaml config.yaml --debug
+```
+
 ## Configuration
 
 See the `example_files/` directory for complete configuration examples:
@@ -135,6 +176,8 @@ See the `example_files/` directory for complete configuration examples:
 - `workhorse.yaml`: Recommended combined programming + text setup
 - `programming_assignments.yaml`: Programming-only setup
 - `learning-logs.yaml`: Text submission grading
+- `minimal-programming.yaml`: Simplest programming assignment setup
+- `minimal-text.yaml`: Simplest text assignment setup
 - `example-template.yaml`: All available options
 
 ## Requirements
@@ -143,6 +186,27 @@ See the `example_files/` directory for complete configuration examples:
 - Docker (for programming assignment grading)
 - Canvas API access
 - Optional: OpenAI or Anthropic API keys for AI-powered features
+
+## Docker Security Boundaries
+
+Programming submissions run in ephemeral Docker containers with baseline hardening:
+
+- `no-new-privileges:true`
+- explicit seccomp profile (`Autograder/seccomp/autograder-seccomp.json` by default)
+- resource limits (`mem_limit`, `nano_cpus`, `pids_limit`)
+
+Optional hardened mode:
+
+- set `AUTOGRADER_DOCKER_READ_ONLY_ROOT_FS=1` to use a read-only root filesystem (with writable tmpfs at `/tmp` and `/var/tmp`).
+
+Override knobs (when needed for compatibility/performance):
+
+- `AUTOGRADER_DOCKER_SECCOMP_PROFILE` (path to seccomp profile)
+- `AUTOGRADER_DOCKER_MEMORY_LIMIT` (example: `1g`)
+- `AUTOGRADER_DOCKER_NANO_CPUS` (example: `2000000000` for 2 CPUs)
+- `AUTOGRADER_DOCKER_PIDS_LIMIT` (example: `256`)
+
+Security note: this reduces risk but is not a complete sandbox against all kernel/container escape classes. Keep Docker and host OS patched.
 
 ## Local Git Hygiene Hook (Recommended)
 
@@ -160,6 +224,10 @@ For detailed documentation, see:
 
 - `documentation/instructor_onboarding.md` (minimal setup + common customizations)
 - `documentation/operations_runbook.md` (failure autopsy + rerun procedures)
+- `documentation/troubleshooting.md` (common runtime failures and recovery steps)
+- `documentation/customization.md` (adding graders/kinds + common recipes)
+- `documentation/configuration_schema.md` (field-by-field config reference)
+- `documentation/privacy_audit.md` (PII surfaces and privacy controls)
 - `documentation/archives/step_by_step_grader_reference.md` (archived grader concept for future redesign)
 - [documentation directory on GitHub](https://github.com/OtterDen-Lab/Autograder/tree/main/documentation)
 

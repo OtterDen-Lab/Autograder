@@ -5,6 +5,9 @@ Provides common Docker operations like client management, container lifecycle,
 file operations, and command execution in a reusable way.
 """
 import io
+import json
+import os
+import pathlib
 import tarfile
 import time
 import threading
@@ -24,6 +27,97 @@ _image_usage_lock = threading.Lock()
 
 # Lazy import docker to avoid import errors when docker is not available
 docker = None
+
+
+def _parse_bool_env(name: str, default: bool) -> bool:
+  raw = os.getenv(name)
+  if raw is None:
+    return default
+  return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_int_env(name: str, default: int | None) -> int | None:
+  raw = os.getenv(name)
+  if raw is None or raw.strip() == "":
+    return default
+  try:
+    value = int(raw)
+  except ValueError:
+    log.warning(f"Invalid integer for {name}={raw!r}; using default {default!r}")
+    return default
+  if value <= 0:
+    return None
+  return value
+
+
+def _parse_str_env(name: str, default: str | None) -> str | None:
+  raw = os.getenv(name)
+  if raw is None:
+    return default
+  value = raw.strip()
+  if value == "":
+    return None
+  return value
+
+
+def _default_seccomp_profile_path() -> str | None:
+  packaged_profile = (pathlib.Path(__file__).resolve().parent / "seccomp" /
+                      "autograder-seccomp.json")
+  if packaged_profile.exists():
+    return str(packaged_profile)
+  return None
+
+
+def _normalize_seccomp_profile(seccomp_profile: str | None) -> str | None:
+  """
+  Normalize seccomp config for Docker API usage.
+
+  Docker CLI accepts seccomp file paths, but the Docker API expects either
+  "unconfined" or JSON profile content.
+  """
+  if seccomp_profile is None:
+    return None
+
+  profile_value = seccomp_profile.strip()
+  if profile_value == "":
+    return None
+  if profile_value == "unconfined":
+    return "unconfined"
+
+  profile_path = pathlib.Path(profile_value)
+  if profile_path.exists():
+    try:
+      profile_json = json.loads(profile_path.read_text(encoding="utf-8"))
+      return json.dumps(profile_json, separators=(",", ":"))
+    except (OSError, json.JSONDecodeError) as e:
+      log.warning(
+        f"Unable to read Docker seccomp profile at {profile_value}: {e}")
+      return None
+
+  try:
+    profile_json = json.loads(profile_value)
+    return json.dumps(profile_json, separators=(",", ":"))
+  except json.JSONDecodeError:
+    log.warning(
+      f"Invalid Docker seccomp profile value {profile_value!r}; expected 'unconfined', JSON content, or a path to a JSON file."
+    )
+    return None
+
+
+DEFAULT_DOCKER_MEMORY_LIMIT = _parse_str_env("AUTOGRADER_DOCKER_MEMORY_LIMIT",
+                                              "1g")
+DEFAULT_DOCKER_NANO_CPUS = _parse_int_env("AUTOGRADER_DOCKER_NANO_CPUS",
+                                           2_000_000_000)
+DEFAULT_DOCKER_PIDS_LIMIT = _parse_int_env("AUTOGRADER_DOCKER_PIDS_LIMIT",
+                                           256)
+DEFAULT_DOCKER_READ_ONLY_ROOT_FS = _parse_bool_env(
+  "AUTOGRADER_DOCKER_READ_ONLY_ROOT_FS", False)
+DEFAULT_DOCKER_SECCOMP_PROFILE = _parse_str_env(
+  "AUTOGRADER_DOCKER_SECCOMP_PROFILE", _default_seccomp_profile_path())
+DEFAULT_DOCKER_TMPFS = {
+  "/tmp": "rw,noexec,nosuid,size=64m",
+  "/var/tmp": "rw,noexec,nosuid,size=64m",
+}
 
 
 def _import_docker() -> None:
@@ -214,11 +308,21 @@ class DockerContainer:
   def __init__(self,
                client: DockerClient,
                image: Union[str, 'docker.models.images.Image'],
-               name_prefix: str = "grader"):
+               name_prefix: str = "grader",
+               memory_limit: str | None = DEFAULT_DOCKER_MEMORY_LIMIT,
+               nano_cpus: int | None = DEFAULT_DOCKER_NANO_CPUS,
+               pids_limit: int | None = DEFAULT_DOCKER_PIDS_LIMIT,
+               read_only_root_fs: bool = DEFAULT_DOCKER_READ_ONLY_ROOT_FS,
+               seccomp_profile: str | None = DEFAULT_DOCKER_SECCOMP_PROFILE):
     self.client = client
     self.image = image
     self.container = None
     self.name_prefix = name_prefix
+    self.memory_limit = memory_limit
+    self.nano_cpus = nano_cpus
+    self.pids_limit = pids_limit
+    self.read_only_root_fs = read_only_root_fs
+    self.seccomp_profile = seccomp_profile
 
     # Generate unique container name for thread safety
     thread_id = threading.current_thread().ident
@@ -227,12 +331,40 @@ class DockerContainer:
 
   def start(self) -> None:
     """Start the container."""
+    security_opt = ["no-new-privileges:true"]
+    normalized_seccomp = _normalize_seccomp_profile(self.seccomp_profile)
+    if normalized_seccomp:
+      security_opt.append(f"seccomp={normalized_seccomp}")
+    elif self.seccomp_profile:
+      log.warning(
+        "Docker seccomp profile is invalid; using daemon default seccomp policy."
+      )
+    else:
+      log.warning(
+        "No Docker seccomp profile configured; set AUTOGRADER_DOCKER_SECCOMP_PROFILE to enforce one."
+      )
+
+    run_kwargs = {
+      "image": self.image,
+      "detach": True,
+      "tty": True,
+      "remove": True,
+      "name": self.container_name,
+      "security_opt": security_opt,
+    }
+    if self.memory_limit:
+      run_kwargs["mem_limit"] = self.memory_limit
+      run_kwargs["memswap_limit"] = self.memory_limit
+    if self.nano_cpus is not None:
+      run_kwargs["nano_cpus"] = self.nano_cpus
+    if self.pids_limit is not None:
+      run_kwargs["pids_limit"] = self.pids_limit
+    if self.read_only_root_fs:
+      run_kwargs["read_only"] = True
+      run_kwargs["tmpfs"] = dict(DEFAULT_DOCKER_TMPFS)
+
     try:
-      self.container = self.client.run_image(image=self.image,
-                                             detach=True,
-                                             tty=True,
-                                             remove=True,
-                                             name=self.container_name)
+      self.container = self.client.run_image(**run_kwargs)
       log.debug(f"Started container: {self.container_name}")
     except docker.errors.ContainerError as e:
       log.error(f"Container failed to start: {e}")
@@ -430,10 +562,16 @@ class DockerContainer:
       extra_args["workdir"] = workdir
 
     rc, (stdout,
-         stderr) = self.container.exec_run(cmd=f"bash -c \"timeout 60 {command}\"",
-                                           demux=True,
-                                           tty=True,
-                                           **extra_args)
+         stderr) = (0, (b"", b""))
+    try:
+      rc, (stdout,
+           stderr) = self.container.exec_run(cmd=f"bash -c \"timeout 60 {command}\"",
+                                             demux=True,
+                                             tty=True,
+                                             **extra_args)
+    except docker.errors.APIError as e:
+      raise Autograder.exceptions.ContainerError(
+        f"Failed to execute command in container: {e}") from e
 
     log.debug(f"Command '{command}' returned {rc}")
     log.debug(f"stdout: {stdout}")
@@ -452,7 +590,9 @@ class DockerContainer:
         File contents as string, or None if file not found
     """
     if not self.container:
-      raise DockerOperationError("Cannot read file - no running container")
+      raise Autograder.exceptions.ContainerError(
+        "Cannot read file: no running container. Start the container before reading files."
+      )
 
     try:
       bits, stats = self.container.get_archive(file_path)
@@ -532,7 +672,9 @@ class DockerContainerManager:
   def get_container(self, name: str) -> DockerContainer:
     """Get a container by name."""
     if name not in self.containers:
-      raise DockerOperationError(f"Container '{name}' not found")
+      raise Autograder.exceptions.ContainerError(
+        f"Container '{name}' not found in manager. "
+        "Create it first with create_container(...).")
     return self.containers[name]
 
   def stop_all(self) -> None:
@@ -548,19 +690,3 @@ class DockerContainerManager:
   def __exit__(self, exc_type, exc_val, exc_tb):
     """Context manager exit with cleanup."""
     self.stop_all()
-
-
-# Exception classes for better error handling
-class DockerError(Exception):
-  """Base class for Docker-related errors."""
-  pass
-
-
-class DockerConnectionError(DockerError):
-  """Raised when Docker connection fails."""
-  pass
-
-
-class DockerOperationError(DockerError):
-  """Raised when a Docker operation fails."""
-  pass

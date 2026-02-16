@@ -1,13 +1,63 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import posixpath
 from typing import Any, Dict, List, Optional
 
-ACTIVE_ASSIGNMENT_KINDS = {"ProgrammingAssignment", "TextAssignment"}
-ACTIVE_GRADERS_BY_KIND = {
+_FALLBACK_ACTIVE_ASSIGNMENT_KINDS = {"ProgrammingAssignment", "TextAssignment"}
+_FALLBACK_ACTIVE_GRADERS_BY_KIND = {
   "ProgrammingAssignment": {"template-grader"},
-  "TextAssignment": {"TextSubmissionGrader"},
+  "TextAssignment": {"TextSubmissionGrader", "WeeklyStudyNotesGrader"},
 }
+
+
+def _copy_grader_map(raw: Dict[str, set[str]]) -> Dict[str, set[str]]:
+  return {kind: set(graders) for kind, graders in raw.items()}
+
+
+def get_active_grader_compatibility() -> tuple[set[str], Dict[str, set[str]]]:
+  """
+  Discover assignment-kind/grader compatibility from registered graders.
+
+  Falls back to conservative static defaults if discovery fails or no grader
+  compatibility metadata is available.
+  """
+  discovered_by_kind: Dict[str, set[str]] = {}
+  try:
+    from Autograder.registry import GraderRegistry
+
+    if not GraderRegistry._scanned:
+      GraderRegistry.load_premade_modules()
+
+    for registered_name, grader_cls in GraderRegistry._registry.items():
+      compatible_kinds = getattr(grader_cls, "COMPATIBLE_KINDS", None)
+      if compatible_kinds is None:
+        continue
+
+      if isinstance(compatible_kinds, str):
+        kinds = [compatible_kinds]
+      else:
+        kinds = list(compatible_kinds)
+
+      display_name = getattr(grader_cls, "_registry_name", registered_name)
+      for kind in kinds:
+        if not isinstance(kind, str):
+          continue
+        normalized_kind = kind.strip()
+        if not normalized_kind:
+          continue
+        discovered_by_kind.setdefault(normalized_kind, set()).add(display_name)
+  except Exception:
+    discovered_by_kind = {}
+
+  if discovered_by_kind:
+    return set(discovered_by_kind.keys()), discovered_by_kind
+  return (set(_FALLBACK_ACTIVE_ASSIGNMENT_KINDS),
+          _copy_grader_map(_FALLBACK_ACTIVE_GRADERS_BY_KIND))
+
+
+ACTIVE_ASSIGNMENT_KINDS, ACTIVE_GRADERS_BY_KIND = (
+  get_active_grader_compatibility())
 
 
 @dataclass
@@ -85,9 +135,18 @@ class FilePathTargetConfig:
 
 
 @dataclass
+class AdditionalRepoConfig:
+  source_repo: str
+  container_path: str
+  depth: Optional[int] = 1
+
+
+@dataclass
 class TemplateGraderSettings:
   base_image_name: str = "python:3.11-slim"
   source_repo: str = "https://github.com/CSUMB-SCD-instructors/course-template"
+  additional_repos: List[AdditionalRepoConfig] = field(default_factory=list)
+  container_repo_path: str = "/repo/programming-assignments"
   student_code_path: str = ""
   extra_installs: List[str] = field(default_factory=list)
   extra_dockerfile_lines: List[str] = field(default_factory=list)
@@ -110,9 +169,19 @@ class TemplateGraderSettings:
         entry["name"] = target.name
       file_paths[pattern] = entry
 
+    additional_repos: List[Dict[str, Any]] = []
+    for repo in self.additional_repos:
+      additional_repos.append({
+        "source_repo": repo.source_repo,
+        "container_path": repo.container_path,
+        "depth": repo.depth,
+      })
+
     return {
       "base_image_name": self.base_image_name,
       "source_repo": self.source_repo,
+      "additional_repos": additional_repos,
+      "container_repo_path": self.container_repo_path,
       "student_code_path": self.student_code_path,
       "extra_installs": self.extra_installs,
       "extra_dockerfile_lines": self.extra_dockerfile_lines,
@@ -213,6 +282,23 @@ def _require_tier(value: Any, label: str) -> str:
   return normalized
 
 
+def _require_container_repo_path(value: Any, label: str) -> str:
+  if value is None:
+    return "/repo/programming-assignments"
+  if not isinstance(value, str):
+    raise _config_error(f"{label} must be a string")
+  raw = value.strip()
+  if not raw:
+    raise _config_error(f"{label} cannot be empty")
+
+  normalized = posixpath.normpath(raw)
+  if not normalized.startswith("/"):
+    raise _config_error(f"{label} must be an absolute path under /repo")
+  if normalized != "/repo" and not normalized.startswith("/repo/"):
+    raise _config_error(f"{label} must be within /repo")
+  return normalized
+
+
 def _normalize_template_grader_settings(
     settings: Dict[str, Any], context_label: str) -> Dict[str, Any]:
   raw = dict(settings)
@@ -224,6 +310,8 @@ def _normalize_template_grader_settings(
   allowed = {
     "base_image_name",
     "source_repo",
+    "additional_repos",
+    "container_repo_path",
     "student_code_path",
     "extra_installs",
     "extra_dockerfile_lines",
@@ -269,11 +357,57 @@ def _normalize_template_grader_settings(
         f"{context_label}.file_paths['{pattern}'].name must be a string")
     file_paths[pattern] = FilePathTargetConfig(path=path, name=name)
 
+  additional_repos_raw = raw.get("additional_repos", [])
+  if not isinstance(additional_repos_raw, list):
+    raise _config_error(f"{context_label}.additional_repos must be a list")
+  additional_repos: List[AdditionalRepoConfig] = []
+  for i, repo_entry in enumerate(additional_repos_raw):
+    label = f"{context_label}.additional_repos[{i}]"
+    if not isinstance(repo_entry, dict):
+      raise _config_error(f"{label} must be a mapping")
+    repo_unknown = sorted(
+      k for k in repo_entry.keys() if k not in {"source_repo", "container_path", "depth"})
+    if repo_unknown:
+      raise _config_error(
+        f"{label} has unsupported key(s): {', '.join(repo_unknown)}")
+
+    source_repo = _require_optional_str(repo_entry.get("source_repo"),
+                                        f"{label}.source_repo")
+    if source_repo is None or not source_repo.strip():
+      raise _config_error(f"{label}.source_repo is required")
+
+    container_path = _require_container_repo_path(
+      repo_entry.get("container_path"), f"{label}.container_path")
+    if container_path == "/repo":
+      raise _config_error(
+        f"{label}.container_path cannot be /repo (reserved for source_repo)")
+
+    depth = _require_optional_int(repo_entry.get("depth", 1),
+                                  f"{label}.depth")
+    if depth is not None and depth <= 0:
+      raise _config_error(f"{label}.depth must be >= 1 when provided")
+
+    additional_repos.append(
+      AdditionalRepoConfig(source_repo=source_repo,
+                           container_path=container_path,
+                           depth=depth))
+
+  additional_paths = sorted(r.container_path for r in additional_repos)
+  for i, path_i in enumerate(additional_paths):
+    for path_j in additional_paths[i + 1:]:
+      if path_j.startswith(f"{path_i}/") or path_i.startswith(f"{path_j}/"):
+        raise _config_error(
+          f"{context_label}.additional_repos contain overlapping container_path values: '{path_i}' and '{path_j}'"
+        )
+
   settings_obj = TemplateGraderSettings(
     base_image_name=str(raw.get("base_image_name", "python:3.11-slim")),
     source_repo=str(
       raw.get("source_repo",
               "https://github.com/CSUMB-SCD-instructors/course-template")),
+    additional_repos=additional_repos,
+    container_repo_path=_require_container_repo_path(
+      raw.get("container_repo_path"), f"{context_label}.container_repo_path"),
     student_code_path=str(raw.get("student_code_path", "")),
     extra_installs=_require_str_list(raw.get("extra_installs"),
                                      f"{context_label}.extra_installs"),
@@ -357,7 +491,7 @@ def normalize_grader_settings(grader_name: str,
                               context_label: str) -> Dict[str, Any]:
   if grader_name == "template-grader":
     return _normalize_template_grader_settings(settings, context_label)
-  if grader_name == "TextSubmissionGrader":
+  if grader_name in {"TextSubmissionGrader", "WeeklyStudyNotesGrader"}:
     return _normalize_text_submission_grader_settings(settings, context_label)
 
   raise _config_error(f"Unsupported grader for settings validation: {grader_name}")
@@ -438,6 +572,8 @@ def _parse_course(raw_course: Any) -> CourseConfig:
 
 def _parse_assignment_types(
   raw_types: Any) -> Dict[str, AssignmentTypeConfig]:
+  active_assignment_kinds, active_graders_by_kind = (
+    get_active_grader_compatibility())
   assignment_types = _require_dict(raw_types, "assignment_types")
   parsed: Dict[str, AssignmentTypeConfig] = {}
 
@@ -447,8 +583,8 @@ def _parse_assignment_types(
     if not kind:
       raise _config_error(
         f"assignment_types.{name} is missing required key 'kind'")
-    if kind not in ACTIVE_ASSIGNMENT_KINDS:
-      supported = ", ".join(sorted(ACTIVE_ASSIGNMENT_KINDS))
+    if kind not in active_assignment_kinds:
+      supported = ", ".join(sorted(active_assignment_kinds))
       raise _config_error(
         f"assignment_types.{name}.kind '{kind}' is not supported in this build. "
         f"Supported kinds: {supported}")
@@ -458,7 +594,7 @@ def _parse_assignment_types(
       raise _config_error(
         f"assignment_types.{name} is missing required key 'grader'")
 
-    allowed_graders = ACTIVE_GRADERS_BY_KIND.get(kind, set())
+    allowed_graders = active_graders_by_kind.get(kind, set())
     if grader not in allowed_graders:
       allowed = ", ".join(sorted(allowed_graders)) or "(none)"
       raise _config_error(

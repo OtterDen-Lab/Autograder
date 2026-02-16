@@ -2,6 +2,7 @@
 import argparse
 import contextlib
 import fcntl
+import getpass
 import os
 import threading
 import time
@@ -9,8 +10,9 @@ from dataclasses import dataclass, asdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
+import canvasapi.exceptions
 
 import yaml
 
@@ -19,13 +21,13 @@ from Autograder.assignment import AssignmentRegistry
 from Autograder.grader import GraderRegistry
 from Autograder.docker_utils import DockerClient
 from Autograder.config_models import (
-  ACTIVE_ASSIGNMENT_KINDS,
-  ACTIVE_GRADERS_BY_KIND,
   RunConfig,
   AssignmentRunRequest,
+  get_active_grader_compatibility,
   normalize_grader_settings,
   parse_run_config,
 )
+from Autograder import exceptions as autograder_exceptions
 
 import logging
 
@@ -49,7 +51,6 @@ def parse_args() -> argparse.Namespace:
                       "--do_regrade",
                       dest="do_regrade",
                       action="store_true")
-  parser.add_argument("--merge_only", dest="merge_only", action="store_true")
   parser.add_argument(
     "--max_workers",
     default=None,
@@ -87,6 +88,16 @@ def parse_args() -> argparse.Namespace:
     "--idempotency-state-dir",
     default=None,
     help="Directory for idempotency state files (default from config)")
+  parser.add_argument(
+    "--dump-config",
+    action="store_true",
+    help=
+    "Print effective merged assignment configuration before execution")
+  parser.add_argument(
+    "--dry-run",
+    action="store_true",
+    help=
+    "Validate config and Canvas access, then list assignments without downloading or grading submissions")
 
   args = parser.parse_args()
 
@@ -138,7 +149,38 @@ def resolve_reveal_identity(args: argparse.Namespace,
   log.warning(
     "Break-glass identity reveal is enabled; Canvas numeric IDs may appear in logs."
   )
+  _record_reveal_identity_event(args, config)
   return True
+
+
+def _record_reveal_identity_event(args: argparse.Namespace,
+                                  config: RunConfig) -> None:
+  """
+  Write an audit record whenever break-glass identity reveal is used.
+  """
+  path = os.getenv("AUTOGRADER_REVEAL_AUDIT_LOG",
+                   "~/.autograder/privacy/reveal_identity_audit.log")
+  audit_path = os.path.abspath(os.path.expanduser(path))
+  try:
+    os.makedirs(os.path.dirname(audit_path), exist_ok=True)
+    payload = {
+      "timestamp_utc":
+      datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
+        "+00:00", "Z"),
+      "user": getpass.getuser(),
+      "pid": os.getpid(),
+      "yaml_path": getattr(args, "yaml", None),
+      "privacy_mode": getattr(config, "privacy_mode", None),
+      "prod": bool(getattr(config, "prod", False)),
+    }
+    with open(audit_path, "a", encoding="utf-8") as f:
+      f.write(json.dumps(payload) + "\n")
+    try:
+      os.chmod(audit_path, 0o600)
+    except Exception:
+      pass
+  except Exception as e:
+    log.warning(f"Failed to write reveal-identity audit event: {e}")
 
 
 def resolve_idempotency_settings(
@@ -207,6 +249,27 @@ def format_submission_for_log(submission, reveal_identity: bool = False) -> str:
   student = getattr(submission, "student", None)
   feedback = getattr(submission, "feedback", None)
   return f"{type(submission).__name__}({format_student_label(student, reveal_identity)} : {feedback})"
+
+
+def _is_lms_exception(error: Exception) -> bool:
+  return isinstance(error, (requests.exceptions.RequestException,
+                            canvasapi.exceptions.CanvasException))
+
+
+def _error_hint_for_exception(error: Exception) -> str | None:
+  if isinstance(error, autograder_exceptions.LMSError):
+    return ("See documentation/instructor_onboarding.md for Canvas setup and "
+            "credentials troubleshooting.")
+  if isinstance(error, autograder_exceptions.ConfigurationError):
+    return ("Check YAML/config values and refer to "
+            "documentation/instructor_onboarding.md.")
+  if isinstance(error, autograder_exceptions.AIError):
+    return ("Verify provider credentials and model settings. "
+            "See README.md AI configuration notes.")
+  if isinstance(error, autograder_exceptions.DockerError):
+    return ("Verify Docker is running and configured. "
+            "See README.md Docker setup/troubleshooting.")
+  return None
 
 
 def collect_push_failure_lines(results: List[Dict]) -> tuple[int, List[str]]:
@@ -334,11 +397,21 @@ def run_prepare_stage(grader, grading_assignment, args, settings,
                       do_regrade: bool) -> PrepareStageResult:
   needed_preparation = grader.assignment_needs_preparation()
   if needed_preparation:
-    grading_assignment.prepare(limit=args.limit,
-                               do_regrade=do_regrade,
-                               merge_only=args.merge_only,
-                               test=args.test,
-                               **settings)
+    try:
+      grading_assignment.prepare(limit=args.limit,
+                                 do_regrade=do_regrade,
+                                 test=args.test,
+                                 **settings)
+    except Exception as e:
+      assignment_obj = getattr(grading_assignment, "lms_assignment", None)
+      assignment_name = getattr(assignment_obj, "name", "unknown")
+      assignment_id = getattr(assignment_obj, "id", "unknown")
+      if _is_lms_exception(e):
+        raise autograder_exceptions.LMSError(
+          f"Failed to fetch submissions from Canvas for assignment "
+          f"'{assignment_name}' (id={assignment_id}). "
+          "Verify Canvas API access, assignment ID, and network connectivity.") from e
+      raise
 
   submission_count = len(grading_assignment.submissions)
   has_submissions = submission_count > 0
@@ -356,7 +429,6 @@ def run_grade_stage(grader, grading_assignment, settings, assignment_data,
                           **settings,
                           reveal_identity=assignment_data.reveal_identity,
                           privacy_mode=assignment_data.privacy_mode,
-                          merge_only=args.merge_only,
                           do_regrade=do_regrade)
 
   for submission in grading_assignment.submissions:
@@ -380,7 +452,6 @@ def run_publish_stage(grader, grading_assignment, args, push_grades: bool,
 
   finalize_kwargs = {
     "push": push_grades,
-    "merge_only": args.merge_only,
     "idempotency_key": assignment_data.idempotency_key,
     "idempotency_state_dir": assignment_data.idempotency_state_dir,
   }
@@ -442,21 +513,44 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
     grader_name = assignment_data.grader_name
     assignment_kind = assignment_data.assignment_kind
 
-    if assignment_kind not in ACTIVE_ASSIGNMENT_KINDS:
-      supported = ", ".join(sorted(ACTIVE_ASSIGNMENT_KINDS))
-      raise ValueError(
+    active_assignment_kinds, active_graders_by_kind = (
+      get_active_grader_compatibility())
+    if assignment_kind not in active_assignment_kinds:
+      supported = ", ".join(sorted(active_assignment_kinds))
+      raise autograder_exceptions.ConfigurationError(
         f"Assignment kind '{assignment_kind}' is not supported in this build. "
         f"Supported kinds: {supported}")
-    allowed_graders = ACTIVE_GRADERS_BY_KIND.get(assignment_kind, set())
+    allowed_graders = active_graders_by_kind.get(assignment_kind, set())
     if grader_name not in allowed_graders:
       allowed = ", ".join(sorted(allowed_graders)) or "(none)"
-      raise ValueError(
+      raise autograder_exceptions.ConfigurationError(
         f"Grader '{grader_name}' is not supported for kind '{assignment_kind}'. "
         f"Allowed graders: {allowed}")
 
-    lms_assignment = course.get_assignment(assignment_id)
-    assignment_name = lms_assignment.name
-    log.info(f"[Thread {thread_id}] Grading assignment \"{assignment_name}\"")
+    try:
+      lms_assignment = course.get_assignment(assignment_id)
+    except Exception as e:
+      if _is_lms_exception(e) or isinstance(e, (ValueError, AttributeError)):
+        raise autograder_exceptions.LMSError(
+          f"Failed to load Canvas assignment id={assignment_id} for course "
+          f"'{course_name}': {e}. Verify course/assignment IDs and Canvas API access. "
+          "If Canvas is under maintenance, retry after maintenance completes."
+        ) from e
+      raise
+    if lms_assignment is None:
+      raise autograder_exceptions.LMSError(
+        f"Canvas assignment id={assignment_id} was not found for course "
+        f"'{course_name}'. Verify the assignment ID in your YAML config."
+      )
+    try:
+      lms_assignment_name = lms_assignment.name
+    except AttributeError as e:
+      raise autograder_exceptions.LMSError(
+        f"Canvas assignment id={assignment_id} for course '{course_name}' is missing "
+        f"required metadata ('name'): {e}. This can happen during Canvas maintenance."
+      ) from e
+    assignment_name = lms_assignment_name
+    log.info(f"[Thread {thread_id}] Grading assignment \"{lms_assignment_name}\"")
 
     settings = assignment_data.settings
 
@@ -471,16 +565,16 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
       try:
         settings["records_dir"] = resolve_records_dir(settings.get("records_dir"))
       except ValueError as e:
-        raise ValueError(
+        raise autograder_exceptions.ConfigurationError(
           f"Invalid records configuration for assignment {assignment_id} "
           f"('{assignment_name or 'unknown'}'): {e}") from e
     elif settings.get("records_dir") is not None and str(grader_name).lower(
-    ) == "textsubmissiongrader":
+    ) in {"textsubmissiongrader", "weeklystudynotesgrader"}:
       # TextSubmissionGrader can write optional reports/questions to records_dir
       try:
         settings["records_dir"] = resolve_records_dir(settings.get("records_dir"))
       except ValueError as e:
-        raise ValueError(
+        raise autograder_exceptions.ConfigurationError(
           f"Invalid records configuration for assignment {assignment_id} "
           f"('{assignment_name or 'unknown'}'): {e}") from e
 
@@ -494,7 +588,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
     if isinstance(assignment_name, str):
       assignment_name = assignment_name.strip()
     if not assignment_name:
-      assignment_name = repo_path or lms_assignment.name
+      assignment_name = repo_path or lms_assignment_name
     grader = GraderRegistry.create(grader_name,
                                    assignment_path=repo_path,
                                    assignment_name=assignment_name,
@@ -518,11 +612,11 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
 
       if not prepare_result.has_submissions:
         log.info(
-          f"[Thread {thread_id}] No submissions for {lms_assignment.name}; skipping grading."
+          f"[Thread {thread_id}] No submissions for {lms_assignment_name}; skipping grading."
         )
         return {
           'success': True,
-          'assignment_name': assignment_name,
+          'assignment_name': lms_assignment_name,
           'course_name': course_name,
           'assignment_id': assignment_id,
           'thread_id': thread_id,
@@ -546,7 +640,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
 
     return {
       'success': True,
-      'assignment_name': lms_assignment.name,
+      'assignment_name': lms_assignment_name,
       'assignment_id': assignment_id,
       'thread_id': thread_id,
       'course_name': course_name,
@@ -555,6 +649,10 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
     }
 
   except Exception as e:
+    hint = _error_hint_for_exception(e)
+    error_message = str(e)
+    if hint:
+      error_message = f"{error_message} {hint}"
     log.exception(
       f"[Thread {thread_id}] Error grading assignment {assignment_id or 'unknown'}: {e}"
     )
@@ -563,7 +661,8 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
       'assignment_id': assignment_id,
       'assignment_name': assignment_name,
       'course_name': course_name,
-      'error': str(e),
+      'error': error_message,
+      'error_type': type(e).__name__,
       'thread_id': thread_id
     }
   finally:
@@ -629,15 +728,31 @@ def collect_assignments_to_grade(config: RunConfig,
     )
 
   # Create the LMS interface
-  lms_interface = CanvasInterface(prod=config.prod,
-                                  env_path=env_path,
-                                  privacy_mode=config.privacy_mode,
-                                  reveal_identity=reveal_identity)
+  try:
+    lms_interface = CanvasInterface(prod=config.prod,
+                                    env_path=env_path,
+                                    privacy_mode=config.privacy_mode,
+                                    reveal_identity=reveal_identity)
+  except Exception as e:
+    if _is_lms_exception(e) or isinstance(e, ValueError):
+      raise autograder_exceptions.LMSError(
+        "Failed to initialize Canvas interface. "
+        "Verify .env credentials (CANVAS_API_URL/CANVAS_API_KEY), network connectivity, and API token validity."
+      ) from e
+    raise
 
   assignments_to_grade = []
 
   for course_config in config.courses:
-    course = lms_interface.get_course(course_config.id)
+    try:
+      course = lms_interface.get_course(course_config.id)
+    except Exception as e:
+      if _is_lms_exception(e) or isinstance(e, ValueError):
+        raise autograder_exceptions.LMSError(
+          f"Failed to load Canvas course id={course_config.id}. "
+          "Verify course ID, enrollment/access permissions, and API credentials."
+        ) from e
+      raise
     log.info(f"Preparing to grade Course \"{course.name}\"")
 
     for group in course_config.assignment_groups:
@@ -678,6 +793,75 @@ def collect_assignments_to_grade(config: RunConfig,
           ))
 
   return assignments_to_grade
+
+
+def build_dump_config_payload(
+    config: RunConfig,
+    assignments_to_grade: List[AssignmentRunRequest],
+    args: argparse.Namespace) -> Dict:
+  assignments_payload = []
+  for assignment in assignments_to_grade:
+    course_name = assignment.course_name
+    if not course_name and assignment.course is not None:
+      course_name = getattr(assignment.course, "name", None)
+
+    assignments_payload.append({
+      "course_name": course_name,
+      "assignment_id": assignment.assignment_id,
+      "assignment_name": assignment.assignment_name,
+      "assignment_type": assignment.assignment_type,
+      "assignment_kind": assignment.assignment_kind,
+      "grader_name": assignment.grader_name,
+      "repo_path": assignment.repo_path,
+      "push_grades": assignment.push_grades,
+      "privacy_mode": assignment.privacy_mode,
+      "reveal_identity": assignment.reveal_identity,
+      "idempotency_key": assignment.idempotency_key,
+      "idempotency_state_dir": assignment.idempotency_state_dir,
+      "slack_channel": assignment.slack_channel,
+      "settings": assignment.settings,
+    })
+
+  return {
+    "yaml_path": args.yaml,
+    "run": {
+      "prod": config.prod,
+      "push": config.push,
+      "privacy_mode": config.privacy_mode,
+      "reveal_identity": bool(assignments_to_grade[0].reveal_identity)
+      if assignments_to_grade else bool(config.reveal_identity),
+      "idempotency_key": (assignments_to_grade[0].idempotency_key
+                           if assignments_to_grade else config.idempotency_key),
+      "idempotency_state_dir":
+      (assignments_to_grade[0].idempotency_state_dir if assignments_to_grade
+       else config.idempotency_state_dir),
+      "assignment_count": len(assignments_to_grade),
+    },
+    "assignments": assignments_payload,
+  }
+
+
+def dump_effective_config(config: RunConfig,
+                          assignments_to_grade: List[AssignmentRunRequest],
+                          args: argparse.Namespace) -> None:
+  payload = build_dump_config_payload(config, assignments_to_grade, args)
+  print(json.dumps(payload, indent=2))
+
+
+def print_dry_run_summary(
+    assignments_to_grade: List[AssignmentRunRequest]) -> None:
+  log.info(
+    "Dry-run mode enabled: validating config and Canvas access only. No submissions will be downloaded, graded, or pushed."
+  )
+  log.info(
+    f"Dry-run plan includes {len(assignments_to_grade)} assignment(s).")
+  for assignment in assignments_to_grade:
+    assignment_label = (assignment.assignment_name or assignment.repo_path
+                        or f"ID {assignment.assignment_id}")
+    log.info(
+      f"  {assignment.course_name} / {assignment_label} "
+      f"(ID: {assignment.assignment_id}, kind={assignment.assignment_kind}, "
+      f"grader={assignment.grader_name}, push={assignment.push_grades})")
 
 
 def execute_grading(assignments_to_grade: List[AssignmentRunRequest],
@@ -740,13 +924,19 @@ def execute_grading(assignments_to_grade: List[AssignmentRunRequest],
         log.error(
           f"Assignment {assignment_data.assignment_id} generated an exception: {exc}"
         )
+        hint = _error_hint_for_exception(exc)
+        error_message = str(exc)
+        if hint:
+          error_message = f"{error_message} {hint}"
         results.append({
           'success':
           False,
           'assignment_id':
           assignment_data.assignment_id,
+          'error_type':
+          type(exc).__name__,
           'error':
-          str(exc)
+          error_message
         })
 
   return results
@@ -768,7 +958,14 @@ def print_results_summary(results: List[Dict]) -> None:
     log.error("The following assignments failed:")
     for result in results:
       if not result['success']:
-        log.error(f"  Assignment {result['assignment_id']}: {result['error']}")
+        error_type = result.get("error_type")
+        if error_type:
+          log.error(
+            f"  Assignment {result['assignment_id']} [{error_type}]: {result['error']}"
+          )
+        else:
+          log.error(
+            f"  Assignment {result['assignment_id']}: {result['error']}")
 
   push_failed_total, push_failure_lines = collect_push_failure_lines(results)
   if push_failed_total > 0:
@@ -864,6 +1061,9 @@ def send_slack_run_summary(results: List[Dict], args: argparse.Namespace,
                           or f"ID {result.get('assignment_id')}")
       course_label = result.get('course_name') or "Unknown Course"
       error_msg = result.get('error', 'Unknown error')
+      error_type = result.get('error_type')
+      if error_type:
+        error_msg = f"[{error_type}] {error_msg}"
       failure_lines.append(
         f"- {course_label} / {assignment_label}: {error_msg}")
 
@@ -946,6 +1146,11 @@ def main() -> int:
       config = load_and_validate_config(args.yaml)
 
       assignments_to_grade = collect_assignments_to_grade(config, args)
+      if args.dump_config:
+        dump_effective_config(config, assignments_to_grade, args)
+      if args.dry_run:
+        print_dry_run_summary(assignments_to_grade)
+        return 0
       results = execute_grading(assignments_to_grade, args)
 
       print_results_summary(results)
@@ -956,6 +1161,9 @@ def main() -> int:
 
       if any(not r['success'] for r in results):
         exit_code = 1
+    except autograder_exceptions.AutograderError as e:
+      log.error(e)
+      exit_code = 1
     finally:
       # Always perform global Docker cleanup at the end
       log.info("Performing final Docker cleanup...")

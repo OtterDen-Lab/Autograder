@@ -5,6 +5,7 @@ import itertools
 import logging
 import os
 import queue
+import random
 import tempfile
 import threading
 import time
@@ -28,6 +29,7 @@ from .classes import (
   Submission__Canvas,
   TextSubmission__Canvas,
 )
+from .privacy import PrivacyContext
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +38,8 @@ UPLOAD_MAX_WORKERS = 4
 UPLOAD_MAX_IN_FLIGHT = 8
 RETRY_BACKOFF_BASE = 1.0
 RETRY_BACKOFF_MAX = 10.0
+RETRY_BACKOFF_JITTER_RATIO = 0.2
+RETRY_TOTAL_TIMEOUT_SECONDS = 120.0
 
 
 def _canvas_exception_status(exc: Exception) -> int | None:
@@ -83,6 +87,23 @@ def _format_canvas_exception(exc: Exception) -> str:
   return " | ".join(parts)
 
 
+def _compute_retry_delay_seconds(
+    attempt: int,
+    *,
+    retry_backoff_base: float,
+    retry_backoff_max: float,
+    retry_backoff_jitter_ratio: float,
+) -> float:
+  base_delay = min(retry_backoff_base * (2 ** (attempt - 1)),
+                   retry_backoff_max)
+  if retry_backoff_jitter_ratio <= 0:
+    return max(0.0, base_delay)
+
+  jitter_window = max(0.0, base_delay * retry_backoff_jitter_ratio)
+  jittered = base_delay + random.uniform(-jitter_window, jitter_window)
+  return max(0.0, min(jittered, retry_backoff_max))
+
+
 
 class CanvasInterface:
   def __init__(
@@ -93,7 +114,8 @@ class CanvasInterface:
       canvas_url: str | None = None,
       canvas_key: str | None = None,
       privacy_mode: str | None = None,
-      reveal_identity: bool = False
+      reveal_identity: bool = False,
+      blind_id_map_path: str | None = None
   ):
     self.env_path = env_path
     if canvas_url is not None or canvas_key is not None:
@@ -112,8 +134,10 @@ class CanvasInterface:
     if self.privacy_mode not in {"none", "id_only", "blind"}:
       raise ValueError("privacy_mode must be one of: none, id_only, blind.")
     self.reveal_identity = reveal_identity
-    self._anon_by_user_id: dict[int, str] = {}
-    self._anon_lock = threading.Lock()
+    self.privacy_context = PrivacyContext(
+      privacy_mode=self.privacy_mode,
+      reveal_identity=self.reveal_identity,
+      blind_id_map_path=blind_id_map_path)
     if canvas_url is None and canvas_key is None:
       if self.prod:
         log.warning("Using canvas PROD!")
@@ -136,22 +160,10 @@ class CanvasInterface:
     # cap_canvas.Requester = RobustRequester
     self.canvas = canvasapi.Canvas(self.canvas_url, self.canvas_key)
 
-  def _anonymous_label_for_user(self, user_id: int) -> str:
-    with self._anon_lock:
-      if user_id not in self._anon_by_user_id:
-        self._anon_by_user_id[user_id] = f"Anon {len(self._anon_by_user_id) + 1:04d}"
-      return self._anon_by_user_id[user_id]
-
   def resolve_student_name(self,
                            user_id: int,
                            raw_name: str | None = None) -> str:
-    if self.privacy_mode == "none":
-      if raw_name:
-        return raw_name
-      return f"Student {user_id}"
-    if self.privacy_mode == "id_only":
-      return f"Student {user_id}"
-    return self._anonymous_label_for_user(user_id)
+    return self.privacy_context.resolve_student_name(user_id, raw_name=raw_name)
     
   def get_course(self, course_id: int) -> CanvasCourse:
     if course_id is None:
@@ -537,42 +549,96 @@ class CanvasCourse(LMSWrapper):
       max_upload_retries: int,
       retry_backoff_base: float,
       retry_backoff_max: float,
-      backoff_controller: "_CanvasBackoffController | None"
+      backoff_controller: "_CanvasBackoffController | None",
+      retry_backoff_jitter_ratio: float = RETRY_BACKOFF_JITTER_RATIO,
+      retry_total_timeout_seconds: float | None = RETRY_TOTAL_TIMEOUT_SECONDS
   ) -> bool:
+    started_at = time.monotonic()
+    deadline = None
+    if (retry_total_timeout_seconds is not None
+        and retry_total_timeout_seconds > 0):
+      deadline = started_at + retry_total_timeout_seconds
+
     for attempt in range(1, max_upload_retries + 1):
       if backoff_controller is not None:
         backoff_controller.wait()
+      if deadline is not None and time.monotonic() >= deadline:
+        elapsed = time.monotonic() - started_at
+        log.error(
+          f"Exceeded retry duration ({elapsed:.1f}s, cap={retry_total_timeout_seconds:.1f}s); dropping question: {label}"
+        )
+        return False
       try:
         func()
         return True
       except canvasapi.exceptions.CanvasException as e:
-        log.warning("Encountered Canvas error.")
+        status = _canvas_exception_status(e)
+        retryable = _is_retryable_canvas_exception(e)
+        error_type = "transient" if retryable else "permanent"
+        log.warning(
+          f"Encountered {error_type} Canvas error for {label} "
+          f"(status={status}, attempt={attempt}/{max_upload_retries})."
+        )
         log.warning(e)
         extra = _format_canvas_exception(e)
         if extra:
           log.warning(extra)
-        if not _is_retryable_canvas_exception(e):
+        if not retryable:
           log.error(f"Non-retryable Canvas error; dropping question: {label}")
           return False
         if attempt >= max_upload_retries:
           log.error(f"Exceeded max retries ({max_upload_retries}); dropping question: {label}")
           return False
-        sleep_s = min(retry_backoff_base * (2 ** (attempt - 1)), retry_backoff_max)
-        if backoff_controller is not None and _canvas_exception_status(e) == 429:
+        sleep_s = _compute_retry_delay_seconds(
+          attempt,
+          retry_backoff_base=retry_backoff_base,
+          retry_backoff_max=retry_backoff_max,
+          retry_backoff_jitter_ratio=retry_backoff_jitter_ratio,
+        )
+        if deadline is not None:
+          remaining = deadline - time.monotonic()
+          if remaining <= 0:
+            elapsed = time.monotonic() - started_at
+            log.error(
+              f"Exceeded retry duration ({elapsed:.1f}s, cap={retry_total_timeout_seconds:.1f}s); dropping question: {label}"
+            )
+            return False
+          sleep_s = min(sleep_s, remaining)
+
+        if backoff_controller is not None and status == 429:
           backoff_controller.defer(sleep_s)
         log.warning(
-          f"Retrying {label} in {sleep_s:.1f}s "
+          f"Retrying {label} in {sleep_s:.2f}s "
           f"(attempt {attempt}/{max_upload_retries})"
         )
-        time.sleep(sleep_s)
+        if sleep_s > 0:
+          time.sleep(sleep_s)
     return False
+
+  @staticmethod
+  def _validate_assignment_metadata(canvasapi_assignment,
+                                    assignment_id: int) -> None:
+    missing_fields = []
+    if not hasattr(canvasapi_assignment, "id"):
+      missing_fields.append("id")
+    if not hasattr(canvasapi_assignment, "name"):
+      missing_fields.append("name")
+
+    if missing_fields:
+      missing = ", ".join(missing_fields)
+      raise ValueError(
+        f"Canvas returned incomplete metadata for assignment id={assignment_id} "
+        f"(missing: {missing}). This can happen during Canvas maintenance or partial API outages."
+      )
 
   def get_assignment(self, assignment_id : int) -> CanvasAssignment | None:
     try:
+      canvas_assignment = self.course.get_assignment(assignment_id)
+      self._validate_assignment_metadata(canvas_assignment, assignment_id)
       return CanvasAssignment(
         canvasapi_interface=self.canvas_interface,
         canvasapi_course=self,
-        canvasapi_assignment=self.course.get_assignment(assignment_id)
+        canvasapi_assignment=canvas_assignment
       )
     except canvasapi.exceptions.ResourceDoesNotExist:
       log.error(f"Assignment {assignment_id} not found in course \"{self.name}\"")
@@ -716,7 +782,10 @@ class CanvasAssignment(LMSWrapper):
     
     def upload_buffer_as_file(buffer: bytes, name: str):
       suffix = os.path.splitext(name)[1]  # keep extension if needed
-      with tempfile.NamedTemporaryFile(mode="wb", delete=False, dir=".", prefix="feedback_", suffix=suffix) as tmp:
+      with tempfile.NamedTemporaryFile(mode="wb",
+                                       delete=False,
+                                       prefix="autograder_feedback_upload_",
+                                       suffix=suffix) as tmp:
         tmp.write(buffer)
         tmp.flush()
         os.fsync(tmp.fileno())
