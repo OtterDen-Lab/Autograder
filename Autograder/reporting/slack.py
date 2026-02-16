@@ -10,7 +10,7 @@ from typing import Dict, List
 import requests
 
 from Autograder.config_models import RunConfig
-from .reports import collect_push_failure_lines
+from .reports import collect_push_failure_lines, collect_push_skipped_ungraded_lines
 
 log = logging.getLogger(__name__)
 
@@ -45,8 +45,11 @@ def send_slack_run_summary(results: List[Dict], args: argparse.Namespace,
     successful = sum(1 for r in results if r['success'])
     failed = len(results) - successful
     push_failed_total, push_failure_lines = collect_push_failure_lines(results)
+    push_skipped_ungraded_total, push_skipped_ungraded_lines = (
+        collect_push_skipped_ungraded_lines(results))
     notify_on = reporting_config.get("notify_on", "failures").lower()
-    if notify_on == "failures" and failed == 0 and push_failed_total == 0:
+    if (notify_on == "failures" and failed == 0 and push_failed_total == 0
+            and push_skipped_ungraded_total == 0):
         return
 
     failure_lines = []
@@ -63,7 +66,7 @@ def send_slack_run_summary(results: List[Dict], args: argparse.Namespace,
                 f"- {course_label} / {assignment_label}: {error_msg}")
 
     message_lines = [
-        f":warning: Grading run completed with {failed} assignment failure(s), {push_failed_total} per-student push failure(s) ({successful} assignment(s) succeeded).",
+        f":warning: Grading run completed with {failed} assignment failure(s), {push_failed_total} per-student push failure(s), {push_skipped_ungraded_total} ungraded skip(s) ({successful} assignment(s) succeeded).",
         f"Config: `{args.yaml}`",
     ]
     if failure_lines:
@@ -72,6 +75,9 @@ def send_slack_run_summary(results: List[Dict], args: argparse.Namespace,
     if push_failure_lines:
         message_lines.append("Per-student push failures:")
         message_lines.extend(push_failure_lines)
+    if push_skipped_ungraded_lines:
+        message_lines.append("Per-student ungraded skips:")
+        message_lines.extend(push_skipped_ungraded_lines)
 
     try:
         response = requests.post(

@@ -107,8 +107,14 @@ class BaseRegistry(abc.ABC):
         module = importlib.import_module(f"{package_name}.{module_name}")
         log.debug(f"Loaded module: {module}")
     else:
-      # Load a single module file
-      module = importlib.import_module(package_name)
+      # Load a single module file (e.g. assignment.py)
+      module_hint = relative_path.replace("/", ".").strip(".")
+      if module_hint.endswith(".py"):
+        module_hint = module_hint[:-3]
+      module_to_import = package_name
+      if module_hint:
+        module_to_import = f"{package_name}.{module_hint}"
+      module = importlib.import_module(module_to_import)
       log.debug(f"Loaded module: {module}")
 
     cls._scanned = True

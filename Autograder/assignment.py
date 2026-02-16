@@ -99,7 +99,9 @@ class Assignment(abc.ABC):
     push_succeeded = 0
     push_failed = 0
     push_skipped = 0
+    push_skipped_ungraded = 0
     push_failed_students = []
+    push_skipped_ungraded_students = []
     for submission in self.submissions:
       user_id = submission.student.user_id
       if push_enabled and processed_user_ids is not None and user_id in processed_user_ids:
@@ -111,22 +113,40 @@ class Assignment(abc.ABC):
 
       # Handle record retention before pushing to LMS
       if kwargs.get("record_retention", False):
-        self._save_feedback_record(submission.student,
-                                   submission.feedback.comments,
-                                   kwargs.get("records_dir"),
-                                   self.lms_assignment.name)
+        feedback = getattr(submission, "feedback", None)
+        if feedback is not None:
+          self._save_feedback_record(submission.student,
+                                     feedback.comments,
+                                     kwargs.get("records_dir"),
+                                     self.lms_assignment.name)
+        else:
+          log.warning(
+            f"Skipping record retention for assignment '{self.lms_assignment.name}', "
+            f"student '{submission.student.name}' (canvas_user_id={user_id}) "
+            "because no feedback was generated.")
 
       if push_enabled:
+        feedback = getattr(submission, "feedback", None)
+        if feedback is None or feedback.percentage_score is None:
+          push_skipped += 1
+          push_skipped_ungraded += 1
+          push_skipped_ungraded_students.append(str(submission.student.name))
+          log.warning(
+            f"Skipping push for assignment '{self.lms_assignment.name}', "
+            f"student '{submission.student.name}' (canvas_user_id={user_id}) "
+            "because grading did not produce valid feedback.")
+          continue
+
         log.debug(f"Pushing feedback for: {submission}")
         push_attempted += 1
         try:
           # Scale the score for Canvas submission
           scaled_score = self.scale_score_for_canvas(
-            submission.feedback.percentage_score)
+            feedback.percentage_score)
           pushed = self.lms_assignment.push_feedback(
             score=scaled_score,
-            comments=submission.feedback.comments,
-            attachments=submission.feedback.attachments,
+            comments=feedback.comments,
+            attachments=feedback.attachments,
             user_id=user_id,
             keep_previous_best=True,
             clobber_feedback=False)
@@ -157,12 +177,19 @@ class Assignment(abc.ABC):
 
     if push_enabled:
       log.info(
-        f"Push summary for {self.lms_assignment.name}: attempted={push_attempted}, succeeded={push_succeeded}, failed={push_failed}, skipped={push_skipped}"
+        f"Push summary for {self.lms_assignment.name}: attempted={push_attempted}, "
+        f"succeeded={push_succeeded}, failed={push_failed}, skipped={push_skipped}, "
+        f"skipped_ungraded={push_skipped_ungraded}"
       )
 
     if processed_user_ids is not None and processed_dirty:
-      self._save_idempotency_user_ids(
-        idempotency_key, idempotency_state_dir, processed_user_ids)
+      try:
+        self._save_idempotency_user_ids(
+          idempotency_key, idempotency_state_dir, processed_user_ids)
+      except Exception as e:
+        log.warning(
+          f"Failed to persist idempotency state for assignment '{self.lms_assignment.name}': {e}. "
+          "Grades may be pushed again on rerun with this key.")
 
     return {
       "push_enabled": push_enabled,
@@ -170,7 +197,9 @@ class Assignment(abc.ABC):
       "push_succeeded": push_succeeded,
       "push_failed": push_failed,
       "push_skipped": push_skipped,
+      "push_skipped_ungraded": push_skipped_ungraded,
       "push_failed_students": push_failed_students,
+      "push_skipped_ungraded_students": push_skipped_ungraded_students,
     }
 
   def _save_feedback_record(self, student: Student, comments: str,

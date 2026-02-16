@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from typing import Any, Callable, Dict, TypeVar
 
 from Autograder import ai_helper
@@ -51,14 +52,18 @@ def query_openai_structured(prompt: str,
                             *,
                             schema_name: str,
                             tier: str,
-                            max_response_tokens: int) -> tuple[Dict[str, Any], Dict[str, Any]]:
+                            max_response_tokens: int,
+                            max_attempts: int = 3) -> tuple[Dict[str, Any], Dict[str, Any]]:
   try:
     helper = ai_helper.AI_Helper__OpenAI()
+    retries = max(0, int(max_attempts) - 1)
     return helper.query_ai(prompt,
                            [],
                            max_response_tokens=max_response_tokens,
+                           max_retries=retries,
                            tier=tier,
-                           schema_name=schema_name)
+                           schema_name=schema_name,
+                           strict_validation=True)
   except Exception as e:
     raise autograder_exceptions.AIProviderError(
       f"OpenAI request failed (tier={tier}, schema={schema_name}). "
@@ -141,12 +146,16 @@ def query_anthropic_structured(
         f"Anthropic JSON parse failed (attempt {attempt}/{max_retries}), "
         f"schema={schema_name}"
       )
+      if attempt < max_retries:
+        time.sleep(min(0.5 * (2 ** (attempt - 1)), 2.0))
 
     except autograder_exceptions.AIProviderError:
       raise
     except Exception as e:
       last_error = e
       log.warning(f"Anthropic query error (attempt {attempt}/{max_retries}): {e}")
+      if attempt < max_retries:
+        time.sleep(min(0.5 * (2 ** (attempt - 1)), 2.0))
 
   # Exhausted retries
   raise autograder_exceptions.AIProviderError(

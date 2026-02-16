@@ -17,6 +17,7 @@ This runbook covers how to diagnose and recover from failed or partial grading r
 1. Check top-level run summary logs:
    - Assignment failures (`failed > 0`)
    - Per-student push failures (`push failure(s)`)
+   - Per-student ungraded skips (`ungraded skip(s)`)
 2. If using Slack run summary, inspect:
    - `Assignment failures:`
    - `Per-student push failures:`
@@ -24,6 +25,8 @@ This runbook covers how to diagnose and recover from failed or partial grading r
    - `summary.assignment_failures`
    - `summary.push_failures_total`
    - `summary.push_failures`
+   - `summary.push_skipped_ungraded_total`
+   - `summary.push_skipped_ungraded`
    - `summary.stage_contracts`
 
 ## Failure Types and Response

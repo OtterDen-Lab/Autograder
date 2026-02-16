@@ -26,6 +26,7 @@ from lms_interface.canvas_interface import (
     _format_canvas_exception,
     _compute_retry_delay_seconds,
 )
+from lms_interface.classes import FileSubmission__Canvas
 
 
 class MockCanvasException(Exception):
@@ -519,6 +520,50 @@ class TestCanvasAssignmentSubmissions:
 
         with pytest.raises(ValueError, match="incomplete metadata"):
             course.get_assignment(555)
+
+    def test_get_submissions_prefers_attachments_for_programming_assignments(self):
+        interface = CanvasInterface(
+            canvas_url="https://canvas.example.edu",
+            canvas_key="token",
+        )
+
+        mock_canvasapi_course = MagicMock()
+        mock_canvasapi_course.id = 123
+        mock_canvasapi_course.name = "Test Course"
+        mock_canvasapi_course.get_user.return_value = None
+
+        course = CanvasCourse(
+            canvas_interface=interface,
+            canvasapi_course=mock_canvasapi_course,
+        )
+
+        mock_canvasapi_assignment = MagicMock()
+        mock_canvasapi_assignment.id = 456
+        mock_canvasapi_assignment.get_submissions.return_value = [
+            SimpleNamespace(
+                user_id=42,
+                submission_history=[{
+                    "workflow_state": "submitted",
+                    "score": None,
+                    "body": "I also wrote notes in the text box",
+                    "attachments": [{
+                        "filename": "main.py",
+                        "url": "https://canvas.example.edu/files/main.py"
+                    }]
+                }])
+        ]
+
+        assignment = CanvasAssignment(
+            canvasapi_interface=interface,
+            canvasapi_course=course,
+            canvasapi_assignment=mock_canvasapi_assignment,
+        )
+
+        submissions = assignment.get_submissions(
+            assignment_kind="ProgrammingAssignment")
+
+        assert len(submissions) == 1
+        assert isinstance(submissions[0], FileSubmission__Canvas)
 
 
 class TestCanvasAssignmentPushFeedback:

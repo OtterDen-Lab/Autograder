@@ -29,6 +29,9 @@ Use these settings under `assignment_types.<type>.settings`:
 - `additional_repos`: optional extra repositories mounted into additional paths
 - `student_code_path`: where to copy student files under assignment root
 - `file_paths`: regex-to-target path/name mapping for uploaded files
+- `grading_script`: optional override for grader entrypoint command
+- `grading_workdir`: optional override for grader working directory
+- `upload_error_artifacts`: opt-in upload of stdout/stderr/student code attachments to Slack on grading errors
 
 ## 4) Text Grader Tuning
 

@@ -43,9 +43,12 @@ Each entry:
 - `record_retention` (`bool`, default `false`)
 - `records_dir` (`string|null`)
 - `report_errors` (`bool`, default `true`)
+- `upload_error_artifacts` (`bool`, default `false`)
 - `slack_webhook` (`string|null`)
 - `slack_token` (`string|null`)
 - `slack_channel` (`string|null`)
+- `grading_script` (`string|null`, default template script under `/repo/scripts/grader.py`)
+- `grading_workdir` (`string|null`, default `/repo`)
 - `num_repeats` (`int|null`)
 
 ### TextSubmissionGrader / WeeklyStudyNotesGrader settings

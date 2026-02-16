@@ -370,6 +370,17 @@ class IndividualGradingProcessor:
                 result = self.grader._grade_individual_submission(
                     submission_text, core_topics, student_id)
 
+            if result.get("grading_failed", False):
+                result["student_name"] = student_name
+                result["accurate_word_count"] = word_count
+                self.grader.support_needed_students.append({
+                    "student_id": student_id,
+                    "student_name": student_name,
+                    "reason": result.get("support_reason", "LLM grading failed")
+                })
+                individual_results.append(result)
+                continue
+
             result = self.grader.score_calculator.apply_scores(
                 result, word_count=word_count, student_name=student_name)
 
@@ -527,33 +538,17 @@ class IndividualSubmissionAnalyzer:
                                                               core_topics)
         orchestrator = ProviderFallbackOrchestrator(self.grader.prefer_anthropic)
 
-        def _default_from_text(analysis_text: str) -> Dict:
-            return {
-                "student_id": student_id,
-                "engagement_score": 3,  # Default to moderate score
-                "relevance_score": 1,
-                "explanation_quality_score": 1,
-                "topics_covered": [],
-                "topics_missing": core_topics,
-                "topics_needing_review": [],
-                "misconception_notes": "",
-                "needs_support": False,
-                "support_reason": "",
-                "feedback": analysis_text[:300] + "..." if len(analysis_text) > 300 else analysis_text
-            }
-
         def _run_anthropic() -> Dict:
             operation = f"Phase 2 - Individual Grading ({student_id}) - Anthropic"
             if not self.grader.prefer_anthropic:
                 operation = f"Phase 2 - Individual Grading ({student_id}) - Anthropic fallback"
-            analysis_text, usage = query_anthropic_text(
-                prompt, tier=self.grader.phase2_tier, max_response_tokens=1000)
+            result, usage = query_anthropic_structured(
+                prompt,
+                schema_name="individual_grading",
+                tier=self.grader.phase2_tier,
+                max_response_tokens=1000,
+                max_retries=3)
             self.grader._track_token_usage(usage, operation)
-
-            result = parse_anthropic_json_payload(analysis_text,
-                                                  schema_name="individual_grading")
-            if result is None:
-                return _default_from_text(analysis_text)
             result["student_id"] = student_id
             return result
 
@@ -562,7 +557,8 @@ class IndividualSubmissionAnalyzer:
                 prompt,
                 schema_name="individual_grading",
                 tier=self.grader.phase2_tier,
-                max_response_tokens=1000)
+                max_response_tokens=1000,
+                max_attempts=3)
             self.grader._track_token_usage(
                 usage, f"Phase 2 - Individual Grading ({student_id}) - OpenAI")
             result["student_id"] = student_id
@@ -585,33 +581,14 @@ class IndividualSubmissionAnalyzer:
                 log.debug(f"Anthropic failed for {student_id}: {error}")
 
         def _on_both_fail(primary_error: Exception, _secondary_error: Exception) -> Dict:
-            if not self.grader.prefer_anthropic:
-                return {
-                    "student_id": student_id,
-                    "engagement_score": 0,
-                    "relevance_score": 0,
-                    "explanation_quality_score": 0,
-                    "topics_covered": [],
-                    "topics_missing": core_topics,
-                    "topics_needing_review": [],
-                    "misconception_notes": "",
-                    "needs_support": True,
-                    "support_reason": "Error analyzing submission",
-                    "feedback": f"Error analyzing submission: {primary_error}"
-                }
-
+            self.grader._report_individual_grading_failure(
+                student_id, f"{type(primary_error).__name__}: {primary_error}")
             return {
                 "student_id": student_id,
-                "engagement_score": 0,
-                "relevance_score": 0,
-                "explanation_quality_score": 0,
-                "topics_covered": [],
-                "topics_missing": core_topics,
-                "topics_needing_review": [],
-                "misconception_notes": "",
+                "grading_failed": True,
                 "needs_support": True,
-                "support_reason": "Error analyzing submission",
-                "feedback": "Error analyzing submission"
+                "support_reason": "LLM grading failed after retries",
+                "feedback": "Automatic grading was unavailable for this submission. Instructor review is required."
             }
 
         return orchestrator.run(run_openai=_run_openai,

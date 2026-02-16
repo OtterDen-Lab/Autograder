@@ -20,7 +20,8 @@ def _copy_grader_map(raw: Dict[str, set[str]]) -> Dict[str, set[str]]:
   return {kind: set(graders) for kind, graders in raw.items()}
 
 
-def get_active_grader_compatibility() -> tuple[set[str], Dict[str, set[str]]]:
+def get_active_grader_compatibility(
+    strict: bool = False) -> tuple[set[str], Dict[str, set[str]]]:
   """
   Discover assignment-kind/grader compatibility from registered graders.
 
@@ -52,7 +53,10 @@ def get_active_grader_compatibility() -> tuple[set[str], Dict[str, set[str]]]:
         if not normalized_kind:
           continue
         discovered_by_kind.setdefault(normalized_kind, set()).add(display_name)
-  except Exception:
+  except Exception as e:
+    if strict:
+      raise ValueError(
+        f"Failed to discover grader compatibility from registry: {e}") from e
     discovered_by_kind = {}
 
   if discovered_by_kind:
@@ -273,8 +277,17 @@ def _parse_course(raw_course: Any) -> CourseConfig:
 
 def _parse_assignment_types(
   raw_types: Any) -> Dict[str, AssignmentTypeConfig]:
-  active_assignment_kinds, active_graders_by_kind = (
-    get_active_grader_compatibility())
+  try:
+    try:
+      active_assignment_kinds, active_graders_by_kind = (
+        get_active_grader_compatibility(strict=True))
+    except TypeError:
+      # Backward-compatible path for monkeypatched tests/helpers that don't
+      # accept the strict kwarg.
+      active_assignment_kinds, active_graders_by_kind = (
+        get_active_grader_compatibility())
+  except ValueError as e:
+    raise _config_error(str(e)) from e
   assignment_types = _require_dict(raw_types, "assignment_types")
   parsed: Dict[str, AssignmentTypeConfig] = {}
 

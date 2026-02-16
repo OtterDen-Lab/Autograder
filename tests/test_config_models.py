@@ -625,6 +625,55 @@ def test_collect_assignments_rejects_overlapping_additional_repos(monkeypatch):
   assert "overlapping container_path" in str(exc.value)
 
 
+def test_collect_assignments_accepts_template_entrypoint_and_error_artifact_settings(
+    monkeypatch):
+  class DummyCourse:
+    name = "CST"
+
+  class DummyCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      pass
+
+    def get_course(self, _):
+      return DummyCourse()
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface", DummyCanvasInterface)
+
+  run_config = parse_run_config({
+    "assignment_types": {
+      "programming": {
+        "kind": "ProgrammingAssignment",
+        "grader": "template-grader",
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "programming",
+        "settings": {
+          "grading_script": "/repo/scripts/custom_grader.py --PA PA1",
+          "grading_workdir": "/repo/custom",
+          "upload_error_artifacts": True,
+          "extra_installs": ["apt-get update && apt-get install -y jq"],
+        },
+        "assignments": [{
+          "id": 99,
+          "assignment_name": "PA1"
+        }]
+      }]
+    }]
+  })
+
+  requests = grade_assignments.collect_assignments_to_grade(
+    run_config, SimpleNamespace(env=None))
+  assert len(requests) == 1
+  settings = requests[0].settings
+  assert settings["grading_script"] == "/repo/scripts/custom_grader.py --PA PA1"
+  assert settings["grading_workdir"] == "/repo/custom"
+  assert settings["upload_error_artifacts"] is True
+  assert settings["extra_installs"] == ["apt-get update && apt-get install -y jq"]
+
+
 def test_collect_assignments_rejects_invalid_text_tier(monkeypatch):
   class DummyCourse:
     name = "CST"

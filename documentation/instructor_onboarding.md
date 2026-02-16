@@ -92,10 +92,15 @@ grade-assignments --yaml your_config.yaml --idempotency-key your-run-key --idemp
 
 - Add Docker packages:
   - Use `extra_dockerfile_lines` under programming settings.
+  - Use `extra_installs` for simple additional `RUN` commands in image build.
 - Map uploaded filenames to target locations:
   - Use `file_paths` regex mapping under programming settings.
 - Use a non-default template repo layout:
   - Set `container_repo_path` (must be under `/repo`; default is `/repo/programming-assignments`).
+- Override template grader execution command (when needed):
+  - Set `grading_script` and/or `grading_workdir` under programming settings.
+- Keep Slack grading error reports privacy-safe by default:
+  - Leave `upload_error_artifacts: false` unless doing break-glass debugging.
 - Mount multiple template/helper repos in one grading image:
   - Use `additional_repos` with `source_repo` + `container_path` (paths must be under `/repo`).
 - Tune text-grading cost/performance:

@@ -50,6 +50,44 @@ def collect_push_failure_lines(results: List[Dict]) -> tuple[int, List[str]]:
     return total_failed_pushes, lines
 
 
+def collect_push_skipped_ungraded_lines(results: List[Dict]) -> tuple[int, List[str]]:
+    """
+    Collect skipped-ungraded push information from grading results.
+
+    Args:
+        results: List of grading result dictionaries
+
+    Returns:
+        Tuple of (total_skipped_ungraded_pushes, list of description lines)
+    """
+    lines = []
+    total_skipped_ungraded = 0
+    for result in results:
+        summary = result.get("finalize_summary") or {}
+        skipped_count = int(summary.get("push_skipped_ungraded", 0) or 0)
+        if skipped_count <= 0:
+            continue
+
+        total_skipped_ungraded += skipped_count
+        assignment_label = (result.get('assignment_name')
+                            or f"ID {result.get('assignment_id')}")
+        course_label = result.get('course_name') or "Unknown Course"
+        skipped_students = summary.get("push_skipped_ungraded_students") or []
+        skipped_preview = ", ".join(skipped_students[:5])
+        if len(skipped_students) > 5:
+            skipped_preview += ", ..."
+        if skipped_preview:
+            lines.append(
+                f"- {course_label} / {assignment_label}: {skipped_count} ungraded skip(s) [{skipped_preview}]"
+            )
+        else:
+            lines.append(
+                f"- {course_label} / {assignment_label}: {skipped_count} ungraded skip(s)"
+            )
+
+    return total_skipped_ungraded, lines
+
+
 def summarize_stage_contracts(results: List[Dict]) -> Dict:
     """
     Aggregate stage timing and counts from all results.
@@ -79,6 +117,7 @@ def summarize_stage_contracts(results: List[Dict]) -> Dict:
             "total_push_succeeded": 0,
             "total_push_failed": 0,
             "total_push_skipped": 0,
+            "total_push_skipped_ungraded": 0,
         },
     }
 
@@ -118,6 +157,8 @@ def summarize_stage_contracts(results: List[Dict]) -> Dict:
                     finalize_summary.get("push_failed", 0) or 0)
                 summary["publish"]["total_push_skipped"] += int(
                     finalize_summary.get("push_skipped", 0) or 0)
+                summary["publish"]["total_push_skipped_ungraded"] += int(
+                    finalize_summary.get("push_skipped_ungraded", 0) or 0)
 
     for stage in ("prepare", "grade", "publish"):
         count = int(summary[stage]["count"])
@@ -154,11 +195,19 @@ def print_results_summary(results: List[Dict]) -> None:
                     )
 
     push_failed_total, push_failure_lines = collect_push_failure_lines(results)
+    skipped_ungraded_total, skipped_ungraded_lines = (
+        collect_push_skipped_ungraded_lines(results))
     if push_failed_total > 0:
         log.warning(
             f"Detected {push_failed_total} per-student push failure(s) across successful assignments."
         )
         for line in push_failure_lines:
+            log.warning(line)
+    if skipped_ungraded_total > 0:
+        log.warning(
+            f"Detected {skipped_ungraded_total} per-student ungraded skip(s) across successful assignments."
+        )
+        for line in skipped_ungraded_lines:
             log.warning(line)
 
 
@@ -190,7 +239,7 @@ def print_stage_timing_summary(results: List[Dict]) -> None:
         f"  Grade: count={grade.get('count', 0)}, total={_format_seconds(grade.get('total_duration_ms', 0))}, avg={_format_seconds(grade.get('avg_duration_ms', 0))}, submissions={grade.get('total_submission_count', 0)}, graded={grade.get('total_graded_count', 0)}"
     )
     log.info(
-        f"  Publish: count={publish.get('count', 0)}, total={_format_seconds(publish.get('total_duration_ms', 0))}, avg={_format_seconds(publish.get('avg_duration_ms', 0))}, push_attempted={publish.get('total_push_attempted', 0)}, push_succeeded={publish.get('total_push_succeeded', 0)}, push_failed={publish.get('total_push_failed', 0)}, push_skipped={publish.get('total_push_skipped', 0)}"
+        f"  Publish: count={publish.get('count', 0)}, total={_format_seconds(publish.get('total_duration_ms', 0))}, avg={_format_seconds(publish.get('avg_duration_ms', 0))}, push_attempted={publish.get('total_push_attempted', 0)}, push_succeeded={publish.get('total_push_succeeded', 0)}, push_failed={publish.get('total_push_failed', 0)}, push_skipped={publish.get('total_push_skipped', 0)}, push_skipped_ungraded={publish.get('total_push_skipped_ungraded', 0)}"
     )
 
     log.info("Per-assignment stage timing summary (s):")
@@ -219,11 +268,13 @@ def print_stage_timing_summary(results: List[Dict]) -> None:
         push_enabled = finalize_summary.get("push_enabled", False)
         push_attempted = int(finalize_summary.get("push_attempted", 0) or 0)
         push_failed = int(finalize_summary.get("push_failed", 0) or 0)
+        push_skipped_ungraded = int(
+            finalize_summary.get("push_skipped_ungraded", 0) or 0)
 
         log.info(
             f"  {course_label} / {assignment_label}: prepare={_format_seconds(prepare_ms)} (submissions={prepare_submissions}), "
             f"grade={_format_seconds(grade_ms)} (graded={graded_count}), publish={_format_seconds(publish_ms)} ({publish_state}, push_enabled={push_enabled}, "
-            f"push_attempted={push_attempted}, push_failed={push_failed})"
+            f"push_attempted={push_attempted}, push_failed={push_failed}, push_skipped_ungraded={push_skipped_ungraded})"
         )
 
 
@@ -245,6 +296,8 @@ def write_run_report(results: List[Dict], args: argparse.Namespace) -> None:
     successful = sum(1 for r in results if r['success'])
     failed = len(results) - successful
     push_failed_total, push_failure_lines = collect_push_failure_lines(results)
+    skipped_ungraded_total, skipped_ungraded_lines = (
+        collect_push_skipped_ungraded_lines(results))
     stage_contract_summary = summarize_stage_contracts(results)
 
     report_payload = {
@@ -256,6 +309,8 @@ def write_run_report(results: List[Dict], args: argparse.Namespace) -> None:
             "assignment_failures": failed,
             "push_failures_total": push_failed_total,
             "push_failures": push_failure_lines,
+            "push_skipped_ungraded_total": skipped_ungraded_total,
+            "push_skipped_ungraded": skipped_ungraded_lines,
             "stage_contracts": stage_contract_summary,
         },
         "results": results,

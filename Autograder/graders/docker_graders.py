@@ -7,6 +7,7 @@ in containerized environments.
 import contextlib
 import os
 import pathlib
+import shlex
 import shutil
 import tempfile
 import subprocess
@@ -27,6 +28,16 @@ import logging
 log = logging.getLogger(__name__)
 
 
+def _parse_bool(value, default=False):
+  if value is None:
+    return default
+  if isinstance(value, bool):
+    return value
+  if isinstance(value, str):
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+  return bool(value)
+
+
 class DockerGrader(FileBasedGrader):
   """
   Base class for Docker-based graders.
@@ -37,6 +48,12 @@ class DockerGrader(FileBasedGrader):
 
   def __init__(self, image=None, *args, **kwargs):
     super().__init__(*args, **kwargs)
+
+    env_upload_artifacts = os.getenv("AUTOGRADER_UPLOAD_ERROR_ARTIFACTS")
+    upload_error_artifacts = kwargs.get("upload_error_artifacts", False)
+    if env_upload_artifacts is not None:
+      upload_error_artifacts = _parse_bool(env_upload_artifacts, False)
+    self.upload_error_artifacts = _parse_bool(upload_error_artifacts, False)
 
     # Set up docker client
     try:
@@ -261,13 +278,37 @@ class DockerGrader(FileBasedGrader):
     assignment_name = getattr(self, 'assignment_name', 'Unknown Assignment')
     course_name = getattr(self, 'course_name', 'Unknown Course')
 
+    def _decode_snippet(payload, max_chars=700):
+      if payload is None:
+        return ""
+      if isinstance(payload, bytes):
+        text = payload.decode("utf-8", errors="replace")
+      else:
+        text = str(payload)
+      text = text.strip()
+      if len(text) > max_chars:
+        return text[:max_chars] + "... [truncated]"
+      return text
+
+    stdout_snippet = _decode_snippet(stdout)
+    stderr_snippet = _decode_snippet(stderr)
+
     message = (f":warning: *Grading Error Detected*\n"
                f"*Course:* {course_name}\n"
                f"*Assignment:* {assignment_name}\n"
                f"*Student:* {student_name}\n"
                f"*Error:* {error_msg}\n"
-               f"*Return Code:* {rc}\n\n"
-               f"Relevant files are attached below.")
+               f"*Return Code:* {rc}")
+    if not self.upload_error_artifacts:
+      message += ("\n*Artifact mode:* disabled (`upload_error_artifacts=false`)\n"
+                  "Only summary details are included to reduce PII exposure.")
+    else:
+      message += ("\n:rotating_light: *Artifact mode enabled* - "
+                  "attachments may include PII/student code.")
+    if stdout_snippet:
+      message += f"\n\n*stdout (truncated):*\n```{stdout_snippet}```"
+    if stderr_snippet:
+      message += f"\n\n*stderr (truncated):*\n```{stderr_snippet}```"
 
     try:
       # Handle webhook case (simple message only, no files)
@@ -282,6 +323,14 @@ class DockerGrader(FileBasedGrader):
 
       # Use Slack SDK for bot token
       client = WebClient(token=token)
+      if not self.upload_error_artifacts:
+        client.chat_postMessage(channel=channel,
+                                text=message,
+                                mrkdwn=True,
+                                unfurl_links=False,
+                                unfurl_media=False)
+        log.info("Slack error report sent successfully (summary mode)")
+        return
 
       # Prepare files to upload
       files_to_upload = []
@@ -468,6 +517,9 @@ class TemplateGrader(DockerGrader):
       extra_installs=None,  # todo: these will be tough, do later
       extra_dockerfile_lines=None,
       file_paths=None,
+      grading_script: str | None = None,
+      grading_workdir: str | None = None,
+      upload_error_artifacts: bool = False,
       *args,
       **kwargs):
 
@@ -489,16 +541,29 @@ class TemplateGrader(DockerGrader):
     self.extra_installs = extra_installs
     self.extra_dockerfile_lines = extra_dockerfile_lines
     self.file_paths = file_paths
-
+    self.grading_workdir = grading_workdir
+    self.grading_script_override = grading_script
     # Potential includes
     self.golden_repo = kwargs.get("golden_repo", None)
     self.files_from_golden = kwargs.get("files_from_golden", [])
 
-    super().__init__(*args, **kwargs)
+    super().__init__(*args,
+                     upload_error_artifacts=upload_error_artifacts,
+                     **kwargs)
 
     # todo: these two can likely be removed if we go full template.
-    self.working_dir = "/repo"
-    self.grading_script = f"/repo/.venv/bin/python /repo/scripts/grader.py --PA {self.assignment_name}"
+    default_workdir = "/repo"
+    self.working_dir = (
+      self.grading_workdir.strip()
+      if isinstance(self.grading_workdir, str) and self.grading_workdir.strip()
+      else default_workdir)
+    default_script = (
+      f"/repo/.venv/bin/python /repo/scripts/grader.py --PA {shlex.quote(str(self.assignment_name))}"
+    )
+    self.grading_script = (
+      self.grading_script_override.strip()
+      if isinstance(self.grading_script_override, str)
+      and self.grading_script_override.strip() else default_script)
 
     return
 
@@ -807,6 +872,21 @@ class TemplateGrader(DockerGrader):
         "RUN rm -rf .venv",
         "RUN rm -rf uv.lock .venv",
         # "RUN uv lock",
+      ])
+
+      # Optional extra install commands from config.
+      for install_cmd in self.extra_installs:
+        if not isinstance(install_cmd, str):
+          continue
+        command = install_cmd.strip()
+        if not command:
+          continue
+        if command.upper().startswith("RUN "):
+          dockerfile_lines.append(command)
+        else:
+          dockerfile_lines.append(f"RUN {command}")
+
+      dockerfile_lines.extend([
         "RUN uv sync",
         # "RUN chown -fR dockeruser /repo",
         # "USER dockeruser",
