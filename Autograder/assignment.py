@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import math
 import re
-import threading
 import tempfile
 from datetime import datetime
 from typing import List, Dict, Any
@@ -34,32 +33,20 @@ class Assignment(abc.ABC):
     self.lms_assignment = lms_assignment
     self.grading_root_dir = grading_root_dir
     self.submissions: List[Submission] = []
-    self.original_dir = None
     self._temp_dir = None
     self.canvas_points = kwargs.get(
       'canvas_points', None)  # Override for Canvas assignment points
 
   def __enter__(self) -> Assignment:
-    """Enables use as a context manager (e.g. `with [Assignment]`) by managing working directory"""
+    """Enables use as a context manager for temp directory lifecycle."""
     if self.grading_root_dir is None:
       self._temp_dir = tempfile.TemporaryDirectory()
       self.grading_root_dir = self._temp_dir.name
       log.debug(f"Created grading temp dir: {self.grading_root_dir}")
-
-    # Only change working directory if we're in the main thread to avoid race conditions
-    if threading.current_thread() == threading.main_thread():
-      self.original_dir = os.getcwd()
-      os.chdir(self.grading_root_dir)
-    else:
-      # In worker threads, don't change the working directory
-      self.original_dir = None
     return self
 
   def __exit__(self, exc_type, exc_value, traceback):
-    """Enables use as a context manager (e.g. `with [Assignment]`) by managing working directory"""
-    # Only restore working directory if we changed it
-    if self.original_dir is not None:
-      os.chdir(self.original_dir)
+    """Clean up temp directory if one was created."""
     if self._temp_dir is not None:
       self._temp_dir.cleanup()
       self._temp_dir = None

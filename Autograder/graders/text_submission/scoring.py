@@ -117,7 +117,12 @@ class RubricGenerator:
                  length_points: int = LENGTH_POINTS,
                  relevance_points: int = RELEVANCE_POINTS,
                  explanation_quality_points: int = EXPLANATION_QUALITY_POINTS,
-                 rubric_total: int = DEFAULT_RUBRIC_TOTAL):
+                 rubric_total: int | None = None,
+                 word_threshold: int = DEFAULT_WORD_THRESHOLD,
+                 engagement_description: str = "Effort to process and explain material",
+                 length_description: str = "Meeting word count requirement",
+                 relevance_description: str = "Coverage of class topics",
+                 explanation_quality_description: str = "Depth of explanation"):
         """
         Initialize the rubric generator.
 
@@ -126,13 +131,26 @@ class RubricGenerator:
             length_points: Maximum points for length
             relevance_points: Maximum points for relevance
             explanation_quality_points: Maximum points for explanation quality
-            rubric_total: Total possible points on the rubric
+            rubric_total: Total possible points on the rubric (auto-summed if None)
+            word_threshold: Minimum words needed for full length points
+            engagement_description: Label for engagement criterion
+            length_description: Label for length criterion
+            relevance_description: Label for relevance criterion
+            explanation_quality_description: Label for explanation quality criterion
         """
         self.engagement_points = engagement_points
         self.length_points = length_points
         self.relevance_points = relevance_points
         self.explanation_quality_points = explanation_quality_points
-        self.rubric_total = rubric_total
+        self.word_threshold = word_threshold
+        self.rubric_total = (rubric_total
+                             if rubric_total is not None else
+                             (engagement_points + length_points +
+                              relevance_points + explanation_quality_points))
+        self.engagement_description = engagement_description
+        self.length_description = length_description
+        self.relevance_description = relevance_description
+        self.explanation_quality_description = explanation_quality_description
 
     def generate(self, result: Dict) -> str:
         """
@@ -158,10 +176,10 @@ class RubricGenerator:
             "=" * 50,
             "",
             "GRADE BREAKDOWN:",
-            f"- Engagement ({self.engagement_points} pts): {engagement_score}/{self.engagement_points} - Effort to process and explain material",
-            f"- Length ({self.length_points} pts): {length_score}/{self.length_points} - {'Met 250+ word requirement' if length_score == self.length_points else 'Under 250 words required'}",
-            f"- Relevance ({self.relevance_points} pts): {relevance_score}/{self.relevance_points} - Coverage of class topics",
-            f"- Explanation Quality ({self.explanation_quality_points} pts): {quality_score}/{self.explanation_quality_points} - Depth of explanation",
+            f"- Engagement ({self.engagement_points} pts): {engagement_score}/{self.engagement_points} - {self.engagement_description}",
+            f"- Length ({self.length_points} pts): {length_score}/{self.length_points} - {self.length_description} ({'met' if length_score == self.length_points else 'under'} {self.word_threshold} words)",
+            f"- Relevance ({self.relevance_points} pts): {relevance_score}/{self.relevance_points} - {self.relevance_description}",
+            f"- Explanation Quality ({self.explanation_quality_points} pts): {quality_score}/{self.explanation_quality_points} - {self.explanation_quality_description}",
             "",
             f"TOTAL SCORE: {total_score}/{self.rubric_total} ({(total_score/self.rubric_total)*100:.0f}%)",
             f"Word Count: {word_count} words"

@@ -146,6 +146,34 @@ def test_normalize_grader_settings_reports_registry_error_for_unknown_grader(
   assert "ModuleNotFoundError" in message
 
 
+def test_normalize_text_submission_settings_supports_prompt_and_rubric_blocks():
+  normalized = config_models.normalize_grader_settings(
+    "TextSubmissionGrader",
+    {
+      "phase1_tier": "medium",
+      "rate_limit_retries": 2,
+      "prompts": {
+        "aggregate_analysis": "Analyze {num_submissions} submissions."
+      },
+      "rubric": {
+        "engagement": {
+          "points": 5,
+          "description": "Engagement depth"
+        },
+        "word_threshold": 300
+      }
+    },
+    "assignment_types.text",
+  )
+
+  assert normalized["phase1_tier"] == "medium"
+  assert normalized["rate_limit_retries"] == 2
+  assert normalized["prompt_templates"]["aggregate_analysis"].startswith(
+    "Analyze")
+  assert normalized["rubric"]["engagement"]["points"] == 5
+  assert normalized["rubric"]["word_threshold"] == 300
+
+
 def test_collect_assignments_to_grade_builds_typed_requests(monkeypatch):
   captured_init = {}
 

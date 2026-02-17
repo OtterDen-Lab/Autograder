@@ -11,6 +11,7 @@ import pytest
 from Autograder import grade_assignments
 from Autograder import exceptions as autograder_exceptions
 from Autograder.config_models import AssignmentRunRequest, CourseConfig, RunConfig
+from Autograder.grader_context import GraderContext
 from lms_interface.classes import Feedback, Submission, Student
 
 
@@ -407,6 +408,87 @@ def test_record_retention_false_does_not_validate_records_dir(monkeypatch):
     ))
 
   assert result["success"] is True
+
+
+def test_grade_single_assignment_passes_typed_grader_context(monkeypatch):
+  created_grader = {"instance": None}
+
+  class DummyAssignment:
+    def __init__(self):
+      self.submissions = []
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+      return False
+
+    def prepare(self, *args, **kwargs):
+      return None
+
+    def finalize(self, *args, **kwargs):
+      return {"push_failed": 0}
+
+  class DummyGrader:
+    ready_to_finalize = True
+
+    def assignment_needs_preparation(self):
+      return True
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+      return False
+
+    def grade_assignment(self, assignment, *args, **kwargs):
+      return None
+
+    def cleanup(self):
+      return None
+
+  class DummyLmsAssignment:
+    name = "PA1"
+
+  class DummyCourse:
+    def get_assignment(self, assignment_id):
+      return DummyLmsAssignment()
+
+  def _capture_create(*args, **kwargs):
+    del args, kwargs
+    instance = DummyGrader()
+    created_grader["instance"] = instance
+    return instance
+
+  monkeypatch.setattr(grade_assignments.GraderRegistry, "create", _capture_create)
+  monkeypatch.setattr(grade_assignments.AssignmentRegistry, "create",
+                      lambda *args, **kwargs: DummyAssignment())
+
+  result = grade_assignments.grade_single_assignment(
+    AssignmentRunRequest(
+      course=DummyCourse(),
+      course_name="CST334",
+      assignment_id=99,
+      assignment_type="assignment",
+      assignment_kind="ProgrammingAssignment",
+      grader_name="template-grader",
+      settings={},
+      repo_path="PA1",
+      assignment_name="PA1",
+      args=SimpleNamespace(
+        do_regrade=False, limit=None, test=False),
+      push_grades=False,
+      slack_channel="C123",
+      reveal_identity=True,
+      privacy_mode="blind",
+    ))
+
+  assert result["success"] is True
+  assert isinstance(created_grader["instance"].grader_context, GraderContext)
+  assert created_grader["instance"].grader_context.course_name == "CST334"
+  assert created_grader["instance"].grader_context.assignment_name == "PA1"
+  assert created_grader["instance"].grader_context.reveal_identity is True
+  assert created_grader["instance"].grader_context.privacy_mode == "blind"
 
 
 def test_grade_single_assignment_emits_stage_contract_on_success(monkeypatch):

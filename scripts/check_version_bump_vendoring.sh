@@ -19,8 +19,13 @@ trap 'rm -f "$before_snapshot" "$after_snapshot"' EXIT
 
 git diff --cached -- lms_interface pyproject.toml >"$before_snapshot" || true
 python scripts/vendor_lms_interface.py --quiet
-git add lms_interface pyproject.toml
-git diff --cached -- lms_interface pyproject.toml >"$after_snapshot" || true
+git add lms_interface pyproject.toml \
+  scripts/check_version_bump_vendoring.sh \
+  scripts/git_bump.sh \
+  scripts/install_git_hooks.sh \
+  scripts/lms_vendor_tooling.toml \
+  .githooks/pre-commit
+git diff --cached -- lms_interface pyproject.toml scripts/check_version_bump_vendoring.sh scripts/git_bump.sh scripts/install_git_hooks.sh scripts/lms_vendor_tooling.toml .githooks/pre-commit >"$after_snapshot" || true
 
 if cmp -s "$before_snapshot" "$after_snapshot"; then
   echo "Vendored LMSInterface already up to date."

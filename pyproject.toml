@@ -53,6 +53,10 @@ grade-assignments = "Autograder.grade_assignments:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["Autograder", "lms_interface"]
+artifacts = [
+  "Autograder/seccomp/*.json",
+  "Autograder/logging.yaml",
+]
 
 [tool.hatch.build.targets.sdist]
 include = ["Autograder/**", "lms_interface/**", "pyproject.toml", "README.md", "LICENSE"]

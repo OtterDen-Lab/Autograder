@@ -1,5 +1,6 @@
 import json
 import logging
+import random
 import time
 from typing import Any, Callable, Dict, TypeVar
 
@@ -9,6 +10,30 @@ from Autograder import exceptions as autograder_exceptions
 log = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+def _is_rate_limit_error(error: Exception) -> bool:
+  status_code = getattr(error, "status_code", None)
+  if status_code == 429:
+    return True
+
+  class_name = type(error).__name__.lower()
+  if "ratelimit" in class_name or "rate_limit" in class_name:
+    return True
+
+  text = str(error).lower()
+  return ("rate limit" in text or "too many requests" in text or
+          "status code 429" in text)
+
+
+def _backoff_seconds(attempt_number: int,
+                     *,
+                     base_seconds: float = 0.5,
+                     max_seconds: float = 8.0) -> float:
+  exponent = max(0, attempt_number - 1)
+  base = min(base_seconds * (2 ** exponent), max_seconds)
+  jitter = random.uniform(0.0, min(base, 0.5))
+  return min(base + jitter, max_seconds)
 
 
 def extract_json_object(text: str) -> Dict[str, Any] | None:
@@ -53,37 +78,65 @@ def query_openai_structured(prompt: str,
                             schema_name: str,
                             tier: str,
                             max_response_tokens: int,
-                            max_attempts: int = 3) -> tuple[Dict[str, Any], Dict[str, Any]]:
-  try:
-    helper = ai_helper.AI_Helper__OpenAI()
-    retries = max(0, int(max_attempts) - 1)
-    return helper.query_ai(prompt,
-                           [],
-                           max_response_tokens=max_response_tokens,
-                           max_retries=retries,
-                           tier=tier,
-                           schema_name=schema_name,
-                           strict_validation=True)
-  except Exception as e:
-    raise autograder_exceptions.AIProviderError(
-      f"OpenAI request failed (tier={tier}, schema={schema_name}). "
-      "Check API credentials, connectivity, and provider availability.") from e
+                            max_attempts: int = 3,
+                            max_rate_limit_retries: int = 0
+                            ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+  helper = ai_helper.AI_Helper__OpenAI()
+  retries = max(0, int(max_attempts) - 1)
+  for provider_attempt in range(0, max_rate_limit_retries + 1):
+    try:
+      return helper.query_ai(prompt,
+                             [],
+                             max_response_tokens=max_response_tokens,
+                             max_retries=retries,
+                             tier=tier,
+                             schema_name=schema_name,
+                             strict_validation=True)
+    except Exception as e:
+      if _is_rate_limit_error(e):
+        if provider_attempt < max_rate_limit_retries:
+          delay = _backoff_seconds(provider_attempt + 1)
+          log.warning(
+            f"OpenAI rate limited for schema={schema_name} (attempt {provider_attempt + 1}/{max_rate_limit_retries + 1}); retrying in {delay:.2f}s."
+          )
+          time.sleep(delay)
+          continue
+        raise autograder_exceptions.AIProviderError(
+          f"OpenAI rate limited (tier={tier}, schema={schema_name}). "
+          "Reduce request volume or increase limits, then retry.") from e
+      raise autograder_exceptions.AIProviderError(
+        f"OpenAI request failed (tier={tier}, schema={schema_name}). "
+        "Check API credentials, connectivity, and provider availability.") from e
 
 
 def query_anthropic_text(prompt: str,
                          *,
                          tier: str,
-                         max_response_tokens: int) -> tuple[str, Dict[str, Any]]:
-  try:
-    helper = ai_helper.AI_Helper__Anthropic()
-    return helper.query_ai(prompt,
-                           [],
-                           max_response_tokens=max_response_tokens,
-                           tier=tier)
-  except Exception as e:
-    raise autograder_exceptions.AIProviderError(
-      f"Anthropic request failed (tier={tier}). "
-      "Check API credentials, connectivity, and provider availability.") from e
+                         max_response_tokens: int,
+                         max_rate_limit_retries: int = 0
+                         ) -> tuple[str, Dict[str, Any]]:
+  helper = ai_helper.AI_Helper__Anthropic()
+  for provider_attempt in range(0, max_rate_limit_retries + 1):
+    try:
+      return helper.query_ai(prompt,
+                             [],
+                             max_response_tokens=max_response_tokens,
+                             tier=tier)
+    except Exception as e:
+      if _is_rate_limit_error(e):
+        if provider_attempt < max_rate_limit_retries:
+          delay = _backoff_seconds(provider_attempt + 1)
+          log.warning(
+            f"Anthropic rate limited (attempt {provider_attempt + 1}/{max_rate_limit_retries + 1}); retrying in {delay:.2f}s."
+          )
+          time.sleep(delay)
+          continue
+        raise autograder_exceptions.AIProviderError(
+          f"Anthropic rate limited (tier={tier}). "
+          "Reduce request volume or increase limits, then retry.") from e
+      raise autograder_exceptions.AIProviderError(
+        f"Anthropic request failed (tier={tier}). "
+        "Check API credentials, connectivity, and provider availability.") from e
 
 
 def query_anthropic_structured(
@@ -92,7 +145,8 @@ def query_anthropic_structured(
     schema_name: str,
     tier: str,
     max_response_tokens: int,
-    max_retries: int = 3) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    max_retries: int = 3,
+    max_rate_limit_retries: int = 0) -> tuple[Dict[str, Any], Dict[str, Any]]:
   """
   Query Anthropic and parse JSON response with retry logic.
 
@@ -126,7 +180,8 @@ def query_anthropic_structured(
     try:
       text, usage_info = query_anthropic_text(prompt,
                                               tier=tier,
-                                              max_response_tokens=max_response_tokens)
+                                              max_response_tokens=max_response_tokens,
+                                              max_rate_limit_retries=max_rate_limit_retries)
       # Accumulate usage across retries
       combined_usage["prompt_tokens"] += usage_info.get("prompt_tokens", 0)
       combined_usage["completion_tokens"] += usage_info.get("completion_tokens", 0)

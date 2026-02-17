@@ -40,6 +40,14 @@ Use these settings for text grading:
 - `prefer_anthropic`: provider preference
 - `phase1_tier`, `phase2_tier`, `phase25_tier`: `small|medium|large`
 - `grade_after_lock_date`: delay grading until due/lock threshold
+- `rate_limit_retries`: provider retry count on 429/rate-limit responses (default `0`, fail-fast)
+- `prompts`: optional template overrides for:
+  - `aggregate_analysis`
+  - `individual_grading`
+  - `question_consolidation`
+- `rubric`: optional rubric tuning:
+  - points/description for `engagement`, `length`, `relevance`, `explanation_quality`
+  - `word_threshold`
 
 ## Common Recipes
 
@@ -73,14 +81,30 @@ additional_repos:
     depth: 1
 ```
 
-### Recipe: Rubric/Prompt Changes For Text Grading
+### Recipe: YAML Prompt/Rubric Changes For Text Grading
+
+```yaml
+assignment_types:
+  notes:
+    kind: TextAssignment
+    grader: TextSubmissionGrader
+    settings:
+      prompts:
+        aggregate_analysis: "Analyze {num_submissions} submissions for {course_name}."
+      rubric:
+        engagement:
+          points: 5
+          description: "Depth of engagement with key concepts"
+        word_threshold: 300
+```
+
+### Recipe: Code-Level Prompt/Rubric Changes (Advanced)
 
 - Subclass `BaseTextSubmissionGrader`.
 - Override prompt builder hooks:
   - `_build_aggregate_analysis_prompt(...)`
   - `_build_individual_grading_prompt(...)`
   - `_build_question_consolidation_prompt(...)`
-- Keep provider orchestration/shared logic intact.
 
 ## 5) Validation And Safe Rollout
 

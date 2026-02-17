@@ -66,7 +66,7 @@ def run_prepare_stage(grader, grading_assignment, args, settings,
 
 
 def run_grade_stage(grader, grading_assignment, settings, assignment_data,
-                    args, do_regrade: bool) -> GradeStageResult:
+                    args, do_regrade: bool, grader_context=None) -> GradeStageResult:
     """
     Execute the grade stage: run graders on all submissions.
 
@@ -77,12 +77,14 @@ def run_grade_stage(grader, grading_assignment, settings, assignment_data,
         assignment_data: Assignment run request data
         args: Command line arguments
         do_regrade: Whether to regrade already-graded submissions
+        grader_context: Optional typed runtime context for graders
 
     Returns:
         GradeStageResult with graded counts
     """
     grader.grade_assignment(grading_assignment,
                             **settings,
+                            grader_context=grader_context,
                             reveal_identity=assignment_data.reveal_identity,
                             privacy_mode=assignment_data.privacy_mode,
                             do_regrade=do_regrade)

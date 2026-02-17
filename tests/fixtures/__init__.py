@@ -30,6 +30,14 @@ from .canvas_mocks import (
     make_canvas_assignment_response,
 )
 
+from .docker_mocks import (
+    MockDockerClient,
+    MockDockerContainer,
+    MockDockerCommandResult,
+    MockDockerImage,
+    MockDockerModule,
+)
+
 from .llm_responses import (
     # Aggregate analysis
     VALID_AGGREGATE_ANALYSIS,
@@ -50,6 +58,9 @@ from .llm_responses import (
     MALFORMED_JSON_UNCLOSED,
     MALFORMED_WRONG_TYPE_ROOT,
     MALFORMED_WRONG_TYPE_SCORES,
+    EMPTY_TEXT_RESPONSE,
+    CONTENT_FILTER_REFUSAL_TEXT,
+    PROVIDER_UNAVAILABLE_ERROR,
     # Partial responses
     PARTIAL_AGGREGATE_ONLY_TOPICS,
     PARTIAL_INDIVIDUAL_ONLY_SCORES,
@@ -86,6 +97,12 @@ __all__ = [
     "MockCanvasApi",
     "make_canvas_submission_response",
     "make_canvas_assignment_response",
+    # Docker mocks
+    "MockDockerClient",
+    "MockDockerContainer",
+    "MockDockerCommandResult",
+    "MockDockerImage",
+    "MockDockerModule",
     # LLM response fixtures
     "VALID_AGGREGATE_ANALYSIS",
     "AGGREGATE_ANALYSIS_MINIMAL",
@@ -102,6 +119,9 @@ __all__ = [
     "MALFORMED_JSON_UNCLOSED",
     "MALFORMED_WRONG_TYPE_ROOT",
     "MALFORMED_WRONG_TYPE_SCORES",
+    "EMPTY_TEXT_RESPONSE",
+    "CONTENT_FILTER_REFUSAL_TEXT",
+    "PROVIDER_UNAVAILABLE_ERROR",
     "PARTIAL_AGGREGATE_ONLY_TOPICS",
     "PARTIAL_INDIVIDUAL_ONLY_SCORES",
     "EDGE_CASE_MAX_SCORES",
