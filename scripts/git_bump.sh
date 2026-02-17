@@ -112,7 +112,8 @@ fi
 
 if [[ -z "$COMMIT_MESSAGE" ]]; then
   version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n 1)"
-  COMMIT_MESSAGE="Bump version to ${version} and vendor LMSInterface"
+  COMMIT_MESSAGE="Bump to version ${version}"
+  run env AUTOGRADER_SKIP_PRECOMMIT_VENDOR=1 git commit -e -m "$COMMIT_MESSAGE"
+else
+  run env AUTOGRADER_SKIP_PRECOMMIT_VENDOR=1 git commit -m "$COMMIT_MESSAGE"
 fi
-
-run env AUTOGRADER_SKIP_PRECOMMIT_VENDOR=1 git commit -m "$COMMIT_MESSAGE"
