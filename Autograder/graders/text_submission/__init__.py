@@ -74,20 +74,17 @@ from .prompts import (
     DEFAULT_MAX_CHARACTERS,
 )
 
-# Processors
-from .processors import (
+# Grader and backward-compatible helper classes
+from .grader import (
+    BaseTextSubmissionGrader,
     BatchProcessor,
     AggregateAnalyzer,
     IndividualGradingProcessor,
     QuestionConsolidator,
     IndividualSubmissionAnalyzer,
+    ReportCompiler,
+    ReportPresenter,
 )
-
-# Reports
-from .reports import ReportCompiler, ReportPresenter
-
-# Base grader class
-from .base import BaseTextSubmissionGrader
 
 __all__ = [
     # Main classes

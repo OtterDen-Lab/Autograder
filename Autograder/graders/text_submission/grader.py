@@ -22,6 +22,13 @@ from typing import Dict, List
 
 from Autograder.grader import Grader
 from Autograder import config_models
+from Autograder.ai_orchestrator import (
+    ProviderFallbackOrchestrator,
+    parse_anthropic_json_payload,
+    query_anthropic_text,
+    query_anthropic_structured,
+    query_openai_structured,
+)
 from lms_interface.classes import Feedback, Submission, TextSubmission
 
 from .pii import SubmissionPIIRedactor
@@ -33,14 +40,6 @@ from .prompts import (
     DEFAULT_MAX_WORDS,
     DEFAULT_MAX_CHARACTERS,
 )
-from .processors import (
-    BatchProcessor,
-    AggregateAnalyzer,
-    IndividualGradingProcessor,
-    QuestionConsolidator,
-    IndividualSubmissionAnalyzer,
-)
-from .reports import ReportCompiler, ReportPresenter
 
 log = logging.getLogger(__name__)
 
@@ -98,22 +97,13 @@ class BaseTextSubmissionGrader(Grader):
         self.records_dir = None
         self.reveal_identity = False
 
-        # Scoring and presentation components (can be overridden by subclasses)
+        # Scoring and rubric components (can be overridden by subclasses)
         self.score_calculator = ScoreCalculator()
         self.rubric_generator = RubricGenerator()
 
         # PII redaction
         self.pii_redactor = SubmissionPIIRedactor()
         self.redaction_events: List[Dict] = []
-
-        # Workflow processors (inject self for customization hooks)
-        self.batch_processor = BatchProcessor(self)
-        self.question_consolidator = QuestionConsolidator(self)
-        self.individual_grading_processor = IndividualGradingProcessor(self)
-        self.aggregate_analyzer = AggregateAnalyzer(self)
-        self.individual_submission_analyzer = IndividualSubmissionAnalyzer(self)
-        self.report_compiler = ReportCompiler(self)
-        self.report_presenter = ReportPresenter(self)
 
         # Model tier settings for each phase (small, medium, large)
         # Can be configured via grader settings in YAML
@@ -310,12 +300,102 @@ class BaseTextSubmissionGrader(Grader):
         self.usage_details = []
 
         assignment_name = assignment.lms_assignment.name
-        self.batch_processor.run(assignment,
-                                 assignment_name=assignment_name,
-                                 course_name=self.course_name)
+        self._run_batch_grading(assignment,
+                                assignment_name=assignment_name,
+                                course_name=self.course_name)
+
+    def _run_batch_grading(self, assignment, *, assignment_name: str,
+                           course_name: str) -> bool:
+        """
+        Run the complete 3-phase grading pipeline for an assignment.
+
+        Args:
+            assignment: Assignment object providing submission data
+            assignment_name: Name of the assignment for logging/context
+            course_name: Name of the course for context
+
+        Returns:
+            True if grading completed successfully, False if no submissions
+        """
+        submission_data = assignment.get_submission_data()
+
+        if not submission_data:
+            log.info(
+                f"No submissions to grade for '{assignment_name}' - assignment may be unlocked"
+            )
+            return False
+
+        truncated_texts, truncation_count, redaction_count = self._truncate_batch_submissions(
+            submission_data)
+
+        if truncation_count > 0:
+            log.info(
+                f"Truncated {truncation_count} submission(s) exceeding {DEFAULT_MAX_WORDS} words or {DEFAULT_MAX_CHARACTERS} characters"
+            )
+        if redaction_count > 0:
+            log.info(
+                f"Redacted potential PII in {redaction_count} submission(s) before LLM analysis"
+            )
+
+        log.info(
+            f"Starting 3-phase grading for '{assignment_name}' with {len(submission_data)} submissions"
+        )
+
+        log.info("Phase 1/3: Aggregate analysis")
+        self.aggregate_results = self.phase_1_aggregate_analysis(
+            truncated_texts, assignment_name, course_name)
+
+        log.info("Phase 2/3: Individual grading")
+        self.individual_results = self.phase_2_individual_grading(
+            submission_data, self.core_topics)
+
+        self._apply_grades_to_submissions(assignment.submissions,
+                                          self.individual_results)
+
+        log.info("Phase 3/3: Report generation")
+        self.phase_3_generate_report(self.aggregate_results,
+                                     self.individual_results)
+        return True
+
+    def _truncate_batch_submissions(self, submission_data: List[Dict]
+                                    ) -> tuple[List[str], int, int]:
+        """
+        Truncate and redact all submissions in a batch.
+
+        Args:
+            submission_data: List of submission dictionaries
+
+        Returns:
+            Tuple of (prepared_texts, truncation_count, redaction_count)
+        """
+        prepared_texts = []
+        truncation_count = 0
+        redaction_count = 0
+
+        for submission_info in submission_data:
+            original_text = submission_info.get('text', '')
+            truncated, was_truncated = self._truncate_submission_text(original_text)
+            prepared_text = truncated
+            if was_truncated:
+                submission_info['was_truncated'] = True
+                truncation_count += 1
+
+            prepared_text, redaction_meta = self._redact_submission_text_for_ai(
+                prepared_text,
+                student_name=submission_info.get("student_name"),
+                student_id=submission_info.get("student_id"))
+            if redaction_meta.get("total_replacements", 0) > 0:
+                submission_info["was_redacted"] = True
+                redaction_count += 1
+
+            submission_info['text'] = prepared_text
+            if prepared_text:
+                prepared_texts.append(prepared_text)
+
+        return prepared_texts, truncation_count, redaction_count
 
     # =========================================================================
-    # Phase methods - Called by processors
+    # Phase methods
     # =========================================================================
 
     def phase_1_aggregate_analysis(self, submission_texts: List[str],
@@ -332,8 +412,118 @@ class BaseTextSubmissionGrader(Grader):
         Returns:
             Dictionary containing aggregate analysis results
         """
-        return self.aggregate_analyzer.analyze(submission_texts, assignment_name,
-                                               course_name)
+        log.info(
+            f"Analyzing {len(submission_texts)} submissions for aggregate insights..."
+        )
+
+        if not submission_texts:
+            log.warning("No submissions to analyze")
+            return {
+                "core_topics": [],
+                "common_themes": "",
+                "key_insights": "",
+                "commonly_misunderstood_topics": [],
+                "misconception_details": "",
+                "teaching_feedback": "",
+                "student_questions": []
+            }
+
+        prompt = self._build_aggregate_analysis_prompt(submission_texts,
+                                                       assignment_name,
+                                                       course_name)
+        orchestrator = ProviderFallbackOrchestrator(self.prefer_anthropic)
+
+        def _run_anthropic() -> Dict:
+            operation = "Phase 1 - Aggregate Analysis (Anthropic)"
+            if not self.prefer_anthropic:
+                operation = "Phase 1 - Aggregate Analysis (Anthropic fallback)"
+            analysis_text, usage = query_anthropic_text(
+                prompt, tier=self.phase1_tier, max_response_tokens=2000)
+            self._track_token_usage(usage, operation)
+
+            result = parse_anthropic_json_payload(analysis_text,
+                                                  schema_name="aggregate_analysis")
+            if result is None:
+                result = {
+                    "common_themes": analysis_text,
+                    "commonly_misunderstood_topics": [],
+                    "misconception_details": "",
+                    "key_insights": "",
+                    "teaching_feedback": "",
+                    "core_topics": [],
+                    "related_topics": [],
+                    "off_topic_indicators": [],
+                    "student_questions": []
+                }
+
+            self._store_topics_from_result(result)
+            provider_label = "Anthropic" if self.prefer_anthropic else "Anthropic fallback"
+            log.info(
+                f"Aggregate analysis completed ({provider_label}). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
+            )
+            return result
+
+        def _run_openai() -> Dict:
+            log.debug(
+                f"Attempting aggregate analysis with OpenAI (tier={self.phase1_tier})..."
+            )
+            result, usage = query_openai_structured(
+                prompt,
+                schema_name="aggregate_analysis",
+                tier=self.phase1_tier,
+                max_response_tokens=2000)
+            self._track_token_usage(usage,
+                                    "Phase 1 - Aggregate Analysis (OpenAI)")
+            self._store_topics_from_result(result)
+            log.info(
+                f"Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
+            )
+            return result
+
+        def _on_openai_error(error: Exception, is_fallback: bool) -> None:
+            log.error(f"OpenAI aggregate analysis failed: {error}")
+            if not is_fallback:
+                log.info("Falling back to Anthropic...")
+
+        def _on_anthropic_error(error: Exception, is_fallback: bool) -> None:
+            if not is_fallback:
+                log.error(f"Anthropic aggregate analysis failed: {error}")
+                log.info("Falling back to OpenAI...")
+            else:
+                log.error(f"Anthropic fallback also failed: {error}")
+
+        def _on_both_fail(primary_error: Exception,
+                          _secondary_error: Exception) -> Dict:
+            if self.prefer_anthropic:
+                return {
+                    "common_themes": "Error performing analysis",
+                    "key_insights": "",
+                    "misconception_details": "",
+                    "teaching_feedback": "",
+                    "core_topics": [],
+                    "related_topics": [],
+                    "off_topic_indicators": [],
+                    "commonly_misunderstood_topics": [],
+                    "student_questions": []
+                }
+
+            return {
+                "common_themes": f"Error performing analysis: {primary_error}",
+                "key_insights": "",
+                "misconception_details": "",
+                "teaching_feedback": "",
+                "core_topics": [],
+                "related_topics": [],
+                "off_topic_indicators": [],
+                "commonly_misunderstood_topics": [],
+                "student_questions": []
+            }
+
+        return orchestrator.run(run_openai=_run_openai,
+                                run_anthropic=_run_anthropic,
+                                on_openai_error=_on_openai_error,
+                                on_anthropic_error=_on_anthropic_error,
+                                on_both_fail=_on_both_fail)
 
     def phase_2_individual_grading(self, submission_data: List[Dict],
                                    core_topics: List[str]) -> List[Dict]:
@@ -347,8 +537,81 @@ class BaseTextSubmissionGrader(Grader):
         Returns:
             List of individual grading results
         """
-        return self.individual_grading_processor.grade_batch(submission_data,
-                                                             core_topics)
+        log.info(f"Grading {len(submission_data)} individual submissions...")
+
+        if not core_topics:
+            log.warning("No core topics available for individual grading")
+            core_topics = ["General class content"]
+
+        individual_results = []
+        self.support_needed_students = []
+
+        for i, submission_info in enumerate(submission_data, 1):
+            student_id = submission_info.get('student_id')
+            student_name = submission_info.get('student_name', 'Unknown')
+            submission_text = submission_info.get('text', '')
+            word_count = submission_info.get('word_count', 0)
+            display_name = student_name
+            if self.reveal_identity and student_id is not None and str(
+                    student_id) not in str(student_name):
+                display_name = f"{student_name} [canvas_user_id={student_id}]"
+
+            log.debug(
+                f"   Grading {i}/{len(submission_data)}: {display_name} ({word_count} words)"
+            )
+
+            if not submission_text.strip():
+                result = {
+                    "student_id": student_id,
+                    "engagement_score": 0,
+                    "relevance_score": 0,
+                    "explanation_quality_score": 0,
+                    "topics_covered": [],
+                    "topics_missing": core_topics,
+                    "topics_needing_review": [],
+                    "misconception_notes": "",
+                    "word_count": 0,
+                    "needs_support": True,
+                    "support_reason": "No submission content",
+                    "feedback": "Please submit your study notes for grading."
+                }
+            else:
+                result = self._grade_individual_submission(
+                    submission_text, core_topics, student_id)
+
+            if result.get("grading_failed", False):
+                result["student_name"] = student_name
+                result["accurate_word_count"] = word_count
+                self.support_needed_students.append({
+                    "student_id": student_id,
+                    "student_name": student_name,
+                    "reason":
+                    result.get("support_reason", "LLM grading failed")
+                })
+                individual_results.append(result)
+                continue
+
+            result = self.score_calculator.apply_scores(
+                result, word_count=word_count, student_name=student_name)
+
+            if self.score_calculator.needs_support(result):
+                self.support_needed_students.append({
+                    "student_id": student_id,
+                    "student_name": student_name,
+                    "reason": result.get("support_reason", "Unknown reason")
+                })
+
+            individual_results.append(result)
+
+        log.info(
+            f"Individual grading completed. {len(self.support_needed_students)} students may need support."
+        )
+
+        log.info("Phase 2.5/3: Question consolidation")
+        student_questions = self.aggregate_results.get("student_questions", [])
+        self.consolidated_questions = self._consolidate_questions(student_questions)
+
+        return individual_results
 
     def _consolidate_questions(self, all_questions: List[str]) -> List[Dict]:
         """
@@ -360,7 +623,72 @@ class BaseTextSubmissionGrader(Grader):
         Returns:
             List of consolidated question dictionaries
         """
-        return self.question_consolidator.consolidate(all_questions)
+        if not all_questions:
+            log.info("No questions found to consolidate")
+            return []
+
+        log.info(f"Consolidating {len(all_questions)} questions from students...")
+
+        prompt = self._build_question_consolidation_prompt(all_questions)
+        orchestrator = ProviderFallbackOrchestrator(self.prefer_anthropic)
+
+        def _run_anthropic() -> List[Dict]:
+            operation = "Phase 2.5 - Question Consolidation (Anthropic)"
+            if not self.prefer_anthropic:
+                operation = "Phase 2.5 - Question Consolidation (Anthropic fallback)"
+
+            result, usage = query_anthropic_structured(
+                prompt,
+                schema_name="question_consolidation",
+                tier=self.phase25_tier,
+                max_response_tokens=2000)
+            self._track_token_usage(usage, operation)
+
+            consolidated = result.get("consolidated_questions", [])
+            log.info(
+                f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+            )
+            return consolidated
+
+        def _run_openai() -> List[Dict]:
+            result, usage = query_openai_structured(
+                prompt,
+                schema_name="question_consolidation",
+                tier=self.phase25_tier,
+                max_response_tokens=2000)
+            self._track_token_usage(
+                usage, "Phase 2.5 - Question Consolidation (OpenAI)")
+            consolidated = result.get("consolidated_questions", [])
+            log.info(
+                f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
+            )
+            return consolidated
+
+        def _on_openai_error(error: Exception, is_fallback: bool) -> None:
+            log.debug(f"OpenAI question consolidation failed: {error}")
+            if not is_fallback:
+                log.debug("Trying Anthropic as fallback...")
+
+        def _on_anthropic_error(error: Exception, is_fallback: bool) -> None:
+            if not is_fallback:
+                log.debug(
+                    f"Anthropic question consolidation failed: {error}. Trying OpenAI..."
+                )
+            else:
+                log.debug(f"Anthropic question consolidation failed: {error}")
+
+        def _on_both_fail(_primary_error: Exception,
+                          secondary_error: Exception) -> List[Dict]:
+            log.error(
+                f"Both AI providers failed for question consolidation: {secondary_error}"
+            )
+            return []
+
+        return orchestrator.run(run_openai=_run_openai,
+                                run_anthropic=_run_anthropic,
+                                on_openai_error=_on_openai_error,
+                                on_anthropic_error=_on_anthropic_error,
+                                on_both_fail=_on_both_fail)
 
     def _grade_individual_submission(self, submission_text: str,
                                      core_topics: List[str],
@@ -376,8 +704,70 @@ class BaseTextSubmissionGrader(Grader):
         Returns:
             Dictionary with grading results
         """
-        return self.individual_submission_analyzer.analyze(submission_text,
-                                                           core_topics, student_id)
+        prompt = self._build_individual_grading_prompt(submission_text, core_topics)
+        orchestrator = ProviderFallbackOrchestrator(self.prefer_anthropic)
+
+        def _run_anthropic() -> Dict:
+            operation = f"Phase 2 - Individual Grading ({student_id}) - Anthropic"
+            if not self.prefer_anthropic:
+                operation = f"Phase 2 - Individual Grading ({student_id}) - Anthropic fallback"
+            result, usage = query_anthropic_structured(
+                prompt,
+                schema_name="individual_grading",
+                tier=self.phase2_tier,
+                max_response_tokens=1000,
+                max_retries=3)
+            self._track_token_usage(usage, operation)
+            result["student_id"] = student_id
+            return result
+
+        def _run_openai() -> Dict:
+            result, usage = query_openai_structured(
+                prompt,
+                schema_name="individual_grading",
+                tier=self.phase2_tier,
+                max_response_tokens=1000,
+                max_attempts=3)
+            self._track_token_usage(
+                usage, f"Phase 2 - Individual Grading ({student_id}) - OpenAI")
+            result["student_id"] = student_id
+            return result
+
+        def _on_openai_error(error: Exception, is_fallback: bool) -> None:
+            if is_fallback and self.prefer_anthropic:
+                log.debug(f"OpenAI failed for {student_id}: {error}")
+            else:
+                log.debug(f"OpenAI failed for {student_id}: {error}")
+                if not is_fallback:
+                    log.debug("Trying Anthropic...")
+
+        def _on_anthropic_error(error: Exception, is_fallback: bool) -> None:
+            if is_fallback and not self.prefer_anthropic:
+                log.error(f"Both AI providers failed for {student_id}: {error}")
+            elif not is_fallback:
+                log.debug(
+                    f"Anthropic failed for {student_id}: {error}. Trying OpenAI...")
+            else:
+                log.debug(f"Anthropic failed for {student_id}: {error}")
+
+        def _on_both_fail(primary_error: Exception,
+                          _secondary_error: Exception) -> Dict:
+            self._report_individual_grading_failure(
+                student_id, f"{type(primary_error).__name__}: {primary_error}")
+            return {
+                "student_id": student_id,
+                "grading_failed": True,
+                "needs_support": True,
+                "support_reason": "LLM grading failed after retries",
+                "feedback":
+                "Automatic grading was unavailable for this submission. Instructor review is required."
+            }
+
+        return orchestrator.run(run_openai=_run_openai,
+                                run_anthropic=_run_anthropic,
+                                on_openai_error=_on_openai_error,
+                                on_anthropic_error=_on_anthropic_error,
+                                on_both_fail=_on_both_fail)
 
     def phase_3_generate_report(self, aggregate_results: Dict,
                                 individual_results: List[Dict]) -> None:
@@ -394,8 +784,9 @@ class BaseTextSubmissionGrader(Grader):
         report_data = self._compile_report_data(aggregate_results,
                                                 individual_results)
 
-        # Display the report
-        self.report_presenter.present(report_data)
+        self._display_aggregate_insights(report_data)
+        self._display_grade_summary(report_data)
+        self._display_support_recommendations(report_data)
 
         # Use output hook for custom delivery
         self.output_report_hook(report_data)
@@ -404,28 +795,168 @@ class BaseTextSubmissionGrader(Grader):
 
     def _compile_report_data(self, aggregate_results: Dict,
                              individual_results: List[Dict]) -> Dict:
-        """Compile all data needed for the report."""
-        return self.report_compiler.compile(aggregate_results, individual_results)
+        """Compile all grading and summary data for report presentation."""
+        graded_results = [
+            result for result in individual_results
+            if not result.get("grading_failed", False) and
+            result.get("total_grade") is not None
+        ]
+        total_grades = [result.get("total_grade", 0) for result in graded_results]
+        total_submissions = len(individual_results)
+        total_graded = len(graded_results)
+        total_ungraded = total_submissions - total_graded
+
+        grade_stats = {
+            "total_students":
+            total_submissions,
+            "graded_students":
+            total_graded,
+            "ungraded_students":
+            total_ungraded,
+            "average_grade":
+            sum(total_grades) / len(total_grades) if total_grades else 0,
+            "grade_distribution":
+            self._calculate_grade_distribution(total_grades),
+            "students_below_70":
+            sum(1 for grade in total_grades if grade < 7),
+        }
+
+        topic_coverage = self._analyze_topic_coverage(individual_results)
+
+        support_summary = {
+            "students_needing_support": len(self.support_needed_students),
+            "support_details": self.support_needed_students
+        }
+        privacy_summary = {
+            "redacted_submission_count": len(self.redaction_events),
+            "redaction_events": self.redaction_events,
+        }
+
+        return {
+            "aggregate_insights": aggregate_results,
+            "grade_statistics": grade_stats,
+            "topic_coverage": topic_coverage,
+            "support_summary": support_summary,
+            "privacy_summary": privacy_summary,
+            "core_topics": self.core_topics,
+            "individual_results": individual_results
+        }
 
     def _calculate_grade_distribution(self, grades: List[float]) -> Dict:
-        """Calculate distribution of grades by letter grade ranges."""
-        return self.report_compiler._calculate_grade_distribution(grades)
+        """Calculate distribution of grades by letter-grade bands."""
+        if not grades:
+            return {}
+
+        distribution = {"A": 0, "B": 0, "C": 0, "D": 0, "F": 0}
+        for grade in grades:
+            percentage = (grade / 10) * 100
+            if percentage >= 90:
+                distribution["A"] += 1
+            elif percentage >= 80:
+                distribution["B"] += 1
+            elif percentage >= 70:
+                distribution["C"] += 1
+            elif percentage >= 60:
+                distribution["D"] += 1
+            else:
+                distribution["F"] += 1
+
+        return distribution
 
     def _analyze_topic_coverage(self, individual_results: List[Dict]) -> Dict:
-        """Analyze how well topics were covered across all students."""
-        return self.report_compiler._analyze_topic_coverage(individual_results)
+        """Analyze coverage rates for each core topic."""
+        if not self.core_topics:
+            return {}
+
+        topic_stats = {}
+        for topic in self.core_topics:
+            covered_count = sum(1 for result in individual_results
+                                if topic in result.get("topics_covered", []))
+            topic_stats[topic] = {
+                "students_covered": covered_count,
+                "coverage_percentage": (covered_count / len(individual_results)) * 100
+                if individual_results else 0
+            }
+
+        return topic_stats
 
     def _display_aggregate_insights(self, report_data: Dict) -> None:
         """Display aggregate analysis insights."""
-        self.report_presenter.display_aggregate_insights(report_data)
+        insights = report_data.get("aggregate_insights", {})
+
+        log.debug("\nCLASS-WIDE INSIGHTS")
+        log.debug("=" * 60)
+
+        if insights.get("common_themes"):
+            log.debug(f"Common themes:\n{insights['common_themes']}")
+
+        if insights.get("key_insights"):
+            log.debug(f"\nKey learning insights:\n{insights['key_insights']}")
+
+        misunderstood = insights.get("commonly_misunderstood_topics", [])
+        if misunderstood:
+            log.debug(f"\nTopics needing review ({len(misunderstood)}):")
+            for topic in misunderstood:
+                log.debug(f"   - {topic}")
+            if insights.get("misconception_details"):
+                log.debug(f"   Details: {insights['misconception_details']}")
+
+        if insights.get("teaching_feedback"):
+            log.debug(
+                f"\nTeaching recommendations:\n{insights['teaching_feedback']}")
+
+        core_topics = report_data.get("core_topics", [])
+        if core_topics:
+            log.debug(f"\nCore topics identified ({len(core_topics)}):")
+            for i, topic in enumerate(core_topics, 1):
+                coverage = report_data["topic_coverage"].get(topic, {})
+                coverage_pct = coverage.get("coverage_percentage", 0)
+                log.debug(f"   {i}. {topic} ({coverage_pct:.1f}% of students)")
 
     def _display_grade_summary(self, report_data: Dict) -> None:
         """Display grade summary statistics."""
-        self.report_presenter.display_grade_summary(report_data)
+        stats = report_data.get("grade_statistics", {})
+
+        log.debug("\nGRADE SUMMARY")
+        log.debug("=" * 60)
+
+        log.debug(f"Total Students: {stats.get('total_students', 0)}")
+        log.debug(f"Students Graded: {stats.get('graded_students', 0)}")
+        ungraded = stats.get('ungraded_students', 0)
+        if ungraded:
+            log.debug(f"Ungraded (provider/error): {ungraded}")
+        log.debug(
+            f"Average Grade: {stats.get('average_grade', 0):.1f}/10 ({stats.get('average_grade', 0)*10:.1f}%)"
+        )
+
+        distribution = stats.get("grade_distribution", {})
+        if distribution:
+            log.debug("\nGrade Distribution:")
+            distribution_denominator = max(stats.get('graded_students', 0), 1)
+            for letter, count in distribution.items():
+                percentage = (count / distribution_denominator) * 100
+                log.debug(f"   {letter}: {count} students ({percentage:.1f}%)")
+
+        below_70 = stats.get("students_below_70", 0)
+        if below_70 > 0:
+            log.debug(f"\n{below_70} students scored below 70%")
 
     def _display_support_recommendations(self, report_data: Dict) -> None:
         """Display support recommendations for students."""
-        self.report_presenter.display_support_recommendations(report_data)
+        support = report_data.get("support_summary", {})
+        students_needing_support = support.get("students_needing_support", 0)
+
+        if students_needing_support > 0:
+            log.debug("\nSTUDENTS WHO MAY BENEFIT FROM OFFICE HOURS")
+            log.debug("=" * 60)
+
+            for student_info in support.get("support_details", []):
+                student_id = student_info.get("student_id", "Unknown")
+                reason = student_info.get("reason", "No reason provided")
+                log.debug(f"- {student_id}: {reason}")
+        else:
+            log.debug(
+                "\nAll students appear to be engaging well with the material.")
 
     # =========================================================================
     # Grade application
@@ -1008,3 +1539,254 @@ class BaseTextSubmissionGrader(Grader):
     def assignment_needs_preparation(self) -> bool:
         """Text assignments need preparation to fetch submissions."""
         return True
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatibility wrappers
+# ---------------------------------------------------------------------------
+
+
+class BatchProcessor:
+    """Backward-compatible wrapper around batch orchestration."""
+
+    def __init__(self, grader):
+        self.grader = grader
+
+    def run(self, assignment, *, assignment_name: str, course_name: str) -> bool:
+        if hasattr(self.grader, "_run_batch_grading"):
+            return self.grader._run_batch_grading(assignment,
+                                                  assignment_name=assignment_name,
+                                                  course_name=course_name)
+
+        submission_data = assignment.get_submission_data()
+
+        if not submission_data:
+            log.info(
+                f"No submissions to grade for '{assignment_name}' - assignment may be unlocked"
+            )
+            return False
+
+        truncated_texts, truncation_count, redaction_count = self._truncate_batch(
+            submission_data)
+
+        if truncation_count > 0:
+            log.info(
+                f"Truncated {truncation_count} submission(s) exceeding {DEFAULT_MAX_WORDS} words or {DEFAULT_MAX_CHARACTERS} characters"
+            )
+        if redaction_count > 0:
+            log.info(
+                f"Redacted potential PII in {redaction_count} submission(s) before LLM analysis"
+            )
+
+        log.info(
+            f"Starting 3-phase grading for '{assignment_name}' with {len(submission_data)} submissions"
+        )
+
+        log.info("Phase 1/3: Aggregate analysis")
+        self.grader.aggregate_results = self.grader.phase_1_aggregate_analysis(
+            truncated_texts, assignment_name, course_name)
+
+        log.info("Phase 2/3: Individual grading")
+        self.grader.individual_results = self.grader.phase_2_individual_grading(
+            submission_data, self.grader.core_topics)
+
+        self.grader._apply_grades_to_submissions(assignment.submissions,
+                                                 self.grader.individual_results)
+
+        log.info("Phase 3/3: Report generation")
+        self.grader.phase_3_generate_report(self.grader.aggregate_results,
+                                            self.grader.individual_results)
+        return True
+
+    def _truncate_batch(self, submission_data: List[Dict]
+                        ) -> tuple[List[str], int, int]:
+        truncated_texts = []
+        truncation_count = 0
+        redaction_count = 0
+
+        for submission_info in submission_data:
+            original_text = submission_info.get('text', '')
+            truncated, was_truncated = self.grader._truncate_submission_text(
+                original_text)
+            prepared_text = truncated
+            if was_truncated:
+                submission_info['was_truncated'] = True
+                truncation_count += 1
+
+            if hasattr(self.grader, "_redact_submission_text_for_ai"):
+                prepared_text, redaction_meta = self.grader._redact_submission_text_for_ai(
+                    prepared_text,
+                    student_name=submission_info.get("student_name"),
+                    student_id=submission_info.get("student_id"))
+                if redaction_meta.get("total_replacements", 0) > 0:
+                    submission_info["was_redacted"] = True
+                    redaction_count += 1
+            submission_info['text'] = prepared_text
+            if prepared_text:
+                truncated_texts.append(prepared_text)
+
+        return truncated_texts, truncation_count, redaction_count
+
+
+class AggregateAnalyzer:
+    """Backward-compatible wrapper around aggregate analysis."""
+
+    def __init__(self, grader):
+        self.grader = grader
+
+    def analyze(self, submission_texts: List[str], assignment_name: str,
+                course_name: str = "Unknown Course") -> Dict:
+        return self.grader.phase_1_aggregate_analysis(submission_texts,
+                                                      assignment_name,
+                                                      course_name)
+
+
+class IndividualGradingProcessor:
+    """Backward-compatible wrapper around individual grading."""
+
+    def __init__(self, grader):
+        self.grader = grader
+
+    def grade_batch(self, submission_data: List[Dict],
+                    core_topics: List[str]) -> List[Dict]:
+        if hasattr(self.grader, "phase_2_individual_grading"):
+            return self.grader.phase_2_individual_grading(submission_data,
+                                                          core_topics)
+
+        log.info(f"Grading {len(submission_data)} individual submissions...")
+
+        if not core_topics:
+            log.warning("No core topics available for individual grading")
+            core_topics = ["General class content"]
+
+        individual_results = []
+        self.grader.support_needed_students = []
+
+        for i, submission_info in enumerate(submission_data, 1):
+            student_id = submission_info.get('student_id')
+            student_name = submission_info.get('student_name', 'Unknown')
+            submission_text = submission_info.get('text', '')
+            word_count = submission_info.get('word_count', 0)
+            display_name = student_name
+            if self.grader.reveal_identity and student_id is not None and str(
+                    student_id) not in str(student_name):
+                display_name = f"{student_name} [canvas_user_id={student_id}]"
+
+            log.debug(
+                f"   Grading {i}/{len(submission_data)}: {display_name} ({word_count} words)"
+            )
+
+            if not submission_text.strip():
+                result = {
+                    "student_id": student_id,
+                    "engagement_score": 0,
+                    "relevance_score": 0,
+                    "explanation_quality_score": 0,
+                    "topics_covered": [],
+                    "topics_missing": core_topics,
+                    "topics_needing_review": [],
+                    "misconception_notes": "",
+                    "word_count": 0,
+                    "needs_support": True,
+                    "support_reason": "No submission content",
+                    "feedback": "Please submit your study notes for grading."
+                }
+            else:
+                result = self.grader._grade_individual_submission(
+                    submission_text, core_topics, student_id)
+
+            if result.get("grading_failed", False):
+                result["student_name"] = student_name
+                result["accurate_word_count"] = word_count
+                self.grader.support_needed_students.append({
+                    "student_id": student_id,
+                    "student_name": student_name,
+                    "reason":
+                    result.get("support_reason", "LLM grading failed")
+                })
+                individual_results.append(result)
+                continue
+
+            result = self.grader.score_calculator.apply_scores(
+                result, word_count=word_count, student_name=student_name)
+
+            if self.grader.score_calculator.needs_support(result):
+                self.grader.support_needed_students.append({
+                    "student_id": student_id,
+                    "student_name": student_name,
+                    "reason": result.get("support_reason", "Unknown reason")
+                })
+
+            individual_results.append(result)
+
+        log.info(
+            f"Individual grading completed. {len(self.grader.support_needed_students)} students may need support."
+        )
+
+        log.info("Phase 2.5/3: Question consolidation")
+        student_questions = self.grader.aggregate_results.get("student_questions", [])
+        self.grader.consolidated_questions = self.grader._consolidate_questions(
+            student_questions)
+
+        return individual_results
+
+
+class QuestionConsolidator:
+    """Backward-compatible wrapper around question consolidation."""
+
+    def __init__(self, grader):
+        self.grader = grader
+
+    def consolidate(self, all_questions: List[str]) -> List[Dict]:
+        return self.grader._consolidate_questions(all_questions)
+
+
+class IndividualSubmissionAnalyzer:
+    """Backward-compatible wrapper around single-submission grading."""
+
+    def __init__(self, grader):
+        self.grader = grader
+
+    def analyze(self, submission_text: str, core_topics: List[str],
+                student_id: str) -> Dict:
+        return self.grader._grade_individual_submission(submission_text,
+                                                        core_topics, student_id)
+
+
+class ReportCompiler:
+    """Backward-compatible wrapper around report compilation helpers."""
+
+    def __init__(self, grader):
+        self.grader = grader
+
+    def compile(self, aggregate_results: Dict,
+                individual_results: List[Dict]) -> Dict:
+        return self.grader._compile_report_data(aggregate_results,
+                                                individual_results)
+
+    def _calculate_grade_distribution(self, grades: List[float]) -> Dict:
+        return self.grader._calculate_grade_distribution(grades)
+
+    def _analyze_topic_coverage(self, individual_results: List[Dict]) -> Dict:
+        return self.grader._analyze_topic_coverage(individual_results)
+
+
+class ReportPresenter:
+    """Backward-compatible wrapper around report display helpers."""
+
+    def __init__(self, grader):
+        self.grader = grader
+
+    def present(self, report_data: Dict) -> None:
+        self.grader._display_aggregate_insights(report_data)
+        self.grader._display_grade_summary(report_data)
+        self.grader._display_support_recommendations(report_data)
+
+    def display_aggregate_insights(self, report_data: Dict) -> None:
+        self.grader._display_aggregate_insights(report_data)
+
+    def display_grade_summary(self, report_data: Dict) -> None:
+        self.grader._display_grade_summary(report_data)
+
+    def display_support_recommendations(self, report_data: Dict) -> None:
+        self.grader._display_support_recommendations(report_data)
