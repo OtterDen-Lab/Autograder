@@ -7,10 +7,10 @@ Usage:
   git bump [patch|minor|major] [-m "commit message"] [--no-commit] [--dry-run] [--skip-tests] [--verbose]
 
 Behavior:
-  1. Bump version via `uv version --bump <kind>`
-  2. Vendor LMSInterface via `python scripts/vendor_lms_interface.py`
-  3. Stage `pyproject.toml`, `uv.lock`, `lms_interface/`, and managed tooling scripts
-  4. Run test command (unless --skip-tests)
+  1. Vendor LMSInterface via `python scripts/vendor_lms_interface.py`
+  2. Run test command (unless --skip-tests)
+  3. Bump version via `uv version --bump <kind>`
+  4. Stage `pyproject.toml`, `uv.lock`, `lms_interface/`, and managed tooling scripts
   5. Commit (unless --no-commit)
 
 Notes:
@@ -86,23 +86,24 @@ if [[ -n "$(git diff --name-only)" ]] || [[ -n "$(git diff --cached --name-only)
   die "Working tree has tracked changes. Commit or stash them before running git bump."
 fi
 
-run uv version --bump "$BUMP_KIND"
 if [[ "$VERBOSE" == "1" ]]; then
   run python scripts/vendor_lms_interface.py
 else
   run python scripts/vendor_lms_interface.py --quiet
 fi
+
+if [[ "$SKIP_TESTS" != "1" ]] && [[ -n "$TEST_COMMAND" ]]; then
+  echo "Running tests: $TEST_COMMAND"
+  run bash -lc "$TEST_COMMAND"
+fi
+
+run uv version --bump "$BUMP_KIND"
 run git add pyproject.toml uv.lock lms_interface \
   scripts/check_version_bump_vendoring.sh \
   scripts/git_bump.sh \
   scripts/install_git_hooks.sh \
   scripts/lms_vendor_tooling.toml \
   .githooks/pre-commit
-
-if [[ "$SKIP_TESTS" != "1" ]] && [[ -n "$TEST_COMMAND" ]]; then
-  echo "Running tests: $TEST_COMMAND"
-  run bash -lc "$TEST_COMMAND"
-fi
 
 if [[ "$NO_COMMIT" == "1" ]]; then
   echo "Staged version bump and vendored LMSInterface updates (no commit created)."
