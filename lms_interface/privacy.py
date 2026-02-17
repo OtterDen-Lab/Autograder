@@ -1,12 +1,15 @@
-#!/usr/bin/env python
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import re
 import threading
+from dataclasses import dataclass
 
-import logging
+from .classes import Submission
+from .interfaces import LMSAssignment, LMSBackend, LMSCourse, LMSUser
 
 log = logging.getLogger(__name__)
 
@@ -42,11 +45,14 @@ class PrivacyContext:
   def _resolve_blind_id_map_path(path: str | None) -> str:
     if isinstance(path, str) and path.strip():
       return os.path.abspath(os.path.expanduser(path))
-    env_path = os.getenv("AUTOGRADER_BLIND_ID_MAP_PATH")
-    if env_path and env_path.strip():
-      return os.path.abspath(os.path.expanduser(env_path))
+
+    for env_key in ("LMS_BLIND_ID_MAP_PATH", "AUTOGRADER_BLIND_ID_MAP_PATH"):
+      env_path = os.getenv(env_key)
+      if env_path and env_path.strip():
+        return os.path.abspath(os.path.expanduser(env_path))
+
     return os.path.abspath(
-      os.path.expanduser("~/.autograder/privacy/blind_id_map.json"))
+      os.path.expanduser("~/.lms_interface/privacy/blind_id_map.json"))
 
   def _load_blind_id_map(self) -> None:
     path = self._blind_id_map_path
@@ -126,12 +132,147 @@ class PrivacyContext:
   def get_label(self, student) -> str:
     if student is None:
       return "Unknown Student"
+
     user_id = getattr(student, "user_id", None)
     raw_name = getattr(student, "name", None)
     if user_id is None:
       return str(raw_name or "Unknown Student")
 
-    label = self.resolve_student_name(int(user_id), raw_name=raw_name)
+    try:
+      user_id_int = int(user_id)
+    except Exception:
+      return str(raw_name or f"Student {user_id}")
+
+    label = self.resolve_student_name(user_id_int, raw_name=raw_name)
     if self.reveal_identity and str(user_id) not in str(label):
       return f"{label} [canvas_user_id={user_id}]"
     return str(label)
+
+
+def _hash_id(value: str, salt: str) -> str:
+  digest = hashlib.sha256(f"{salt}:{value}".encode("utf-8")).hexdigest()
+  return digest
+
+
+@dataclass(frozen=True)
+class PseudonymousStudent(LMSUser):
+  name: str
+  user_id: str
+  real_user_id: str | int | None = None
+
+
+class PrivacyBackend(LMSBackend):
+  def __init__(self, backend: LMSBackend, *, salt: str | None = None, mode: str = "pseudonymous"):
+    self._backend = backend
+    self._mode = mode
+    self._salt = salt or os.environ.get("LMS_PRIVACY_SALT")
+    if self._mode not in {"pseudonymous", "id_only"}:
+      raise ValueError("Privacy mode must be 'pseudonymous' or 'id_only'.")
+    if self._mode == "pseudonymous" and not self._salt:
+      raise ValueError("LMS_PRIVACY_SALT is required for pseudonymous privacy mode.")
+
+  def get_course(self, course_id: int) -> LMSCourse:
+    return PrivacyCourseAdapter(self._backend.get_course(course_id), salt=self._salt, mode=self._mode)
+
+
+@dataclass
+class PrivacyCourseAdapter(LMSCourse):
+  _course: LMSCourse
+  salt: str
+  mode: str
+
+  @property
+  def id(self):
+    return self._course.id
+
+  @property
+  def name(self):
+    return self._course.name
+
+  def _student_alias(self, student: LMSUser) -> PseudonymousStudent:
+    raw_id = str(student.user_id)
+    if self.mode == "id_only":
+      return PseudonymousStudent(
+        name=f"Student {raw_id}",
+        user_id=raw_id,
+        real_user_id=student.user_id
+      )
+    hashed = _hash_id(f"{self.id}:{raw_id}", self.salt)
+    short = hashed[:8]
+    return PseudonymousStudent(
+      name=f"Student {short}",
+      user_id=hashed,
+      real_user_id=student.user_id
+    )
+
+  def get_assignment(self, assignment_id: int) -> LMSAssignment | None:
+    assignment = self._course.get_assignment(assignment_id)
+    if assignment is None:
+      return None
+    return PrivacyAssignmentAdapter(assignment, salt=self.salt, course_id=str(self.id), mode=self.mode)
+
+  def get_assignments(self, **kwargs) -> list[LMSAssignment]:
+    return [
+      PrivacyAssignmentAdapter(a, salt=self.salt, course_id=str(self.id), mode=self.mode)
+      for a in self._course.get_assignments(**kwargs)
+    ]
+
+  def get_students(self):
+    return [self._student_alias(s) for s in self._course.get_students()]
+
+
+@dataclass
+class PrivacyAssignmentAdapter(LMSAssignment):
+  _assignment: LMSAssignment
+  salt: str
+  course_id: str
+  mode: str
+
+  @property
+  def id(self):
+    return self._assignment.id
+
+  @property
+  def name(self):
+    return self._assignment.name
+
+  def _student_alias(self, student: LMSUser) -> PseudonymousStudent:
+    raw_id = str(student.user_id)
+    if self.mode == "id_only":
+      return PseudonymousStudent(
+        name=f"Student {raw_id}",
+        user_id=raw_id,
+        real_user_id=student.user_id
+      )
+    hashed = _hash_id(f"{self.course_id}:{raw_id}", self.salt)
+    short = hashed[:8]
+    return PseudonymousStudent(
+      name=f"Student {short}",
+      user_id=hashed,
+      real_user_id=student.user_id
+    )
+
+  def get_submissions(self, **kwargs) -> list[Submission]:
+    submissions = self._assignment.get_submissions(**kwargs)
+    for submission in submissions:
+      if getattr(submission, "student", None) is not None:
+        submission.student = self._student_alias(submission.student)
+    return submissions
+
+  def push_feedback(
+      self,
+      user_id,
+      score: float,
+      comments: str,
+      attachments=None,
+      keep_previous_best: bool = True,
+      clobber_feedback: bool = False
+  ) -> None:
+    self._assignment.push_feedback(
+      user_id=user_id,
+      score=score,
+      comments=comments,
+      attachments=attachments,
+      keep_previous_best=keep_previous_best,
+      clobber_feedback=clobber_feedback
+    )

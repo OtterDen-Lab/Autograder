@@ -34,6 +34,108 @@ def _extract_version(log_text: str) -> str | None:
   return None
 
 
+def _apply_autograder_overrides(*, repo_root: Path, dry_run: bool, quiet: bool) -> bool:
+  """
+  Re-apply Autograder-specific behavior on top of shared vendored LMSInterface.
+
+  These overrides are intentionally local because they encode Autograder policy:
+  - Prefer attachment submissions for ProgrammingAssignment when mixed text/files exist.
+  - Use Autograder-specific temporary-file prefix for feedback uploads.
+  """
+  canvas_file = repo_root / "lms_interface" / "canvas_interface.py"
+  if not canvas_file.exists():
+    print(f"Error: expected vendored file missing: {canvas_file}")
+    return False
+
+  content = canvas_file.read_text()
+  updated = content
+
+  # Override feedback temp prefix for Autograder observability/tests.
+  updated = updated.replace(
+    'prefix="lms_interface_feedback_upload_"',
+    'prefix="autograder_feedback_upload_"',
+  )
+
+  # Inject assignment_kind preference flag once.
+  marker = '    test_only = kwargs.get("test", False)\n'
+  injection = (
+    '    test_only = kwargs.get("test", False)\n'
+    '    assignment_kind = kwargs.get("assignment_kind")\n'
+    '    prefer_file_submissions = assignment_kind == "ProgrammingAssignment"\n'
+  )
+  if 'assignment_kind = kwargs.get("assignment_kind")' not in updated:
+    if marker not in updated:
+      print("Error: could not locate submission preamble marker in canvas_interface.py")
+      return False
+    updated = updated.replace(marker, injection, 1)
+
+  # Replace submission-type branch to prefer files for ProgrammingAssignment.
+  start = "        # Determine submission type based on content\n"
+  end = "        # Check if we should only include the most recent\n"
+  if start not in updated or end not in updated:
+    print("Error: could not locate submission-type block in canvas_interface.py")
+    return False
+  pre, rest = updated.split(start, 1)
+  _, post = rest.split(end, 1)
+  replacement_block = (
+    "        # Determine submission type based on content\n"
+    "        has_attachments = student_submission.get(\"attachments\") is not None and len(student_submission.get(\"attachments\", [])) > 0\n"
+    "        has_text_body = student_submission.get(\"body\") is not None and student_submission.get(\"body\").strip() != \"\"\n"
+    "\n"
+    "        if has_attachments and (prefer_file_submissions or not has_text_body):\n"
+    "          if has_text_body and prefer_file_submissions:\n"
+    "            log.debug(\n"
+    "              f\"Detected mixed content for {student.name}; prioritizing attachments for ProgrammingAssignment\"\n"
+    "            )\n"
+    "          # File submission\n"
+    "          log.debug(f\"Detected file submission for {student.name}\")\n"
+    "          submissions.append(\n"
+    "            FileSubmission__Canvas(\n"
+    "              student=student,\n"
+    "              status=Submission.Status.from_string(student_submission[\"workflow_state\"], student_submission['score']),\n"
+    "              attachments=student_submission[\"attachments\"],\n"
+    "              submission_index=student_submission_index\n"
+    "            )\n"
+    "          )\n"
+    "        elif has_text_body:\n"
+    "          # Text submission - create object-like structure from dict\n"
+    "          log.debug(f\"Detected text submission for {student.name}\")\n"
+    "          class SubmissionObject:\n"
+    "            def __init__(self, data):\n"
+    "              for key, value in data.items():\n"
+    "                setattr(self, key, value)\n"
+    "\n"
+    "          submissions.append(\n"
+    "            TextSubmission__Canvas(\n"
+    "              student=student,\n"
+    "              status=Submission.Status.from_string(student_submission[\"workflow_state\"], student_submission['score']),\n"
+    "              canvas_submission_data=SubmissionObject(student_submission),\n"
+    "              submission_index=student_submission_index\n"
+    "            )\n"
+    "          )\n"
+    "        else:\n"
+    "          # No submission content found\n"
+    "          log.debug(f\"No submission content found for {student.name}\")\n"
+    "          continue\n"
+    "\n"
+  )
+  updated = pre + replacement_block + end + post
+
+  if dry_run:
+    if updated != content and not quiet:
+      print("  [DRY RUN] Would apply Autograder LMSInterface overrides")
+    return True
+
+  if updated != content:
+    canvas_file.write_text(updated)
+    if not quiet:
+      print("Applied Autograder LMSInterface overrides")
+  elif not quiet:
+    print("Autograder LMSInterface overrides already applied")
+
+  return True
+
+
 def main() -> int:
   parser = argparse.ArgumentParser(
     description="Vendor LMSInterface into Autograder (top-level package)"
@@ -95,7 +197,15 @@ def main() -> int:
   if not args.quiet:
     print("Running:", " ".join(cmd))
     result = subprocess.run(cmd, check=False)
-    return result.returncode
+    if result.returncode != 0:
+      return result.returncode
+    if not _apply_autograder_overrides(
+        repo_root=repo_root,
+        dry_run=args.dry_run,
+        quiet=args.quiet,
+    ):
+      return 1
+    return 0
 
   result = subprocess.run(cmd, check=False, capture_output=True, text=True)
   combined = f"{result.stdout}\n{result.stderr}".strip()
@@ -108,6 +218,12 @@ def main() -> int:
       )
     else:
       print(f"Vendored LMSInterface from {lms_repo}{dry_run_note}.")
+    if not _apply_autograder_overrides(
+        repo_root=repo_root,
+        dry_run=args.dry_run,
+        quiet=args.quiet,
+    ):
+      return 1
     return 0
 
   print("Vendoring failed.")
