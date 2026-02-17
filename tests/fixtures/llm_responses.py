@@ -218,6 +218,13 @@ MALFORMED_WRONG_TYPE_SCORES = {
     "feedback": 12345  # Should be string
 }
 
+# Model returned syntactically valid but unusable outputs
+EMPTY_TEXT_RESPONSE = ""
+CONTENT_FILTER_REFUSAL_TEXT = (
+    "I’m unable to help with this request due to content policy restrictions."
+)
+PROVIDER_UNAVAILABLE_ERROR = "503 Service Unavailable"
+
 # =============================================================================
 # PARTIAL RESPONSES (missing fields)
 # =============================================================================

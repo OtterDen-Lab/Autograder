@@ -1,5 +1,6 @@
 import json
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from Autograder.graders.text_submission_grader import (
   BatchProcessor,
@@ -10,6 +11,11 @@ from Autograder.graders.text_submission_grader import (
   WeeklyStudyNotesGrader,
 )
 from lms_interface.classes import Student, TextSubmission
+from tests.fixtures.llm_responses import (
+  CONTENT_FILTER_REFUSAL_TEXT,
+  EMPTY_TEXT_RESPONSE,
+  PROVIDER_UNAVAILABLE_ERROR,
+)
 
 
 def _submission(name: str, user_id: int) -> TextSubmission:
@@ -709,3 +715,241 @@ def test_question_consolidation_falls_back_to_anthropic_when_openai_fails(
   assert WorkingAnthropic.calls == 1
   assert any(detail["provider"] == "anthropic"
              for detail in grader.usage_details)
+
+
+def test_phase_1_aggregate_analysis_degrades_gracefully_on_invalid_json(
+    monkeypatch):
+  from Autograder import ai_helper
+
+  class InvalidJsonAnthropic:
+    def query_ai(self, *args, **kwargs):
+      return "{ definitely not valid json", {
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "prompt_tokens": 10,
+        "completion_tokens": 3,
+        "total_tokens": 13
+      }
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", InvalidJsonAnthropic)
+
+  grader = TextSubmissionGrader(phase1_tier="small")
+  grader.prefer_anthropic = True
+  grader.total_tokens = 0
+  grader.total_cost = 0.0
+  grader.usage_details = []
+
+  result = grader.phase_1_aggregate_analysis(["notes"], "Weekly Notes", "CST")
+
+  assert result["common_themes"] == "{ definitely not valid json"
+  assert result["core_topics"] == []
+  assert grader.core_topics == []
+
+
+def test_grade_individual_submission_empty_response_marks_failed_and_reports(
+    monkeypatch):
+  from Autograder import ai_helper
+
+  class EmptyOpenAI:
+    def query_ai(self, *args, **kwargs):
+      raise ValueError("Empty response from provider")
+
+  class EmptyAnthropic:
+    def query_ai(self, *args, **kwargs):
+      return EMPTY_TEXT_RESPONSE, {
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "prompt_tokens": 8,
+        "completion_tokens": 0,
+        "total_tokens": 8
+      }
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__OpenAI", EmptyOpenAI)
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", EmptyAnthropic)
+
+  grader = TextSubmissionGrader(phase2_tier="small")
+  grader.prefer_anthropic = False
+  grader.related_topics = []
+  grader.off_topic_indicators = []
+  grader._report_individual_grading_failure = MagicMock()
+
+  result = grader._grade_individual_submission(
+    "I tried to submit notes.",
+    ["Scheduling"],
+    student_id=8,
+  )
+
+  assert result["student_id"] == 8
+  assert result["grading_failed"] is True
+  assert result["support_reason"] == "LLM grading failed after retries"
+  grader._report_individual_grading_failure.assert_called_once()
+
+
+def test_phase_2_individual_grading_continues_after_single_timeout(
+    monkeypatch):
+  from Autograder import ai_helper
+
+  class ConditionalOpenAI:
+    def query_ai(self, prompt, *args, **kwargs):
+      if "timeout-marker" in prompt:
+        raise TimeoutError("request timed out")
+      return {
+        "engagement_score": 3,
+        "relevance_score": 2,
+        "explanation_quality_score": 1,
+        "topics_covered": ["Scheduling"],
+        "topics_missing": [],
+        "topics_needing_review": [],
+        "off_topic_content": "",
+        "misconception_notes": "",
+        "needs_support": False,
+        "support_reason": "",
+        "feedback": "Good effort."
+      }, {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "prompt_tokens": 9,
+        "completion_tokens": 5,
+        "total_tokens": 14
+      }
+
+  class TimeoutAnthropic:
+    def query_ai(self, prompt, *args, **kwargs):
+      if "timeout-marker" in prompt:
+        raise TimeoutError("request timed out")
+      return json.dumps({
+        "engagement_score": 3,
+        "relevance_score": 2,
+        "explanation_quality_score": 1,
+        "topics_covered": ["Scheduling"],
+        "topics_missing": [],
+        "topics_needing_review": [],
+        "off_topic_content": "",
+        "misconception_notes": "",
+        "needs_support": False,
+        "support_reason": "",
+        "feedback": "Good effort."
+      }), {
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "prompt_tokens": 9,
+        "completion_tokens": 5,
+        "total_tokens": 14
+      }
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__OpenAI", ConditionalOpenAI)
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", TimeoutAnthropic)
+
+  grader = TextSubmissionGrader(phase2_tier="small")
+  grader.prefer_anthropic = False
+  grader.related_topics = []
+  grader.off_topic_indicators = []
+  grader.aggregate_results = {"student_questions": []}
+  grader.total_tokens = 0
+  grader.total_cost = 0.0
+  grader.usage_details = []
+  grader._report_individual_grading_failure = MagicMock()
+
+  results = grader.phase_2_individual_grading([
+    {
+      "student_id": 1,
+      "student_name": "Anon 0001",
+      "text": "timeout-marker",
+      "word_count": 280,
+    },
+    {
+      "student_id": 2,
+      "student_name": "Anon 0002",
+      "text": "normal submission content",
+      "word_count": 280,
+    },
+  ], ["Scheduling"])
+
+  assert len(results) == 2
+  assert results[0]["grading_failed"] is True
+  assert results[1].get("grading_failed", False) is False
+  assert results[1]["total_grade"] >= 0
+  assert any(s["student_id"] == 1 for s in grader.support_needed_students)
+  grader._report_individual_grading_failure.assert_called_once()
+
+
+def test_phase_2_individual_grading_logs_content_filter_refusal(
+    monkeypatch):
+  from Autograder import ai_helper
+  from Autograder.graders.text_submission import grader as text_grader_module
+
+  class RefusalOpenAI:
+    def query_ai(self, *args, **kwargs):
+      raise RuntimeError(CONTENT_FILTER_REFUSAL_TEXT)
+
+  class RefusalAnthropic:
+    def query_ai(self, *args, **kwargs):
+      raise RuntimeError(CONTENT_FILTER_REFUSAL_TEXT)
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__OpenAI", RefusalOpenAI)
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", RefusalAnthropic)
+  mock_log_error = MagicMock()
+  monkeypatch.setattr(text_grader_module.log, "error", mock_log_error)
+
+  grader = TextSubmissionGrader(phase2_tier="small")
+  grader.prefer_anthropic = False
+  grader.related_topics = []
+  grader.off_topic_indicators = []
+  grader.aggregate_results = {"student_questions": []}
+  grader.total_tokens = 0
+  grader.total_cost = 0.0
+  grader.usage_details = []
+  grader._report_individual_grading_failure = MagicMock()
+
+  results = grader.phase_2_individual_grading([
+    {
+      "student_id": 77,
+      "student_name": "Anon 0077",
+      "text": "notes that trigger refusal",
+      "word_count": 300,
+    },
+  ], ["Processes"])
+
+  assert results[0]["grading_failed"] is True
+  assert any("Both AI providers failed for 77" in str(c.args[0])
+             for c in mock_log_error.call_args_list)
+  grader._report_individual_grading_failure.assert_called_once()
+
+
+def test_grade_individual_submission_provider_unavailable_reports_clear_error(
+    monkeypatch):
+  from Autograder import ai_helper
+
+  class UnavailableOpenAI:
+    def query_ai(self, *args, **kwargs):
+      raise ConnectionError(PROVIDER_UNAVAILABLE_ERROR)
+
+  class UnavailableAnthropic:
+    def query_ai(self, *args, **kwargs):
+      raise ConnectionError(PROVIDER_UNAVAILABLE_ERROR)
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__OpenAI", UnavailableOpenAI)
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", UnavailableAnthropic)
+
+  captured_failure_reasons = []
+
+  def _capture_failure(_student_id, reason):
+    captured_failure_reasons.append(reason)
+
+  grader = TextSubmissionGrader(phase2_tier="small")
+  grader.prefer_anthropic = False
+  grader.related_topics = []
+  grader.off_topic_indicators = []
+  grader._report_individual_grading_failure = _capture_failure
+
+  result = grader._grade_individual_submission(
+    "submission text",
+    ["Processes"],
+    student_id=55,
+  )
+
+  assert result["grading_failed"] is True
+  assert len(captured_failure_reasons) == 1
+  assert "OpenAI request failed" in captured_failure_reasons[0]
+  assert "Check API credentials, connectivity, and provider availability" in captured_failure_reasons[
+    0]
