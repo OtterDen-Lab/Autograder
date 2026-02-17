@@ -6,6 +6,7 @@ from Autograder.ai_orchestrator import (ProviderFallbackOrchestrator,
                                         parse_anthropic_json_payload,
                                         query_anthropic_text,
                                         query_openai_structured)
+from tests.fixtures.llm_mocks import MockRateLimitError
 
 
 def test_extract_json_object_parses_first_object_from_text():
@@ -105,4 +106,64 @@ def test_query_anthropic_text_wraps_provider_failures(monkeypatch):
 
   with pytest.raises(autograder_exceptions.AIProviderError,
                      match="Anthropic request failed"):
+    query_anthropic_text("hello", tier="small", max_response_tokens=100)
+
+
+def test_query_openai_structured_retries_rate_limit_when_enabled(monkeypatch):
+  from Autograder import ai_helper
+  from Autograder import ai_orchestrator
+
+  class FlakyOpenAI:
+    calls = 0
+
+    def query_ai(self, *args, **kwargs):
+      del args, kwargs
+      type(self).calls += 1
+      if type(self).calls == 1:
+        raise MockRateLimitError("rate limit")
+      return {
+        "common_themes": "Recovered",
+        "core_topics": [],
+        "related_topics": [],
+        "off_topic_indicators": [],
+        "commonly_misunderstood_topics": [],
+        "misconception_details": "",
+        "key_insights": "",
+        "teaching_feedback": "",
+        "student_questions": []
+      }, {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "prompt_tokens": 1,
+        "completion_tokens": 1,
+        "total_tokens": 2
+      }
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__OpenAI", FlakyOpenAI)
+  monkeypatch.setattr(ai_orchestrator.time, "sleep", lambda *_: None)
+  monkeypatch.setattr(ai_orchestrator.random, "uniform", lambda *_: 0.0)
+
+  result, _usage = query_openai_structured(
+    "hello",
+    schema_name="aggregate_analysis",
+    tier="small",
+    max_response_tokens=100,
+    max_rate_limit_retries=1,
+  )
+
+  assert FlakyOpenAI.calls == 2
+  assert result["common_themes"] == "Recovered"
+
+
+def test_query_anthropic_text_rate_limit_fails_fast_by_default(monkeypatch):
+  from Autograder import ai_helper
+
+  class RateLimitedAnthropic:
+    def query_ai(self, *args, **kwargs):
+      raise MockRateLimitError("rate limit")
+
+  monkeypatch.setattr(ai_helper, "AI_Helper__Anthropic", RateLimitedAnthropic)
+
+  with pytest.raises(autograder_exceptions.AIProviderError,
+                     match="Anthropic rate limited"):
     query_anthropic_text("hello", tier="small", max_response_tokens=100)

@@ -58,12 +58,23 @@ Each entry:
 - `phase1_tier` (`small|medium|large`, default `small`)
 - `phase2_tier` (`small|medium|large`, default `small`)
 - `phase25_tier` (`small|medium|large`, default `small`)
+- `rate_limit_retries` (`int >= 0`, default `0`)
 - `records_dir` (`string|null`)
 - `record_retention` (`bool`, default `false`)
 - `report_errors` (`bool`, default `true`)
 - `slack_webhook` (`string|null`)
 - `slack_token` (`string|null`)
 - `slack_channel` (`string|null`)
+- `prompts` (`mapping`, optional) with keys:
+  - `aggregate_analysis` (`string`)
+  - `individual_grading` (`string`)
+  - `question_consolidation` (`string`)
+- `rubric` (`mapping`, optional) with keys:
+  - `engagement` (`mapping`): `points` (`int >= 0`), `description` (`string|null`)
+  - `length` (`mapping`): `points` (`int >= 0`), `description` (`string|null`)
+  - `relevance` (`mapping`): `points` (`int >= 0`), `description` (`string|null`)
+  - `explanation_quality` (`mapping`): `points` (`int >= 0`), `description` (`string|null`)
+  - `word_threshold` (`int >= 1`)
 
 ## courses
 

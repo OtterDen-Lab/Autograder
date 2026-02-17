@@ -17,6 +17,7 @@ from typing import Dict, List
 from Autograder import exceptions as autograder_exceptions
 from Autograder.assignment import AssignmentRegistry
 from Autograder.config_models import AssignmentRunRequest, get_active_grader_compatibility
+from Autograder.grader_context import GraderContext
 from Autograder.grader import GraderRegistry
 from Autograder.cli.validators import resolve_records_dir
 from .stages import run_prepare_stage, run_grade_stage, run_publish_stage
@@ -161,10 +162,25 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
             assignment_name = assignment_name.strip()
         if not assignment_name:
             assignment_name = repo_path or lms_assignment_name
+
+        grader_context = GraderContext(
+            course_name=assignment_data.course_name,
+            assignment_name=assignment_name,
+            assignment_kind=assignment_kind,
+            slack_channel=assignment_data.slack_channel,
+            privacy_mode=assignment_data.privacy_mode,
+            reveal_identity=assignment_data.reveal_identity,
+            records_dir=settings.get("records_dir"),
+            prefer_anthropic=bool(settings.get("prefer_anthropic", False)),
+            idempotency_key=assignment_data.idempotency_key,
+            idempotency_state_dir=assignment_data.idempotency_state_dir,
+        )
+
         grader = GraderRegistry.create(grader_name,
                                         assignment_path=repo_path,
                                         assignment_name=assignment_name,
                                         **settings)
+        grader.grader_context = grader_context
 
         with AssignmentRegistry.create(
                 assignment_kind,
@@ -200,7 +216,8 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
                 # Run grade stage
                 grade_started = time.perf_counter()
                 grade_result = run_grade_stage(grader, grading_assignment, settings,
-                                               assignment_data, args, do_regrade)
+                                               assignment_data, args, do_regrade,
+                                               grader_context=grader_context)
                 grade_result.duration_ms = int(
                     (time.perf_counter() - grade_started) * 1000)
                 stage_contract["grade"] = asdict(grade_result)

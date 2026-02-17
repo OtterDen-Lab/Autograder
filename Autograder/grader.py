@@ -56,6 +56,7 @@ class Grader(abc.ABC):
     self.slack_webhook = kwargs.get('slack_webhook')
     self.slack_token = kwargs.get('slack_token')
     self.report_errors = kwargs.get('report_errors', True)
+    self.grader_context = kwargs.get('grader_context')
 
   def grade_assignment(self, assignment: Assignment, *args, **kwargs) -> None:
     """

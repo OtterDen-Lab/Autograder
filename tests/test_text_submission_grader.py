@@ -10,6 +10,7 @@ from Autograder.graders.text_submission_grader import (
   TextSubmissionGrader,
   WeeklyStudyNotesGrader,
 )
+from Autograder.grader_context import GraderContext
 from lms_interface.classes import Student, TextSubmission
 from tests.fixtures.llm_responses import (
   CONTENT_FILTER_REFUSAL_TEXT,
@@ -953,3 +954,82 @@ def test_grade_individual_submission_provider_unavailable_reports_clear_error(
   assert "OpenAI request failed" in captured_failure_reasons[0]
   assert "Check API credentials, connectivity, and provider availability" in captured_failure_reasons[
     0]
+
+
+def test_text_submission_grader_uses_custom_prompt_template():
+  grader = TextSubmissionGrader(
+    prompt_templates={
+      "aggregate_analysis":
+      "Course={course_name}; Assignment={assignment_name}; Count={num_submissions}"
+    })
+
+  rendered = grader._build_aggregate_analysis_prompt(["one", "two"],
+                                                     "Weekly Notes", "CST334")
+  assert rendered == "Course=CST334; Assignment=Weekly Notes; Count=2"
+
+
+def test_text_submission_grader_uses_custom_rubric_points_and_descriptions():
+  grader = TextSubmissionGrader(
+    rubric={
+      "engagement": {
+        "points": 5,
+        "description": "Engagement depth"
+      },
+      "length": {
+        "points": 1,
+        "description": "Minimum-length completion"
+      },
+      "relevance": {
+        "points": 3,
+        "description": "Topic alignment"
+      },
+      "explanation_quality": {
+        "points": 1,
+        "description": "Explanation clarity"
+      },
+      "word_threshold": 100,
+      "total_points": 10,
+    })
+
+  scored = grader.score_calculator.apply_scores({
+    "engagement_score": 5,
+    "relevance_score": 3,
+    "explanation_quality_score": 1,
+  }, word_count=120, student_name="Anon 0001")
+
+  assert scored["length_score"] == 1
+  assert scored["total_grade"] == 10
+
+  feedback = grader.rubric_generator.generate(scored)
+  assert "Engagement depth" in feedback
+  assert "Minimum-length completion" in feedback
+  assert "met 100 words" in feedback
+
+
+def test_text_submission_grader_prefers_typed_grader_context_for_runtime_metadata():
+  from Autograder.assignment import Assignment_TextAssignment
+
+  grader = TextSubmissionGrader()
+
+  context = GraderContext(
+    course_name="CST-Context",
+    assignment_name="Context Assignment",
+    reveal_identity=True,
+    prefer_anthropic=True,
+    records_dir="/tmp/context-records",
+    slack_channel="C-CONTEXT",
+  )
+
+  assignment = Assignment_TextAssignment(
+    lms_assignment=SimpleNamespace(name="Weekly Notes"))
+  assignment.submissions = []
+  assignment.get_submission_data = lambda: []
+
+  grader.grade_assignment(assignment, grader_context=context)
+
+  assert grader.course_name == "CST-Context"
+  assert grader.assignment_name == "Context Assignment"
+  assert grader.reveal_identity is True
+  assert grader.prefer_anthropic is True
+  assert grader.records_dir == "/tmp/context-records"
+  assert grader.slack_channel == "C-CONTEXT"

@@ -18,10 +18,11 @@ import logging
 import os
 import requests
 from datetime import datetime
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from Autograder.grader import Grader
 from Autograder import config_models
+from Autograder.grader_context import GraderContext
 from Autograder.ai_orchestrator import (
     ProviderFallbackOrchestrator,
     parse_anthropic_json_payload,
@@ -42,6 +43,13 @@ from .prompts import (
 )
 
 log = logging.getLogger(__name__)
+
+
+class _PromptTemplateContext(dict):
+    """Safe formatter context that leaves unknown placeholders unchanged."""
+
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
 
 
 class BaseTextSubmissionGrader(Grader):
@@ -96,10 +104,76 @@ class BaseTextSubmissionGrader(Grader):
         self.slack_channel = kwargs.get('slack_channel')
         self.records_dir = None
         self.reveal_identity = False
+        self.grader_context: GraderContext | None = kwargs.get('grader_context')
+        self.prompt_templates: Dict[str, str] = dict(
+            kwargs.get('prompt_templates', {}))
+        try:
+            self.rate_limit_retries = max(
+                0, int(kwargs.get('rate_limit_retries', 0)))
+        except (TypeError, ValueError):
+            self.rate_limit_retries = 0
+
+        rubric_config: Dict[str, Any] = dict(kwargs.get('rubric', {}) or {})
+
+        def _rubric_component(name: str, default_points: int,
+                              default_description: str) -> tuple[int, str]:
+            component = rubric_config.get(name) or {}
+            if not isinstance(component, dict):
+                component = {}
+            points = component.get("points", default_points)
+            description = component.get("description", default_description)
+            try:
+                points = int(points)
+            except (TypeError, ValueError):
+                points = default_points
+            if points < 0:
+                points = default_points
+            if not isinstance(description, str) or not description.strip():
+                description = default_description
+            return points, description
+
+        engagement_points, engagement_description = _rubric_component(
+            "engagement", 4, "Effort to process and explain material")
+        length_points, length_description = _rubric_component(
+            "length", 2, "Meeting word count requirement")
+        relevance_points, relevance_description = _rubric_component(
+            "relevance", 2, "Coverage of class topics")
+        explanation_quality_points, explanation_quality_description = (
+            _rubric_component("explanation_quality", 2, "Depth of explanation"))
+        try:
+            word_threshold = int(rubric_config.get("word_threshold", 250))
+        except (TypeError, ValueError):
+            word_threshold = 250
+        if word_threshold < 1:
+            word_threshold = 250
+
+        configured_total = rubric_config.get("total_points")
+        if configured_total is None:
+            configured_total = (engagement_points + length_points +
+                                relevance_points + explanation_quality_points)
+        try:
+            rubric_total = int(configured_total)
+        except (TypeError, ValueError):
+            rubric_total = (engagement_points + length_points + relevance_points +
+                            explanation_quality_points)
+        if rubric_total <= 0:
+            rubric_total = (engagement_points + length_points + relevance_points +
+                            explanation_quality_points)
 
         # Scoring and rubric components (can be overridden by subclasses)
-        self.score_calculator = ScoreCalculator()
-        self.rubric_generator = RubricGenerator()
+        self.score_calculator = ScoreCalculator(word_threshold=word_threshold,
+                                                length_points=length_points)
+        self.rubric_generator = RubricGenerator(
+            engagement_points=engagement_points,
+            length_points=length_points,
+            relevance_points=relevance_points,
+            explanation_quality_points=explanation_quality_points,
+            rubric_total=rubric_total,
+            word_threshold=word_threshold,
+            engagement_description=engagement_description,
+            length_description=length_description,
+            relevance_description=relevance_description,
+            explanation_quality_description=explanation_quality_description)
 
         # PII redaction
         self.pii_redactor = SubmissionPIIRedactor()
@@ -137,6 +211,16 @@ class BaseTextSubmissionGrader(Grader):
         Returns:
             Prompt string for the AI
         """
+        rendered_template = self._render_prompt_template(
+            "aggregate_analysis", {
+                "assignment_name": assignment_name,
+                "course_name": course_name,
+                "num_submissions": len(submission_texts),
+                "submission_texts": submission_texts,
+                "submissions_block": "\n\n".join(submission_texts),
+            })
+        if rendered_template is not None:
+            return rendered_template
         return get_aggregate_analysis_prompt(submission_texts, assignment_name,
                                              course_name)
 
@@ -154,6 +238,25 @@ class BaseTextSubmissionGrader(Grader):
         Returns:
             Prompt string for the AI
         """
+        rendered_template = self._render_prompt_template(
+            "individual_grading", {
+                "submission_text": submission_text,
+                "core_topics": core_topics,
+                "related_topics": self.related_topics,
+                "off_topic_indicators": self.off_topic_indicators,
+                "core_topics_csv": ", ".join(core_topics),
+                "related_topics_csv": ", ".join(self.related_topics),
+                "off_topic_indicators_csv": ", ".join(self.off_topic_indicators),
+                "engagement_points": self.rubric_generator.engagement_points,
+                "length_points": self.rubric_generator.length_points,
+                "relevance_points": self.rubric_generator.relevance_points,
+                "explanation_quality_points":
+                self.rubric_generator.explanation_quality_points,
+                "rubric_total": self.rubric_generator.rubric_total,
+                "word_threshold": self.score_calculator.word_threshold,
+            })
+        if rendered_template is not None:
+            return rendered_template
         return get_individual_grading_prompt(
             submission_text, core_topics,
             related_topics=self.related_topics,
@@ -172,7 +275,35 @@ class BaseTextSubmissionGrader(Grader):
         Returns:
             Prompt string for the AI
         """
+        rendered_template = self._render_prompt_template(
+            "question_consolidation", {
+                "questions": all_questions,
+                "questions_list": all_questions,
+                "question_count": len(all_questions),
+                "questions_block": "\n".join(all_questions),
+            })
+        if rendered_template is not None:
+            return rendered_template
         return get_question_consolidation_prompt(all_questions)
+
+    def _render_prompt_template(self, template_name: str,
+                                context: Dict[str, Any]) -> str | None:
+        """
+        Render a user-configured prompt template, if present.
+
+        Unknown placeholders are preserved to avoid hard failures when
+        instructors iterate on custom prompt templates.
+        """
+        template = self.prompt_templates.get(template_name)
+        if not template:
+            return None
+        try:
+            return template.format_map(_PromptTemplateContext(context))
+        except Exception as e:
+            log.warning(
+                f"Failed to render custom prompt template '{template_name}': {e}. "
+                "Falling back to built-in prompt.")
+            return None
 
     # =========================================================================
     # PII redaction
@@ -285,14 +416,30 @@ class BaseTextSubmissionGrader(Grader):
             )
             return
 
-        # Store assignment and course info for Slack reporting
-        self.assignment_name = assignment.lms_assignment.name
-        self.course_name = kwargs.get('course_name', 'Unknown Course')
+        runtime_context = kwargs.get('grader_context')
+        if runtime_context is None:
+            runtime_context = self.grader_context
 
-        # Store AI provider preference and records directory
-        self.prefer_anthropic = kwargs.get('prefer_anthropic', False)
+        # Store assignment and course info for reporting
+        default_assignment_name = assignment.lms_assignment.name
+        self.assignment_name = getattr(runtime_context, "assignment_name",
+                                       None) or default_assignment_name
+        self.course_name = (getattr(runtime_context, "course_name", None) or
+                            kwargs.get('course_name', 'Unknown Course'))
+
+        # Store provider preference and runtime context
+        self.prefer_anthropic = kwargs.get(
+            'prefer_anthropic',
+            getattr(runtime_context, "prefer_anthropic", False))
         self.records_dir = kwargs.get('records_dir')
-        self.reveal_identity = kwargs.get('reveal_identity', False)
+        if self.records_dir is None:
+            self.records_dir = getattr(runtime_context, "records_dir", None)
+        self.reveal_identity = kwargs.get(
+            'reveal_identity',
+            getattr(runtime_context, "reveal_identity", False))
+        self.slack_channel = kwargs.get(
+            "slack_channel",
+            self.slack_channel or getattr(runtime_context, "slack_channel", None))
 
         # Initialize token tracking
         self.total_tokens = 0
@@ -438,7 +585,10 @@ class BaseTextSubmissionGrader(Grader):
             if not self.prefer_anthropic:
                 operation = "Phase 1 - Aggregate Analysis (Anthropic fallback)"
             analysis_text, usage = query_anthropic_text(
-                prompt, tier=self.phase1_tier, max_response_tokens=2000)
+                prompt,
+                tier=self.phase1_tier,
+                max_response_tokens=2000,
+                max_rate_limit_retries=self.rate_limit_retries)
             self._track_token_usage(usage, operation)
 
             result = parse_anthropic_json_payload(analysis_text,
@@ -471,7 +621,8 @@ class BaseTextSubmissionGrader(Grader):
                 prompt,
                 schema_name="aggregate_analysis",
                 tier=self.phase1_tier,
-                max_response_tokens=2000)
+                max_response_tokens=2000,
+                max_rate_limit_retries=self.rate_limit_retries)
             self._track_token_usage(usage,
                                     "Phase 1 - Aggregate Analysis (OpenAI)")
             self._store_topics_from_result(result)
@@ -641,7 +792,8 @@ class BaseTextSubmissionGrader(Grader):
                 prompt,
                 schema_name="question_consolidation",
                 tier=self.phase25_tier,
-                max_response_tokens=2000)
+                max_response_tokens=2000,
+                max_rate_limit_retries=self.rate_limit_retries)
             self._track_token_usage(usage, operation)
 
             consolidated = result.get("consolidated_questions", [])
@@ -655,7 +807,8 @@ class BaseTextSubmissionGrader(Grader):
                 prompt,
                 schema_name="question_consolidation",
                 tier=self.phase25_tier,
-                max_response_tokens=2000)
+                max_response_tokens=2000,
+                max_rate_limit_retries=self.rate_limit_retries)
             self._track_token_usage(
                 usage, "Phase 2.5 - Question Consolidation (OpenAI)")
             consolidated = result.get("consolidated_questions", [])
@@ -716,7 +869,8 @@ class BaseTextSubmissionGrader(Grader):
                 schema_name="individual_grading",
                 tier=self.phase2_tier,
                 max_response_tokens=1000,
-                max_retries=3)
+                max_retries=3,
+                max_rate_limit_retries=self.rate_limit_retries)
             self._track_token_usage(usage, operation)
             result["student_id"] = student_id
             return result
@@ -727,7 +881,8 @@ class BaseTextSubmissionGrader(Grader):
                 schema_name="individual_grading",
                 tier=self.phase2_tier,
                 max_response_tokens=1000,
-                max_attempts=3)
+                max_attempts=3,
+                max_rate_limit_retries=self.rate_limit_retries)
             self._track_token_usage(
                 usage, f"Phase 2 - Individual Grading ({student_id}) - OpenAI")
             result["student_id"] = student_id

@@ -43,6 +43,16 @@ def _require_optional_int(value: Any, label: str) -> Optional[int]:
   return value
 
 
+def _require_non_negative_int(value: Any, label: str, default: int = 0) -> int:
+  if value is None:
+    return default
+  if not isinstance(value, int):
+    raise _config_error(f"{label} must be an integer")
+  if value < 0:
+    raise _config_error(f"{label} must be >= 0")
+  return value
+
+
 def _require_str_list(value: Any, label: str) -> List[str]:
   if value is None:
     return []
@@ -336,6 +346,148 @@ class TemplateGraderSettings:
     }
 
 
+DEFAULT_TEXT_PROMPT_KEYS = {
+  "aggregate_analysis",
+  "individual_grading",
+  "question_consolidation",
+}
+
+DEFAULT_TEXT_RUBRIC_DESCRIPTIONS = {
+  "engagement": "Effort to process and explain material",
+  "length": "Meeting word count requirement",
+  "relevance": "Coverage of class topics",
+  "explanation_quality": "Depth of explanation",
+}
+
+DEFAULT_TEXT_RUBRIC_POINTS = {
+  "engagement": 4,
+  "length": 2,
+  "relevance": 2,
+  "explanation_quality": 2,
+}
+
+DEFAULT_TEXT_WORD_THRESHOLD = 250
+
+
+@dataclass
+class TextRubricCriterionSettings:
+  points: int
+  description: str
+
+  @classmethod
+  def from_raw(cls,
+               value: Any,
+               *,
+               label: str,
+               default_points: int,
+               default_description: str) -> "TextRubricCriterionSettings":
+    if value is None:
+      return cls(points=default_points, description=default_description)
+
+    raw = _require_mapping(value, label)
+    unknown = sorted(k for k in raw.keys() if k not in {"points", "description"})
+    if unknown:
+      raise _config_error(f"{label} has unsupported key(s): {', '.join(unknown)}")
+
+    points = _require_non_negative_int(raw.get("points"), f"{label}.points",
+                                       default_points)
+    description = _require_optional_str(raw.get("description"),
+                                        f"{label}.description")
+    if description is None:
+      description = default_description
+    return cls(points=points, description=description)
+
+  def to_kwargs(self) -> Dict[str, Any]:
+    return {
+      "points": self.points,
+      "description": self.description,
+    }
+
+
+@dataclass
+class TextRubricSettings:
+  engagement: TextRubricCriterionSettings = field(
+    default_factory=lambda: TextRubricCriterionSettings(
+      points=DEFAULT_TEXT_RUBRIC_POINTS["engagement"],
+      description=DEFAULT_TEXT_RUBRIC_DESCRIPTIONS["engagement"]))
+  length: TextRubricCriterionSettings = field(
+    default_factory=lambda: TextRubricCriterionSettings(
+      points=DEFAULT_TEXT_RUBRIC_POINTS["length"],
+      description=DEFAULT_TEXT_RUBRIC_DESCRIPTIONS["length"]))
+  relevance: TextRubricCriterionSettings = field(
+    default_factory=lambda: TextRubricCriterionSettings(
+      points=DEFAULT_TEXT_RUBRIC_POINTS["relevance"],
+      description=DEFAULT_TEXT_RUBRIC_DESCRIPTIONS["relevance"]))
+  explanation_quality: TextRubricCriterionSettings = field(
+    default_factory=lambda: TextRubricCriterionSettings(
+      points=DEFAULT_TEXT_RUBRIC_POINTS["explanation_quality"],
+      description=DEFAULT_TEXT_RUBRIC_DESCRIPTIONS["explanation_quality"]))
+  word_threshold: int = DEFAULT_TEXT_WORD_THRESHOLD
+
+  @classmethod
+  def from_raw(cls, value: Any, context_label: str) -> "TextRubricSettings":
+    if value is None:
+      return cls()
+    raw = _require_mapping(value, context_label)
+    allowed = {
+      "engagement",
+      "length",
+      "relevance",
+      "explanation_quality",
+      "word_threshold",
+    }
+    unknown = sorted(k for k in raw.keys() if k not in allowed)
+    if unknown:
+      raise _config_error(
+        f"{context_label} contains unsupported rubric setting(s): "
+        f"{', '.join(unknown)}")
+
+    word_threshold = _require_non_negative_int(raw.get("word_threshold"),
+                                               f"{context_label}.word_threshold",
+                                               DEFAULT_TEXT_WORD_THRESHOLD)
+    if word_threshold == 0:
+      raise _config_error(f"{context_label}.word_threshold must be >= 1")
+
+    return cls(
+      engagement=TextRubricCriterionSettings.from_raw(
+        raw.get("engagement"),
+        label=f"{context_label}.engagement",
+        default_points=DEFAULT_TEXT_RUBRIC_POINTS["engagement"],
+        default_description=DEFAULT_TEXT_RUBRIC_DESCRIPTIONS["engagement"]),
+      length=TextRubricCriterionSettings.from_raw(
+        raw.get("length"),
+        label=f"{context_label}.length",
+        default_points=DEFAULT_TEXT_RUBRIC_POINTS["length"],
+        default_description=DEFAULT_TEXT_RUBRIC_DESCRIPTIONS["length"]),
+      relevance=TextRubricCriterionSettings.from_raw(
+        raw.get("relevance"),
+        label=f"{context_label}.relevance",
+        default_points=DEFAULT_TEXT_RUBRIC_POINTS["relevance"],
+        default_description=DEFAULT_TEXT_RUBRIC_DESCRIPTIONS["relevance"]),
+      explanation_quality=TextRubricCriterionSettings.from_raw(
+        raw.get("explanation_quality"),
+        label=f"{context_label}.explanation_quality",
+        default_points=DEFAULT_TEXT_RUBRIC_POINTS["explanation_quality"],
+        default_description=DEFAULT_TEXT_RUBRIC_DESCRIPTIONS[
+          "explanation_quality"]),
+      word_threshold=word_threshold,
+    )
+
+  def total_points(self) -> int:
+    return (self.engagement.points + self.length.points + self.relevance.points +
+            self.explanation_quality.points)
+
+  def to_kwargs(self) -> Dict[str, Any]:
+    return {
+      "engagement": self.engagement.to_kwargs(),
+      "length": self.length.to_kwargs(),
+      "relevance": self.relevance.to_kwargs(),
+      "explanation_quality": self.explanation_quality.to_kwargs(),
+      "word_threshold": self.word_threshold,
+      "total_points": self.total_points(),
+    }
+
+
 @dataclass
 class TextSubmissionGraderSettings:
   grade_after_lock_date: bool = False
@@ -343,12 +495,15 @@ class TextSubmissionGraderSettings:
   phase1_tier: str = "small"
   phase2_tier: str = "small"
   phase25_tier: str = "small"
+  rate_limit_retries: int = 0
   records_dir: Optional[str] = None
   record_retention: bool = False
   report_errors: bool = True
   slack_webhook: Optional[str] = None
   slack_token: Optional[str] = None
   slack_channel: Optional[str] = None
+  prompt_templates: Dict[str, str] = field(default_factory=dict)
+  rubric: TextRubricSettings = field(default_factory=TextRubricSettings)
 
   def __post_init__(self) -> None:
     self.phase1_tier = _require_tier(self.phase1_tier,
@@ -368,18 +523,41 @@ class TextSubmissionGraderSettings:
       "phase1_tier",
       "phase2_tier",
       "phase25_tier",
+      "rate_limit_retries",
       "records_dir",
       "record_retention",
       "report_errors",
       "slack_webhook",
       "slack_token",
       "slack_channel",
+      "prompts",
+      "rubric",
     }
     unknown = sorted(k for k in raw.keys() if k not in allowed)
     if unknown:
       raise _config_error(
         f"{context_label} contains unsupported TextSubmissionGrader setting(s): "
         f"{', '.join(unknown)}")
+
+    prompts_raw = raw.get("prompts", {})
+    if prompts_raw is None:
+      prompts_raw = {}
+    prompts = _require_mapping(prompts_raw, f"{context_label}.prompts")
+    unknown_prompts = sorted(
+      key for key in prompts.keys() if key not in DEFAULT_TEXT_PROMPT_KEYS)
+    if unknown_prompts:
+      raise _config_error(
+        f"{context_label}.prompts contains unsupported key(s): "
+        f"{', '.join(unknown_prompts)}")
+    normalized_prompts: Dict[str, str] = {}
+    for key, value in prompts.items():
+      if not isinstance(value, str):
+        raise _config_error(f"{context_label}.prompts.{key} must be a string")
+      rendered = value.strip()
+      if not rendered:
+        raise _config_error(
+          f"{context_label}.prompts.{key} cannot be empty when provided")
+      normalized_prompts[key] = rendered
 
     return cls(
       grade_after_lock_date=_require_bool(
@@ -394,6 +572,10 @@ class TextSubmissionGraderSettings:
                                 f"{context_label}.phase2_tier"),
       phase25_tier=_require_tier(raw.get("phase25_tier", "small"),
                                  f"{context_label}.phase25_tier"),
+      rate_limit_retries=_require_non_negative_int(
+        raw.get("rate_limit_retries"),
+        f"{context_label}.rate_limit_retries",
+        0),
       records_dir=_require_optional_str(raw.get("records_dir"),
                                         f"{context_label}.records_dir"),
       record_retention=_require_bool(raw.get("record_retention", False),
@@ -406,6 +588,9 @@ class TextSubmissionGraderSettings:
                                         f"{context_label}.slack_token"),
       slack_channel=_require_optional_str(raw.get("slack_channel"),
                                           f"{context_label}.slack_channel"),
+      prompt_templates=normalized_prompts,
+      rubric=TextRubricSettings.from_raw(raw.get("rubric"),
+                                         f"{context_label}.rubric"),
     )
 
   def to_kwargs(self) -> Dict[str, Any]:
@@ -415,10 +600,13 @@ class TextSubmissionGraderSettings:
       "phase1_tier": self.phase1_tier,
       "phase2_tier": self.phase2_tier,
       "phase25_tier": self.phase25_tier,
+      "rate_limit_retries": self.rate_limit_retries,
       "records_dir": self.records_dir,
       "record_retention": self.record_retention,
       "report_errors": self.report_errors,
       "slack_webhook": self.slack_webhook,
       "slack_token": self.slack_token,
       "slack_channel": self.slack_channel,
+      "prompt_templates": dict(self.prompt_templates),
+      "rubric": self.rubric.to_kwargs(),
     }

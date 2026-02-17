@@ -19,14 +19,22 @@ _BOOL_KEYS = [
   "report_errors",
 ]
 _TIER_KEYS = ["phase1_tier", "phase2_tier", "phase25_tier"]
+_INT_KEYS = ["rate_limit_retries"]
 _OPTIONAL_STR_KEYS = [
   "records_dir",
   "slack_webhook",
   "slack_token",
   "slack_channel",
 ]
-_ALL_KEYS = _BOOL_KEYS + _TIER_KEYS + _OPTIONAL_STR_KEYS
-_COURSE_KEYS = [key for key in _ALL_KEYS if key != "slack_channel"]
+_PROMPT_KEYS = [
+  "aggregate_analysis",
+  "individual_grading",
+  "question_consolidation",
+]
+_NESTED_KEYS = ["prompts", "rubric"]
+_SIMPLE_KEYS = _BOOL_KEYS + _TIER_KEYS + _INT_KEYS + _OPTIONAL_STR_KEYS
+_ALL_KEYS = _SIMPLE_KEYS + _NESTED_KEYS
+_COURSE_KEYS = [key for key in _SIMPLE_KEYS if key != "slack_channel"]
 
 _OPTIONAL_STR_STRATEGY = st.one_of(
   st.none(),
@@ -35,6 +43,25 @@ _OPTIONAL_STR_STRATEGY = st.one_of(
                            whitelist_characters="-_/:.#"),
     min_size=1,
     max_size=32))
+_PROMPTS_STRATEGY = st.dictionaries(
+  keys=st.sampled_from(_PROMPT_KEYS),
+  values=st.text(min_size=1, max_size=48),
+  max_size=len(_PROMPT_KEYS))
+_RUBRIC_CRITERION_STRATEGY = st.fixed_dictionaries(
+  {},
+  optional={
+    "points": st.integers(min_value=0, max_value=8),
+    "description": st.one_of(st.none(), st.text(min_size=0, max_size=48)),
+  })
+_RUBRIC_STRATEGY = st.fixed_dictionaries(
+  {},
+  optional={
+    "engagement": _RUBRIC_CRITERION_STRATEGY,
+    "length": _RUBRIC_CRITERION_STRATEGY,
+    "relevance": _RUBRIC_CRITERION_STRATEGY,
+    "explanation_quality": _RUBRIC_CRITERION_STRATEGY,
+    "word_threshold": st.integers(min_value=1, max_value=1200),
+  })
 
 
 def _value_strategy_for_key(key: str):
@@ -42,14 +69,20 @@ def _value_strategy_for_key(key: str):
     return st.booleans()
   if key in _TIER_KEYS:
     return st.sampled_from(["small", "medium", "large"])
+  if key in _INT_KEYS:
+    return st.integers(min_value=0, max_value=5)
   if key in _OPTIONAL_STR_KEYS:
     return _OPTIONAL_STR_STRATEGY
+  if key == "prompts":
+    return _PROMPTS_STRATEGY
+  if key == "rubric":
+    return _RUBRIC_STRATEGY
   raise AssertionError(f"Unexpected key: {key}")
 
 @st.composite
 def _settings_strategy(draw):
   merged = {}
-  for key in _ALL_KEYS:
+  for key in _SIMPLE_KEYS:
     include = draw(st.booleans())
     if not include:
       continue
@@ -173,7 +206,7 @@ def test_config_merge_precedence_and_no_silent_drop(type_settings,
 
 @hypothesis_settings(max_examples=100, deadline=None)
 @given(
-  key=st.sampled_from(_ALL_KEYS),
+  key=st.sampled_from(_SIMPLE_KEYS),
   type_value=st.data(),
   course_value=st.data(),
   group_value=st.data(),
@@ -189,6 +222,35 @@ def test_assignment_level_settings_override_group_level_for_each_key(
     {key: expected_assignment_value},
   )
   assert merged[key] == expected_assignment_value
+
+
+def test_prompt_templates_assignment_layer_overrides_group_layer():
+  merged = _collect_merged_settings(
+    {},
+    {},
+    {"prompts": {"aggregate_analysis": "GROUP {course_name}"}},
+    {"prompts": {"aggregate_analysis": "ASSIGN {course_name}"}},
+  )
+  assert merged["prompt_templates"] == {"aggregate_analysis": "ASSIGN {course_name}"}
+
+
+def test_rubric_assignment_layer_overrides_group_layer():
+  merged = _collect_merged_settings(
+    {},
+    {},
+    {"rubric": {
+      "length": {
+        "points": 1
+      }
+    }},
+    {"rubric": {
+      "length": {
+        "points": 3
+      }
+    }},
+  )
+  assert merged["rubric"]["length"]["points"] == 3
+  assert merged["rubric"]["engagement"]["points"] == 4
 
 
 @hypothesis_settings(max_examples=100, deadline=None)
@@ -242,9 +304,13 @@ def test_merge_with_empty_settings_uses_expected_defaults():
   assert merged["phase1_tier"] == "small"
   assert merged["phase2_tier"] == "small"
   assert merged["phase25_tier"] == "small"
+  assert merged["rate_limit_retries"] == 0
   assert merged["records_dir"] is None
   assert merged["record_retention"] is False
   assert merged["report_errors"] is True
   assert merged["slack_webhook"] is None
   assert merged["slack_token"] is None
   assert merged["slack_channel"] is None
+  assert merged["prompt_templates"] == {}
+  assert merged["rubric"]["word_threshold"] == 250
+  assert merged["rubric"]["total_points"] == 10
