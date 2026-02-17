@@ -198,11 +198,12 @@ def print_results_summary(results: List[Dict]) -> None:
     skipped_ungraded_total, skipped_ungraded_lines = (
         collect_push_skipped_ungraded_lines(results))
     if push_failed_total > 0:
-        log.warning(
-            f"Detected {push_failed_total} per-student push failure(s) across successful assignments."
+        log.error(
+            f"Detected {push_failed_total} per-student push failure(s) across successful assignments. "
+            "This run will return a non-zero exit code."
         )
         for line in push_failure_lines:
-            log.warning(line)
+            log.error(line)
     if skipped_ungraded_total > 0:
         log.warning(
             f"Detected {skipped_ungraded_total} per-student ungraded skip(s) across successful assignments."

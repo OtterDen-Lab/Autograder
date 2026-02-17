@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -320,19 +320,19 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic" },
-    { name = "canvasapi" },
-    { name = "docker", specifier = ">=6.1.3" },
-    { name = "httpx", specifier = ">=0.25.2" },
+    { name = "anthropic", specifier = "~=0.57" },
+    { name = "canvasapi", specifier = "~=3.2" },
+    { name = "docker", specifier = "~=7.1" },
+    { name = "httpx", specifier = "~=0.28" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.112.0" },
-    { name = "ollama", specifier = ">=0.6.0" },
-    { name = "openai" },
+    { name = "ollama", specifier = "~=0.6" },
+    { name = "openai", specifier = "~=1.93" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.3" },
-    { name = "python-dateutil" },
+    { name = "python-dateutil", specifier = "~=2.9" },
     { name = "python-dotenv", specifier = "==1.0.1" },
     { name = "pyyaml", specifier = "==6.0.1" },
     { name = "requests", specifier = "==2.32.2" },
-    { name = "slack-sdk", specifier = ">=3.36.0" },
+    { name = "slack-sdk", specifier = "~=3.36" },
 ]
 provides-extras = ["dev"]
 

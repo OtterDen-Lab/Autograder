@@ -98,6 +98,7 @@ This guide covers common runtime failures and the fastest way to recover.
 
 - rerun with `--idempotency-key` to skip already-pushed submissions.
 - inspect `run-report.json` for `push_failed_students`.
+- runs with any push failures now return a non-zero exit code (while still aggregating failures into one run-level summary/Slack alert).
 
 ## Records / Idempotency Path Issues
 

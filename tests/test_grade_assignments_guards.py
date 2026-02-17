@@ -262,6 +262,19 @@ def test_load_and_validate_config_error_includes_path_and_docs(tmp_path):
   assert "documentation/instructor_onboarding.md" in message
 
 
+def test_load_and_validate_config_yaml_parse_error_includes_path_and_docs(tmp_path):
+  yaml_file = tmp_path / "broken_syntax.yaml"
+  yaml_file.write_text("assignment_types:\n  x: [\n", encoding="utf-8")
+
+  with pytest.raises(SystemExit) as exc:
+    grade_assignments.load_and_validate_config(str(yaml_file))
+
+  message = str(exc.value)
+  assert str(yaml_file) in message
+  assert "YAML parse error" in message
+  assert "documentation/instructor_onboarding.md" in message
+
+
 def test_record_retention_requires_explicit_records_dir(monkeypatch):
   class DummyAssignment:
     def __init__(self):
@@ -1069,6 +1082,67 @@ privacy_mode: blind
   assert calls["push_flag"] is True
   assert calls["cleanup"] == 1
   assert calls["docker_cleanup"] == 1
+
+
+def test_main_returns_nonzero_when_push_failures_present(monkeypatch):
+  args = SimpleNamespace(
+    yaml="config.yaml",
+    env=None,
+    limit=None,
+    do_regrade=False,
+    max_workers=1,
+    test=False,
+    report=None,
+    error_slack_channel=None,
+    debug=False,
+    show_stage_timings=False,
+    reveal_identity=False,
+    idempotency_key=None,
+    idempotency_state_dir=None,
+    dump_config=False,
+    dry_run=False,
+    list_graders=False,
+  )
+
+  cleaned = {"called": False}
+
+  @contextlib.contextmanager
+  def fake_lock():
+    yield
+
+  results = [{
+    "success": True,
+    "assignment_id": 42,
+    "assignment_name": "PA1",
+    "course_name": "CST334",
+    "finalize_summary": {
+      "push_failed": 1,
+      "push_failed_students": ["Student 1"],
+    },
+  }]
+
+  monkeypatch.setattr(grade_assignments, "parse_args", lambda: args)
+  monkeypatch.setattr(grade_assignments, "ensure_single_instance", fake_lock)
+  monkeypatch.setattr(grade_assignments, "load_and_validate_config",
+                      lambda _: RunConfig())
+  monkeypatch.setattr(grade_assignments, "collect_assignments_to_grade",
+                      lambda _config, _args: [])
+  monkeypatch.setattr(grade_assignments, "execute_grading",
+                      lambda _assignments, _args: results)
+  monkeypatch.setattr(grade_assignments, "print_results_summary",
+                      lambda _results: None)
+  monkeypatch.setattr(grade_assignments, "write_run_report",
+                      lambda _results, _args: None)
+  monkeypatch.setattr(grade_assignments, "send_slack_run_summary",
+                      lambda _results, _args, _config: None)
+  monkeypatch.setattr(
+    grade_assignments.DockerClient, "cleanup",
+    lambda: cleaned.__setitem__("called", True))
+
+  exit_code = grade_assignments.main()
+
+  assert exit_code == 1
+  assert cleaned["called"] is True
 
 
 def test_send_slack_run_summary_notifies_on_push_failures(monkeypatch):
