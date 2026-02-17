@@ -65,6 +65,13 @@ class Grader(abc.ABC):
                    - do_regrade: If True, regrade already-graded submissions
     :return:
     """
+    self._grade_submissions_loop(assignment, **kwargs)
+
+  def _grade_submissions_loop(self, assignment: Assignment, **kwargs) -> None:
+    """
+    Shared grading loop used by all grader types.
+    Subclasses can customize rejection messages by overriding _rejection_feedback().
+    """
     total_submissions = len(assignment.submissions)
     assignment_id = self.assignment_identifier
 
@@ -86,10 +93,7 @@ class Grader(abc.ABC):
       try:
         # Check if this grader can handle this submission type
         if not self.can_grade_submission(submission):
-          submission.feedback = Feedback(
-            0.0,
-            f"Cannot grade {type(submission).__name__} with {type(self).__name__}"
-          )
+          submission.feedback = self._rejection_feedback(submission)
           continue
 
         if submission.status == Submission.Status.GRADED and not kwargs.get(
@@ -114,6 +118,16 @@ class Grader(abc.ABC):
 
     log.info(
       f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions"
+    )
+
+  def _rejection_feedback(self, submission: Submission) -> Feedback:
+    """
+    Generate feedback when a submission cannot be graded by this grader.
+    Subclasses can override for more specific messages.
+    """
+    return Feedback(
+      0.0,
+      f"Cannot grade {type(submission).__name__} with {type(self).__name__}"
     )
 
   def grade_submission(self, submission: Submission, *args,
@@ -207,61 +221,13 @@ class FileBasedGrader(Grader):
     """
     return isinstance(submission, FileSubmission) and bool(submission.files)
 
-  def grade_assignment(self, assignment: Assignment, *args, **kwargs) -> None:
+  def _rejection_feedback(self, submission: Submission) -> Feedback:
     """
-    Override to add file-specific error messages while maintaining original logic.
+    Provide file-specific rejection messages.
     """
-    total_submissions = len(assignment.submissions)
-    assignment_id = self.assignment_identifier
-
-    log.info(
-      f"[{assignment_id}] Starting to grade {total_submissions} submissions")
-    reveal_identity = kwargs.get("reveal_identity", False)
-
-    for i, submission in enumerate(assignment.submissions, 1):
-      student_name = getattr(getattr(submission, "student", None), "name",
-                             "Unknown Student")
-      user_id = getattr(getattr(submission, "student", None), "user_id", None)
-      if reveal_identity and user_id is not None and str(user_id) not in str(
-          student_name):
-        student_name = f"{student_name} [canvas_user_id={user_id}]"
-      log.debug(
-        f"[{assignment_id}] Grading submission {i}/{total_submissions} (Student: {student_name})"
-      )
-
-      try:
-        # Check if this grader can handle this submission type
-        if not self.can_grade_submission(submission):
-          if isinstance(submission, FileSubmission) and not submission.files:
-            submission.feedback = Feedback(
-              0.0, "Assignment submission files missing")
-          else:
-            submission.feedback = Feedback(
-              0.0,
-              f"Cannot grade {type(submission).__name__} with {type(self).__name__}"
-            )
-          continue
-
-        if submission.status == Submission.Status.GRADED and not kwargs.get(
-            'do_regrade', False):
-          continue
-
-        submission.feedback = self.grade_submission(submission, **kwargs)
-      except Exception as e:
-        log.exception(
-          f"[{assignment_id}] Failed to grade submission for {student_name}: {e}"
-        )
-        # Leave feedback unset so finalize() can skip publishing a grade for
-        # this submission instead of silently pushing a zero.
-        submission.feedback = None
-        try:
-          submission.set_extra({
-            "grading_error": "internal_grader_error",
-            "grading_error_type": type(e).__name__,
-          })
-        except Exception:
-          pass
-
-    log.info(
-      f"[{assignment.lms_assignment.canvas_course.name} {assignment_id}] Finished grading all {total_submissions} submissions"
+    if isinstance(submission, FileSubmission) and not submission.files:
+      return Feedback(0.0, "Assignment submission files missing")
+    return Feedback(
+      0.0,
+      f"Cannot grade {type(submission).__name__} with {type(self).__name__}"
     )

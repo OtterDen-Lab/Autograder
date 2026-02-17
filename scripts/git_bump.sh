@@ -4,13 +4,14 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  git bump [patch|minor|major] [-m "commit message"] [--no-commit] [--dry-run] [--verbose]
+  git bump [patch|minor|major] [-m "commit message"] [--no-commit] [--dry-run] [--skip-tests] [--verbose]
 
 Behavior:
   1. Bump version via `uv version --bump <kind>`
   2. Vendor LMSInterface via `python scripts/vendor_lms_interface.py`
-  3. Stage `pyproject.toml`, `uv.lock`, and `lms_interface/`
-  4. Commit (unless --no-commit)
+  3. Stage `pyproject.toml`, `uv.lock`, `lms_interface/`, and managed tooling scripts
+  4. Run test command (unless --skip-tests)
+  5. Commit (unless --no-commit)
 
 Notes:
   - Requires a clean index and working tree (tracked files).
@@ -37,6 +38,8 @@ COMMIT_MESSAGE=""
 NO_COMMIT="0"
 DRY_RUN="0"
 VERBOSE="0"
+SKIP_TESTS="0"
+TEST_COMMAND='uv run pytest -q'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -62,6 +65,10 @@ while [[ $# -gt 0 ]]; do
       VERBOSE="1"
       shift
       ;;
+    --skip-tests)
+      SKIP_TESTS="1"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -85,7 +92,17 @@ if [[ "$VERBOSE" == "1" ]]; then
 else
   run python scripts/vendor_lms_interface.py --quiet
 fi
-run git add pyproject.toml uv.lock lms_interface
+run git add pyproject.toml uv.lock lms_interface \
+  scripts/check_version_bump_vendoring.sh \
+  scripts/git_bump.sh \
+  scripts/install_git_hooks.sh \
+  scripts/lms_vendor_tooling.toml \
+  .githooks/pre-commit
+
+if [[ "$SKIP_TESTS" != "1" ]] && [[ -n "$TEST_COMMAND" ]]; then
+  echo "Running tests: $TEST_COMMAND"
+  run bash -lc "$TEST_COMMAND"
+fi
 
 if [[ "$NO_COMMIT" == "1" ]]; then
   echo "Staged version bump and vendored LMSInterface updates (no commit created)."
