@@ -6,7 +6,56 @@ import argparse
 import logging
 import os
 
+from Autograder.registry import GraderRegistry, AssignmentRegistry
+
 log = logging.getLogger(__name__)
+
+
+def list_graders() -> None:
+    """
+    Print a table of available graders and their compatible assignment kinds.
+    """
+    # Ensure modules are loaded
+    GraderRegistry.load_premade_modules()
+    AssignmentRegistry.load_premade_modules()
+
+    # Collect grader info
+    graders = []
+    for name, grader_class in sorted(GraderRegistry._registry.items()):
+        canonical_name = getattr(grader_class, "_registry_name", name)
+        compatible_kinds = getattr(grader_class, "COMPATIBLE_KINDS", set())
+        docstring = grader_class.__doc__ or ""
+        # Extract first line of docstring as description
+        description = docstring.strip().split("\n")[0].strip() if docstring else ""
+        # Truncate long descriptions
+        if len(description) > 50:
+            description = description[:47] + "..."
+        graders.append({
+            "name": canonical_name,
+            "kinds": sorted(compatible_kinds) if compatible_kinds else ["(any)"],
+            "description": description,
+        })
+
+    # Print header
+    print("\nAvailable Graders:")
+    print("=" * 80)
+    print(f"{'Grader Name':<25} {'Compatible Kinds':<25} {'Description':<30}")
+    print("-" * 80)
+
+    # Print each grader
+    for grader in graders:
+        kinds_str = ", ".join(grader["kinds"])
+        print(f"{grader['name']:<25} {kinds_str:<25} {grader['description']:<30}")
+
+    print()
+
+    # Also list available assignment kinds
+    print("Available Assignment Kinds:")
+    print("-" * 40)
+    for name, kind_class in sorted(AssignmentRegistry._registry.items()):
+        canonical_name = getattr(kind_class, "_registry_name", name)
+        print(f"  {canonical_name}")
+    print()
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,8 +124,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Validate config and Canvas access, then list assignments without downloading or grading submissions"
     )
+    parser.add_argument(
+        "--list-graders",
+        action="store_true",
+        help="List available graders and their compatible assignment kinds, then exit"
+    )
 
     args = parser.parse_args()
+
+    # --list-graders doesn't need a YAML file
+    if args.list_graders:
+        return args
 
     if args.yaml is None:
         parser.error("--yaml is required")

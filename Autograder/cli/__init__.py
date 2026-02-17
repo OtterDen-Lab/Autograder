@@ -4,7 +4,7 @@ Command-line interface components for the autograder.
 This module provides argument parsing and logging configuration.
 """
 
-from .args import parse_args, configure_logging
+from .args import parse_args, configure_logging, list_graders
 from .validators import (
     resolve_reveal_identity,
     resolve_idempotency_settings,
@@ -14,6 +14,7 @@ from .validators import (
 __all__ = [
     "parse_args",
     "configure_logging",
+    "list_graders",
     "resolve_reveal_identity",
     "resolve_idempotency_settings",
     "resolve_records_dir",

@@ -36,6 +36,7 @@ from Autograder import exceptions as autograder_exceptions
 from Autograder.cli import (
     parse_args,
     configure_logging,
+    list_graders,
     resolve_reveal_identity,
     resolve_idempotency_settings,
 )
@@ -287,6 +288,12 @@ def main() -> int:
         Exit code (0 for success, 1 for failure)
     """
     args = parse_args()
+
+    # Handle --list-graders early, before any config loading
+    if getattr(args, 'list_graders', False):
+        list_graders()
+        return 0
+
     configure_logging(args.debug)
 
     exit_code = 0
