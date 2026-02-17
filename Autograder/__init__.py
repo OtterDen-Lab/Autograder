@@ -5,23 +5,39 @@ import re
 import sys
 
 
+def _ensure_writable_log_dir(path: str) -> bool:
+  try:
+    os.makedirs(path, exist_ok=True)
+  except OSError:
+    return False
+  return os.path.isdir(path) and os.access(path, os.W_OK)
+
+
 def setup_logging() -> None:
   if "LOG_DIR" not in os.environ:
-    default_log_dir = "/var/log/grading"
-    if os.path.isdir(default_log_dir) and os.access(default_log_dir,
-                                                    os.W_OK):
-      os.environ["LOG_DIR"] = default_log_dir
-    else:
-      try:
-        os.makedirs(default_log_dir, exist_ok=True)
-        os.environ["LOG_DIR"] = default_log_dir
-      except OSError:
-        fallback_dir = os.getcwd()
-        os.environ["LOG_DIR"] = fallback_dir
+    candidates = [
+      "/var/log/grading",
+      os.path.abspath(os.path.expanduser("~/.autograder/logs")),
+      "/tmp/autograder/logs",
+    ]
+    selected = None
+    for candidate in candidates:
+      if _ensure_writable_log_dir(candidate):
+        selected = candidate
+        break
+
+    if selected is not None:
+      os.environ["LOG_DIR"] = selected
+      if selected != candidates[0]:
         print(
-          f"Logging: unable to use {default_log_dir}; have you created it with write permissions? "
-          f"Falling back to {fallback_dir}.",
+          f"Logging: unable to use {candidates[0]}; falling back to {selected}.",
           file=sys.stderr)
+    else:
+      # Last-resort fallback keeps logging usable without polluting repo/run dirs.
+      os.environ["LOG_DIR"] = "/tmp"
+      print(
+        "Logging: unable to create dedicated log directory; falling back to /tmp.",
+        file=sys.stderr)
 
   config_path = os.path.join(os.path.dirname(__file__), 'logging.yaml')
   if os.path.exists(config_path):

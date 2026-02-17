@@ -2,6 +2,12 @@
 
 This runbook covers how to diagnose and recover from failed or partial grading runs.
 
+## Release Notes (Operator-facing)
+
+- Run exit code is now non-zero when there are any assignment failures or any per-student push failures.
+- Slack notifications stay aggregated at run level (single summary message), including push-failure details.
+- Default log directory selection is: `/var/log/grading` -> `~/.autograder/logs` -> `/tmp/autograder/logs` (not the current working directory).
+
 ## Before Running
 
 1. Start with a limited run:

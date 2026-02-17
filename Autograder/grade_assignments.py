@@ -90,8 +90,19 @@ def load_and_validate_config(yaml_path: str) -> RunConfig:
     Raises:
         SystemExit: If the configuration is invalid
     """
-    with open(yaml_path) as fid:
-        raw_config = yaml.safe_load(fid)
+    try:
+        with open(yaml_path) as fid:
+            raw_config = yaml.safe_load(fid)
+    except yaml.YAMLError as e:
+        raise SystemExit(
+            f"Invalid config file '{yaml_path}': YAML parse error: {e}. "
+            "See documentation/instructor_onboarding.md for supported schema/examples."
+        ) from e
+    except OSError as e:
+        raise SystemExit(
+            f"Invalid config file '{yaml_path}': unable to read file: {e}. "
+            "See documentation/instructor_onboarding.md for supported schema/examples."
+        ) from e
     try:
         run_config = parse_run_config(raw_config)
     except ValueError as e:
@@ -315,7 +326,8 @@ def main() -> int:
             write_run_report(results, args)
             send_slack_run_summary(results, args, config)
 
-            if any(not r['success'] for r in results):
+            push_failed_total, _ = collect_push_failure_lines(results)
+            if any(not r['success'] for r in results) or push_failed_total > 0:
                 exit_code = 1
         except autograder_exceptions.AutograderError as e:
             log.error(e)
