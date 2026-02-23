@@ -7,6 +7,7 @@ in containerized environments.
 import contextlib
 import os
 import pathlib
+import re
 import shlex
 import shutil
 import tempfile
@@ -654,6 +655,18 @@ class TemplateGrader(DockerGrader):
     return os.path.join(self.container_repo_path, self.assignment_name)
 
   @staticmethod
+  def _sanitize_image_tag_component(value: Any) -> str:
+    raw = str(value).strip().lower()
+    normalized = re.sub(r"[^a-z0-9_.-]+", "-", raw)
+    normalized = normalized.strip("._-")
+    return normalized or "autograder"
+
+  def _build_context_image_tag(self) -> str:
+    course = self._sanitize_image_tag_component(self.course_name)
+    assignment = self._sanitize_image_tag_component(self.assignment_name)
+    return f"template-grader:{course}-{assignment}-{uuid.uuid4().hex}"
+
+  @staticmethod
   def _resolve_local_path_for_container_path(temp_build_dir: str,
                                              container_path: str,
                                              repo_mounts: List[dict]) -> str:
@@ -735,8 +748,9 @@ class TemplateGrader(DockerGrader):
         - error_message: Error string if duplicate matches found, None otherwise
 
     Uses self.file_paths dict where keys are regex patterns and values are dicts with:
-        - path: subdirectory within assignment folder
-        - name: target filename
+        - path: when name is provided, a subdirectory within assignment folder;
+                when name is omitted, a full relative target file path.
+        - name: optional target filename override
     """
     import re
 
@@ -772,16 +786,25 @@ class TemplateGrader(DockerGrader):
             # Record this match
             matched_patterns[pattern] = file_identifier
 
-            # Build target path
-            subpath = target_config.get('path', '')
-            target_name = target_config.get('name', file_identifier)
+            # Build target path. Keep backward compatibility:
+            # - with name: path is treated as destination directory
+            # - without name: path is treated as full destination file path
+            configured_path = target_config.get('path', '')
+            configured_name = target_config.get('name')
+            assignment_root = self._container_assignment_root()
 
-            target_directory = os.path.join(self._container_assignment_root(),
-                                            subpath)
-
-            # We need to provide a target file path, not just directory
-            # The Docker copy will handle creating directories
-            target_file_path = os.path.join(target_directory, target_name)
+            if configured_name is not None:
+              target_directory = os.path.join(assignment_root, configured_path)
+              target_file_path = os.path.join(target_directory, configured_name)
+            else:
+              if not configured_path:
+                error_msg = (
+                  f"Pattern '{pattern}' has an empty path and no name. "
+                  "Provide name, or set path to a full relative target file path."
+                )
+                log.error(error_msg)
+                return [], error_msg
+              target_file_path = os.path.join(assignment_root, configured_path)
 
             files_to_copy.append((file_obj, target_file_path))
             matched_this_file = True
@@ -901,8 +924,7 @@ class TemplateGrader(DockerGrader):
 
       image = self.docker_client.build_image_from_context(
         context_path=temp_build_dir,
-        tag=
-        f"template-grader:{self.course_name}-{self.assignment_name}-{uuid.uuid4().hex}",
+        tag=self._build_context_image_tag(),
         use_cached=True)
     return image
 
