@@ -121,6 +121,16 @@ class TestDockerClientBuildImage:
         with pytest.raises(DockerError, match="Docker API error building fail:tag"):
             mock_docker_client.build_image_from_context("/tmp/missing-context", "fail:tag")
 
+    def test_build_image_from_context_includes_build_log_detail(self, mock_docker_client, mock_docker_module, patch_docker_module):
+        patch_docker_module(mock_docker_module)
+        mock_docker_client.client.images.build.side_effect = mock_docker_module.errors.BuildError(
+            "The command '/bin/sh -c uv sync' returned a non-zero code: 1",
+            [{"stream": "error: No pyproject.toml found in current directory"}],
+        )
+
+        with pytest.raises(ImageBuildError, match="No pyproject.toml found"):
+            mock_docker_client.build_image_from_context("/tmp/missing-context", "fail:tag")
+
 
 class TestDockerClientCleanup:
     """Tests for DockerClient cleanup."""
@@ -179,6 +189,12 @@ class TestDockerContainerLifecycle:
         container.start()
 
         mock_docker_client.client.containers.run.assert_called_once()
+        kwargs = mock_docker_client.client.containers.run.call_args.kwargs
+        assert kwargs["command"] == [
+            "sh",
+            "-lc",
+            "trap : TERM INT; while :; do sleep 3600; done",
+        ]
         assert container.container is not None
 
     def test_container_start_applies_security_defaults(self, mock_docker_client, tmp_path):

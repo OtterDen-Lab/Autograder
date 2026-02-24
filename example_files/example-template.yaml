@@ -52,21 +52,18 @@ courses:
             # Alternative: single string format
             # extra_dockerfile_lines: "RUN apt-get update && apt-get install -y gcc"
           # Example of file_paths with regex pattern matching (using single quotes for raw strings)
-          # Keys are regex patterns (case-sensitive), values specify target path and name
-          # Files matching each pattern are renamed and copied to specified location
+          # Keys are regex patterns (case-sensitive), values specify where files land.
+          # Option A: set path + name (path is destination directory)
+          # Option B: set only path as full relative target file path (including filename)
           file_paths:
             '.*_1.*\.java':
-              path: "part1"
-              name: "hw3_1.java"
+              path: "part1/hw3_1.java"
             '.*_2.*\.java':
-              path: "part2"
-              name: "hw3_2.java"
+              path: "part2/hw3_2.java"
             '.*_1.*\.cpp':
-              path: "part1"
-              name: "hw3_1.cpp"
+              path: "part1/hw3_1.cpp"
             '.*_2.*\.cpp':
-              path: "part2"
-              name: "hw3_2.cpp"
+              path: "part2/hw3_2.cpp"
           # Note: file_paths and student_code_path are mutually exclusive
           # If file_paths is specified, student_code_path is ignored
           # Files that don't match any pattern are silently skipped

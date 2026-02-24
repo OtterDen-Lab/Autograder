@@ -289,13 +289,57 @@ class DockerClient:
       self.__class__._images.add(image)
       return image
     except docker.errors.BuildError as e:
-      log.error(f"Docker build failed for tag {tag}: {e}")
+      build_detail = self._extract_build_error_detail(getattr(e, "build_log", None))
+      detail_suffix = f" | detail: {build_detail}" if build_detail else ""
+      log.error(f"Docker build failed for tag {tag}: {e}{detail_suffix}")
       raise Autograder.exceptions.ImageBuildError(
-        f"Failed to build image {tag}: {e}") from e
+        f"Failed to build image {tag}: {e}{detail_suffix}") from e
     except docker.errors.APIError as e:
       log.error(f"Docker API error during build: {e}")
       raise Autograder.exceptions.DockerError(
         f"Docker API error building {tag}: {e}") from e
+
+  @staticmethod
+  def _extract_build_error_detail(build_log) -> str:
+    """Extract a compact, human-useful error from docker build logs."""
+    if build_log is None:
+      return ""
+    if isinstance(build_log, (str, bytes, bytearray)):
+      return ""
+    if not isinstance(build_log, list):
+      try:
+        build_log = list(build_log)
+      except TypeError:
+        return ""
+
+    details = []
+    for entry in build_log:
+      if not isinstance(entry, dict):
+        continue
+      for key in ("error", "stream"):
+        value = entry.get(key)
+        if not isinstance(value, str):
+          continue
+        text = value.strip()
+        if not text:
+          continue
+        lower = text.lower()
+        if "running in" in lower and "/bin/sh -c" in lower:
+          continue
+        details.append(text)
+      error_detail = entry.get("errorDetail")
+      if isinstance(error_detail, dict):
+        message = error_detail.get("message")
+        if isinstance(message, str) and message.strip():
+          details.append(message.strip())
+
+    if not details:
+      return ""
+    unique = []
+    for item in details:
+      if item not in unique:
+        unique.append(item)
+    return " | ".join(unique[-3:])
 
 
 class DockerContainer:
@@ -352,6 +396,9 @@ class DockerContainer:
       "remove": True,
       "name": self.container_name,
       "security_opt": security_opt,
+      # Keep the container alive for subsequent exec_run/put_archive calls.
+      # Some base images default to commands that exit immediately.
+      "command": ["sh", "-lc", "trap : TERM INT; while :; do sleep 3600; done"],
     }
     if self.memory_limit:
       run_kwargs["mem_limit"] = self.memory_limit

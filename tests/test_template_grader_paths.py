@@ -174,3 +174,13 @@ def test_template_grader_context_image_tag_sanitizes_names(monkeypatch):
 
   assert grader._build_context_image_tag(
   ) == "template-grader:cst363-02_2262-sql-hw-1-abc123"
+
+
+def test_template_grader_uv_bootstrap_command_handles_missing_pyproject():
+  command = Grader__template_grader._uv_bootstrap_command()
+  assert "if [ -f pyproject.toml ]" in command
+  assert "uv sync" in command
+  assert "apt-get install -y --no-install-recommends" in command
+  assert "build-essential" in command
+  assert "libpq-dev" in command
+  assert "skipping uv sync" in command

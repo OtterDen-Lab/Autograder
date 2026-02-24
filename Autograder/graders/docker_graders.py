@@ -558,8 +558,15 @@ class TemplateGrader(DockerGrader):
       self.grading_workdir.strip()
       if isinstance(self.grading_workdir, str) and self.grading_workdir.strip()
       else default_workdir)
+    pa_arg = shlex.quote(str(self.assignment_name))
     default_script = (
-      f"/repo/.venv/bin/python /repo/scripts/grader.py --PA {shlex.quote(str(self.assignment_name))}"
+      "if [ -x /repo/.venv/bin/python ]; then "
+      f"/repo/.venv/bin/python /repo/scripts/grader.py --PA {pa_arg}; "
+      "elif command -v python3 >/dev/null 2>&1; then "
+      f"python3 /repo/scripts/grader.py --PA {pa_arg}; "
+      "else "
+      f"python /repo/scripts/grader.py --PA {pa_arg}; "
+      "fi"
     )
     self.grading_script = (
       self.grading_script_override.strip()
@@ -665,6 +672,29 @@ class TemplateGrader(DockerGrader):
     course = self._sanitize_image_tag_component(self.course_name)
     assignment = self._sanitize_image_tag_component(self.assignment_name)
     return f"template-grader:{course}-{assignment}-{uuid.uuid4().hex}"
+
+  @staticmethod
+  def _uv_bootstrap_command() -> str:
+    # Some course repos do not use uv projects; skip uv setup in that case.
+    # If uv sync fails, retry once after installing common build deps so native
+    # wheels (e.g., psycopg2) can compile on slim images.
+    return (
+      "if [ -f pyproject.toml ]; then "
+      "uv sync || ("
+      "if command -v apt-get >/dev/null 2>&1; then "
+      "apt-get update && "
+      "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "
+      "build-essential gcc libpq-dev && "
+      "rm -rf /var/lib/apt/lists/*; "
+      "elif command -v apk >/dev/null 2>&1; then "
+      "apk add --no-cache build-base postgresql-dev; "
+      "fi; "
+      "uv sync"
+      "); "
+      "else "
+      "echo 'No pyproject.toml found in /repo; skipping uv sync'; "
+      "fi"
+    )
 
   @staticmethod
   def _resolve_local_path_for_container_path(temp_build_dir: str,
@@ -910,7 +940,7 @@ class TemplateGrader(DockerGrader):
           dockerfile_lines.append(f"RUN {command}")
 
       dockerfile_lines.extend([
-        "RUN uv sync",
+        f"RUN {self._uv_bootstrap_command()}",
         # "RUN chown -fR dockeruser /repo",
         # "USER dockeruser",
       ])
