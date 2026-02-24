@@ -28,17 +28,13 @@ courses:
         
         file_paths:
           '.*_1.*\.java':
-            path: "hw3_1_grading/src" # subdir within assignment folder
-            name: "hw3_1.java" # target filename, will force to change into this
+            path: "hw3_1_grading/src/hw3_1.java"
           '.*_2.*\.java':
-            path: "hw3_2_grading/src"
-            name: "hw3_2.java"
+            path: "hw3_2_grading/src/hw3_2.java"
           '.*_1.*\.cpp':
-            path: "hw3_1_grading/src"
-            name: "hw3_1.cpp"
+            path: "hw3_1_grading/src/hw3_1.cpp"
           '.*_2.*\.cpp':
-            path: "hw3_2_grading/src"
-            name: "hw3_2.cpp"
+            path: "hw3_2_grading/src/hw3_2.cpp"
         
         assignments:
           - id: 480061
