@@ -18,12 +18,27 @@ log = logging.getLogger(__name__)
 MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 30
 DOWNLOAD_CHUNK_BYTES = 64 * 1024
+
+C_FAMILY_CONTENT_TYPES = {
+  "text/plain",
+  "application/octet-stream",
+  "text/x-c",
+  "text/x-csrc",
+  "text/x-chdr",
+  "text/x-c++",
+  "text/x-c++src",
+  "text/x-c++hdr",
+}
+
 ALLOWED_CONTENT_TYPES_BY_EXTENSION = {
-  ".c": {"text/plain", "text/x-c", "application/octet-stream"},
-  ".h": {"text/plain", "text/x-c", "application/octet-stream"},
-  ".cpp": {"text/plain", "text/x-c++src", "application/octet-stream"},
-  ".hpp": {"text/plain", "text/x-c++hdr", "application/octet-stream"},
-  ".cc": {"text/plain", "text/x-c++src", "application/octet-stream"},
+  ".c": C_FAMILY_CONTENT_TYPES,
+  ".h": C_FAMILY_CONTENT_TYPES,
+  ".cc": C_FAMILY_CONTENT_TYPES,
+  ".cpp": C_FAMILY_CONTENT_TYPES,
+  ".cxx": C_FAMILY_CONTENT_TYPES,
+  ".hpp": C_FAMILY_CONTENT_TYPES,
+  ".hxx": C_FAMILY_CONTENT_TYPES,
+  ".hh": C_FAMILY_CONTENT_TYPES,
   ".py": {"text/plain", "text/x-python", "application/octet-stream"},
   ".java": {"text/plain", "text/x-java-source", "application/octet-stream"},
   ".js": {"text/plain", "application/javascript", "text/javascript", "application/octet-stream"},
