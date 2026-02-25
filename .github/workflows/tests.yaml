@@ -3,6 +3,8 @@ name: Tests
 on:
   pull_request:
   push:
+    tags-ignore:
+      - "v*"
 
 jobs:
   pytest:
@@ -11,6 +13,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Check LMSInterface source freshness
+        if: github.event_name == 'push'
+        run: python3 scripts/check_lms_upstream_freshness.py
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6

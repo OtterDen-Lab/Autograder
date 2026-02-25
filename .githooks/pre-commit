@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-bash scripts/check_version_bump_vendoring.sh
 bash scripts/check_repo_hygiene.sh

@@ -216,10 +216,10 @@ Install the repository-managed pre-commit hook so hygiene checks run before each
 bash scripts/install_git_hooks.sh
 ```
 
-This hook runs `scripts/check_version_bump_vendoring.sh` and `scripts/check_repo_hygiene.sh`.
-On a staged `pyproject.toml` version bump, it auto-runs `scripts/vendor_lms_interface.py`, stages vendored updates, and asks for a second commit attempt after review.
-The installer also adds a repo-local alias so you can run `git bump patch` (or `minor`/`major`) to bump, vendor, stage, and commit without pathspec commits.
-`git bump` defaults to short vendoring summaries; use `git bump patch --verbose` for full vendoring logs.
+This hook runs `scripts/check_repo_hygiene.sh`.
+The installer also adds a repo-local alias so you can run `git bump patch` (or `minor`/`major`) to bump, stage, commit, tag, and push.
+LMSInterface vendoring now happens in release CI from the pinned source in `scripts/lms_release_source.toml`.
+Push workflows run `scripts/check_lms_upstream_freshness.py` to warn when the pinned LMS source is behind upstream latest release.
 
 ## Documentation
 
