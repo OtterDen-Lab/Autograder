@@ -421,7 +421,7 @@ class TestDockerContainerCommandExecution:
 
         call_kwargs = mock_container_obj.exec_run.call_args.kwargs
         # Uses list form for exec_run to avoid outer shell parsing (defense-in-depth)
-        assert call_kwargs["cmd"] == ["bash", "-c", "timeout 60 python main.py"]
+        assert call_kwargs["cmd"] == ["timeout", "60", "bash", "-lc", "python main.py"]
 
     def test_execute_command_returns_timeout_exit_code(self, mock_docker_client, mock_docker_module, patch_docker_module):
         patch_docker_module(mock_docker_module)

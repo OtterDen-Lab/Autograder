@@ -24,6 +24,12 @@ courses:
           files_from_golden:
             - "tests/unittests_reserved.c"
           student_code_path: "src"
+          # Optional: extra args for /repo/scripts/grader.py.
+          # This becomes: ... grader.py --PA <assignment_name> --files src/main.c src/util.c
+          grading_args:
+            - "--files"
+            - "src/main.c"
+            - "src/util.c"
           num_repeats: 10
         assignments:
           - repo_path: PA1

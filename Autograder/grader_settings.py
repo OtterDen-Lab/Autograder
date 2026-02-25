@@ -184,6 +184,7 @@ class TemplateGraderSettings:
   slack_token: Optional[str] = None
   slack_channel: Optional[str] = None
   grading_script: Optional[str] = None
+  grading_args: List[str] = field(default_factory=list)
   grading_workdir: Optional[str] = None
   num_repeats: Optional[int] = None
 
@@ -237,6 +238,7 @@ class TemplateGraderSettings:
       "slack_token",
       "slack_channel",
       "grading_script",
+      "grading_args",
       "grading_workdir",
       "num_repeats",
     }
@@ -299,6 +301,8 @@ class TemplateGraderSettings:
                                           f"{context_label}.slack_channel"),
       grading_script=_require_optional_str(raw.get("grading_script"),
                                            f"{context_label}.grading_script"),
+      grading_args=_require_str_list(raw.get("grading_args"),
+                                     f"{context_label}.grading_args"),
       grading_workdir=_require_optional_str(raw.get("grading_workdir"),
                                             f"{context_label}.grading_workdir"),
       num_repeats=_require_optional_int(raw.get("num_repeats"),
@@ -341,6 +345,7 @@ class TemplateGraderSettings:
       "slack_token": self.slack_token,
       "slack_channel": self.slack_channel,
       "grading_script": self.grading_script,
+      "grading_args": self.grading_args,
       "grading_workdir": self.grading_workdir,
       "num_repeats": self.num_repeats,
     }

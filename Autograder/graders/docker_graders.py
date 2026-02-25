@@ -519,6 +519,7 @@ class TemplateGrader(DockerGrader):
       extra_dockerfile_lines=None,
       file_paths=None,
       grading_script: str | None = None,
+      grading_args=None,
       grading_workdir: str | None = None,
       upload_error_artifacts: bool = False,
       *args,
@@ -544,6 +545,7 @@ class TemplateGrader(DockerGrader):
     self.file_paths = file_paths
     self.grading_workdir = grading_workdir
     self.grading_script_override = grading_script
+    self.grading_args = list(grading_args or [])
     # Potential includes
     self.golden_repo = kwargs.get("golden_repo", None)
     self.files_from_golden = kwargs.get("files_from_golden", [])
@@ -558,22 +560,38 @@ class TemplateGrader(DockerGrader):
       self.grading_workdir.strip()
       if isinstance(self.grading_workdir, str) and self.grading_workdir.strip()
       else default_workdir)
-    pa_arg = shlex.quote(str(self.assignment_name))
-    default_script = (
-      "if [ -x /repo/.venv/bin/python ]; then "
-      f"/repo/.venv/bin/python /repo/scripts/grader.py --PA {pa_arg}; "
-      "elif command -v python3 >/dev/null 2>&1; then "
-      f"python3 /repo/scripts/grader.py --PA {pa_arg}; "
-      "else "
-      f"python /repo/scripts/grader.py --PA {pa_arg}; "
-      "fi"
-    )
+    default_script = self._build_default_grading_script(
+      assignment_name=self.assignment_name, grading_args=self.grading_args)
     self.grading_script = (
       self.grading_script_override.strip()
       if isinstance(self.grading_script_override, str)
       and self.grading_script_override.strip() else default_script)
 
     return
+
+  @staticmethod
+  def _build_default_grading_script(assignment_name: Any,
+                                    grading_args: Optional[List[str]] = None
+                                    ) -> str:
+    pa_arg = shlex.quote(str(assignment_name))
+    normalized_args: List[str] = []
+    for arg in grading_args or []:
+      normalized_args.append(shlex.quote(str(arg)))
+
+    extra_args = ""
+    if normalized_args:
+      extra_args = f" {' '.join(normalized_args)}"
+
+    grader_invocation = f"/repo/scripts/grader.py --PA {pa_arg}{extra_args}"
+    return (
+      "if [ -x /repo/.venv/bin/python ]; then "
+      f"/repo/.venv/bin/python {grader_invocation}; "
+      "elif command -v python3 >/dev/null 2>&1; then "
+      f"python3 {grader_invocation}; "
+      "else "
+      f"python {grader_invocation}; "
+      "fi"
+    )
 
   @staticmethod
   def _normalize_container_repo_path(container_repo_path: str) -> str:

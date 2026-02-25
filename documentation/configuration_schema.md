@@ -48,6 +48,7 @@ Each entry:
 - `slack_token` (`string|null`)
 - `slack_channel` (`string|null`)
 - `grading_script` (`string|null`, default template script under `/repo/scripts/grader.py`)
+- `grading_args` (`list[string]`, appended to default `grader.py` invocation; ignored when `grading_script` is explicitly set)
 - `grading_workdir` (`string|null`, default `/repo`)
 - `num_repeats` (`int|null`)
 

@@ -680,6 +680,7 @@ def test_collect_assignments_accepts_template_entrypoint_and_error_artifact_sett
         "type": "programming",
         "settings": {
           "grading_script": "/repo/scripts/custom_grader.py --PA PA1",
+          "grading_args": ["--files", "main.c", "util.h"],
           "grading_workdir": "/repo/custom",
           "upload_error_artifacts": True,
           "extra_installs": ["apt-get update && apt-get install -y jq"],
@@ -697,9 +698,50 @@ def test_collect_assignments_accepts_template_entrypoint_and_error_artifact_sett
   assert len(requests) == 1
   settings = requests[0].settings
   assert settings["grading_script"] == "/repo/scripts/custom_grader.py --PA PA1"
+  assert settings["grading_args"] == ["--files", "main.c", "util.h"]
   assert settings["grading_workdir"] == "/repo/custom"
   assert settings["upload_error_artifacts"] is True
   assert settings["extra_installs"] == ["apt-get update && apt-get install -y jq"]
+
+
+def test_collect_assignments_rejects_invalid_grading_args(monkeypatch):
+  class DummyCourse:
+    name = "CST"
+
+  class DummyCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      pass
+
+    def get_course(self, _):
+      return DummyCourse()
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface", DummyCanvasInterface)
+
+  run_config = parse_run_config({
+    "assignment_types": {
+      "programming": {
+        "kind": "ProgrammingAssignment",
+        "grader": "template-grader",
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "programming",
+        "settings": {
+          "grading_args": ["--files", 1]
+        },
+        "assignments": [{
+          "id": 99
+        }]
+      }]
+    }]
+  })
+
+  with pytest.raises(ValueError) as exc:
+    grade_assignments.collect_assignments_to_grade(run_config,
+                                                   SimpleNamespace(env=None))
+  assert "grading_args[1] must be a string" in str(exc.value)
 
 
 def test_collect_assignments_rejects_invalid_text_tier(monkeypatch):

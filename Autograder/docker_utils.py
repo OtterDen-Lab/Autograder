@@ -602,7 +602,7 @@ class DockerContainer:
         Tuple of (return_code, stdout, stderr)
 
     Note:
-        The command is executed via bash -c with a timeout wrapper. Commands should come
+        The command is executed via `timeout <n> bash -lc "<command>"`. Commands should come
         from trusted configuration (e.g., grading scripts), not from student input.
     """
     if not self.container:
@@ -616,14 +616,15 @@ class DockerContainer:
       extra_args["workdir"] = workdir
 
     # Use list form for exec_run to avoid outer shell parsing.
-    # The command string is interpreted by bash -c with a timeout wrapper.
+    # Run timeout against a bash subprocess so compound shell commands
+    # (e.g., if/then blocks) execute correctly under timeout.
     # Note: command must be trusted (from config) - not suitable for untrusted input.
-    shell_command = f"timeout {timeout_seconds} {command}"
+    wrapped_command = ["timeout", str(timeout_seconds), "bash", "-lc", command]
 
     rc, (stdout, stderr) = (0, (b"", b""))
     try:
       rc, (stdout,
-           stderr) = self.container.exec_run(cmd=["bash", "-c", shell_command],
+           stderr) = self.container.exec_run(cmd=wrapped_command,
                                              demux=True,
                                              tty=True,
                                              **extra_args)

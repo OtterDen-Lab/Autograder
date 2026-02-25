@@ -176,6 +176,15 @@ def test_template_grader_context_image_tag_sanitizes_names(monkeypatch):
   ) == "template-grader:cst363-02_2262-sql-hw-1-abc123"
 
 
+def test_template_grader_default_script_includes_grading_args():
+  command = Grader__template_grader._build_default_grading_script(
+    "PA1", ["--files", "main.c", "utils lib.c"])
+  assert "/repo/scripts/grader.py --PA PA1 --files main.c 'utils lib.c'" in command
+  assert "/repo/.venv/bin/python" in command
+  assert "python3 /repo/scripts/grader.py" in command
+  assert "python /repo/scripts/grader.py" in command
+
+
 def test_template_grader_uv_bootstrap_command_handles_missing_pyproject():
   command = Grader__template_grader._uv_bootstrap_command()
   assert "if [ -f pyproject.toml ]" in command
