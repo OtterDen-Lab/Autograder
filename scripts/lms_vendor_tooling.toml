@@ -1,5 +1,5 @@
 # Managed by LMSInterface vendoring. Edit values as needed for this repo.
 [tooling]
 skip_vendor_env = "AUTOGRADER_SKIP_PRECOMMIT_VENDOR"
-test_command = "uv run pytest -q"
+test_command = "uv run python -m pytest -q"
 precommit_extra = "bash scripts/check_repo_hygiene.sh"
