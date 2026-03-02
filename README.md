@@ -218,8 +218,8 @@ bash scripts/install_git_hooks.sh
 
 This hook runs `scripts/check_repo_hygiene.sh`.
 The installer also adds a repo-local alias so you can run `git bump patch` (or `minor`/`major`) to bump, stage, commit, tag, and push.
-LMSInterface vendoring now happens in release CI from the pinned source in `scripts/lms_release_source.toml`.
-Push workflows run `scripts/check_lms_upstream_freshness.py` to warn when the pinned LMS source is behind upstream latest release.
+LMSInterface is installed as a pinned package dependency (`lms-interface @ ...`) in `pyproject.toml`.
+`git bump` no longer vendors source into this repo.
 
 ## Documentation
 

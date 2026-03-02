@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "python-dotenv==1.0.1",
-    "PyYAML==6.0.1",
+    "PyYAML==6.0.3",
     "requests==2.32.2",
     "canvasapi~=3.2",
     "python-dateutil~=2.9",
@@ -33,6 +33,7 @@ dependencies = [
     "openai~=1.93",
     "anthropic~=0.57",
     "ollama~=0.6",
+    "lms-interface @ https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.4.7/lms_interface-0.4.7-py3-none-any.whl",
 ]
 
 [project.optional-dependencies]
@@ -52,14 +53,14 @@ grade-assignments = "Autograder.grade_assignments:main"
 
 
 [tool.hatch.build.targets.wheel]
-packages = ["Autograder", "lms_interface"]
+packages = ["Autograder"]
 artifacts = [
   "Autograder/seccomp/*.json",
   "Autograder/logging.yaml",
 ]
 
 [tool.hatch.build.targets.sdist]
-include = ["Autograder/**", "lms_interface/**", "pyproject.toml", "README.md", "LICENSE"]
+include = ["Autograder/**", "pyproject.toml", "README.md", "LICENSE"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
