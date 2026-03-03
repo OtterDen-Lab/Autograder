@@ -48,6 +48,9 @@ jobs:
       - name: Install Python 3.13 for build
         run: uv python install 3.13
 
+      - name: Vendor LMSInterface for release build
+        run: python scripts/vendor_lms_for_release.py
+
       - name: Build
         run: uv build
 
