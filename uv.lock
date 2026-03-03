@@ -263,6 +263,37 @@ wheels = [
 ]
 
 [[package]]
+name = "lms-interface"
+version = "0.5.0"
+source = { url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.5.0/lms_interface-0.5.0-py3-none-any.whl" }
+dependencies = [
+    { name = "canvasapi" },
+    { name = "pytest" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "requests" },
+]
+wheels = [
+    { url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.5.0/lms_interface-0.5.0-py3-none-any.whl", hash = "sha256:b8610cafab86510f3471f6cf4b242b55564c2a33cdab9e9d106b467a80ec55da" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "black", marker = "extra == 'dev'" },
+    { name = "canvasapi", specifier = "==3.2.0" },
+    { name = "flake8", marker = "extra == 'dev'" },
+    { name = "jsonschema", marker = "extra == 'dev'" },
+    { name = "mypy", marker = "extra == 'dev'" },
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "python-dotenv", specifier = "==1.0.1" },
+    { name = "pyyaml", specifier = "==6.0.3" },
+    { name = "requests", specifier = "==2.32.2" },
+    { name = "ruff", marker = "extra == 'dev'" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "ollama"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -303,6 +334,7 @@ dependencies = [
     { name = "canvasapi" },
     { name = "docker" },
     { name = "httpx" },
+    { name = "lms-interface" },
     { name = "ollama" },
     { name = "openai" },
     { name = "python-dateutil" },
@@ -325,6 +357,7 @@ requires-dist = [
     { name = "docker", specifier = "~=7.1" },
     { name = "httpx", specifier = "~=0.28" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.112.0" },
+    { name = "lms-interface", url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.5.0/lms_interface-0.5.0-py3-none-any.whl" },
     { name = "ollama", specifier = "~=0.6" },
     { name = "openai", specifier = "~=1.93" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.3" },

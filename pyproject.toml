@@ -33,7 +33,7 @@ dependencies = [
     "openai~=1.93",
     "anthropic~=0.57",
     "ollama~=0.6",
-
+    "lms-interface @ https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.5.0/lms_interface-0.5.0-py3-none-any.whl",
 ]
 
 [project.optional-dependencies]
@@ -53,7 +53,7 @@ grade-assignments = "Autograder.grade_assignments:main"
 
 
 [tool.hatch.build.targets.wheel]
-packages = ["Autograder", "lms_interface"]
+packages = ["Autograder"]
 artifacts = [
   "Autograder/seccomp/*.json",
   "Autograder/logging.yaml",
