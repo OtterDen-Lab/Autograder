@@ -1,12 +1,10 @@
-prod: False
-push: False
+prod: true
+push: true
 privacy_mode: id_only
-# reveal_identity: false  # Requires AUTOGRADER_BREAK_GLASS=1 at runtime
-# idempotency_key: "cst334-pa1-2026-02-13"
 
 reporting:
   slack_channel: C0AAD94FX5K
-  notify_on: all #failures
+  notify_on: failures #all
 
 # Define assignment types with default graders and settings
 assignment_types:
@@ -38,8 +36,6 @@ courses:
         type: programming
         settings:
           base_image_name: "samogden/cst334"
-          extra_dockerfile_lines:
-            - "RUN apt install clang"
           source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
           golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
           files_from_golden:
@@ -48,11 +44,9 @@ courses:
           num_repeats: 10
         file_paths:
           '.*student_code.*\.c':
-            path: "src" # subdir within assignment folder
-            name: "student_code.c" # target filename, will force to change into this
+            path: "src/student_code.c" # target filename, will force to change into this
           '.*student_code.*\.h':
-            path: "include" # subdir within assignment folder
-            name: "student_code.h" # target filename, will force to change into this
+            path: "include/student_code.h" # target filename, will force to change into this
         assignments:
           - {id: 553736, repo_path: PA1}
           - {id: 553737, repo_path: PA2}
@@ -63,8 +57,6 @@ courses:
 
       - name: Learning Logs
         type: text
-        settings:
-          prefer_anthropic: false
         assignments:
           - 553728  # LL2
           - 553729  # LL3
@@ -79,3 +71,41 @@ courses:
           - 553725  # LL12
           - 553726  # LL13
           - 553727  # LL14
+
+  - name: CST334online
+    id: 33041
+    slack_channel: C09HR2J5EBF
+
+    assignment_groups:
+      - name: Programming Assignments
+        type: programming
+        settings:
+          base_image_name: "samogden/cst334"
+          source_repo: "https://github.com/CSUMB-SCD-instructors/CST334-online"
+          golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
+          files_from_golden:
+            - "tests/unittests_reserved.c"
+          student_code_path: "src"
+          num_repeats: 10
+        file_paths:
+          '.*student_code.*\.c':
+            path: "src/student_code.c" # target filename, will force to change into this
+          '.*student_code.*\.h':
+            path: "include/student_code.h" # target filename, will force to change into this
+        assignments:
+          - {id: 583981, repo_path: PA1}
+          - {id: 583982, repo_path: PA2}
+          - {id: 583983, repo_path: PA3}
+          - {id: 583984, repo_path: PA4}
+          - {id: 583985, repo_path: PA5}
+
+      - name: Learning Logs
+        type: text
+        assignments:
+          - 583941
+          - 583942
+          - 583943
+          - 583944
+          - 583945
+          - 583946
+          - 583947

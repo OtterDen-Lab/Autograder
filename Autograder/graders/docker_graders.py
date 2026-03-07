@@ -995,16 +995,40 @@ class TemplateGrader(DockerGrader):
     else:
       # Use student_code_path file organization when regex mapping is not configured.
       log.debug("Using student_code_path for file organization")
-      submission_files = []
-      for f in submission.files:
-        # Copy each file into the target directory using its own filename.
-        # This avoids accidental overwrite when multiple files are submitted.
-        original_name = os.path.basename(getattr(f, "name", "submission_file"))
-        submission_files.append(
-          (f,
-           os.path.join(
-             self._container_assignment_root(), self.student_code_path,
-             original_name)))
+      assignment_root = self._container_assignment_root()
+      student_code_path = self.student_code_path or ""
+      normalized_student_code_path = student_code_path.strip()
+      looks_like_file_target = (
+        bool(normalized_student_code_path)
+        and not normalized_student_code_path.endswith("/")
+        and bool(
+          os.path.splitext(
+            os.path.basename(normalized_student_code_path))[1]))
+
+      if looks_like_file_target:
+        if len(submission.files) != 1:
+          error_msg = (
+            "student_code_path appears to be a file target "
+            f"('{self.student_code_path}') but this submission has "
+            f"{len(submission.files)} files. Use a directory-style "
+            "student_code_path or configure file_paths.")
+          log.error(error_msg)
+          return Feedback(percentage_score=0.0,
+                          comments=f"Configuration error: {error_msg}")
+        submission_files = [(submission.files[0],
+                             os.path.join(assignment_root,
+                                          normalized_student_code_path))]
+      else:
+        submission_files = []
+        for f in submission.files:
+          # Copy each file into the target directory using its own filename.
+          # This avoids accidental overwrite when multiple files are submitted.
+          original_name = os.path.basename(
+            getattr(f, "name", "submission_file"))
+          submission_files.append(
+            (f,
+             os.path.join(assignment_root, normalized_student_code_path,
+                          original_name)))
       log.debug(f"submission.files: {submission.files}")
       log.debug(f"submission_files: {submission_files}")
 

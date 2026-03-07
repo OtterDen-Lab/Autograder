@@ -76,6 +76,58 @@ def test_template_grader_student_code_path_honors_container_repo_path_override(
                       "main.c") in target_paths
 
 
+def test_template_grader_student_code_path_supports_single_file_target(
+    monkeypatch):
+  captured = {}
+
+  def fake_parent_grade_submission(self, submission, files_to_copy=None, *args,
+                                   **kwargs):
+    captured["files_to_copy"] = files_to_copy
+    return Feedback(percentage_score=100.0, comments="ok")
+
+  monkeypatch.setattr(Grader__docker, "grade_submission",
+                      fake_parent_grade_submission)
+
+  grader = object.__new__(Grader__template_grader)
+  grader.file_paths = {}
+  grader.student_code_path = "src/student_code.c"
+  grader.assignment_name = "PA3"
+  grader.container_repo_path = "/repo/programming-assignments"
+
+  submission = SimpleNamespace(files=[_make_file("upload.c")])
+  feedback = grader.grade_submission(submission)
+
+  assert isinstance(feedback, Feedback)
+  target_paths = [entry[1] for entry in captured["files_to_copy"]]
+  assert target_paths == [
+    os.path.join("/repo/programming-assignments/PA3", "src", "student_code.c")
+  ]
+
+
+def test_template_grader_student_code_path_file_target_rejects_multi_file_submission(
+    monkeypatch):
+  def fake_parent_grade_submission(self, submission, files_to_copy=None, *args,
+                                   **kwargs):
+    raise AssertionError("Parent grade_submission should not be called")
+
+  monkeypatch.setattr(Grader__docker, "grade_submission",
+                      fake_parent_grade_submission)
+
+  grader = object.__new__(Grader__template_grader)
+  grader.file_paths = {}
+  grader.student_code_path = "src/student_code.c"
+  grader.assignment_name = "PA3"
+  grader.container_repo_path = "/repo/programming-assignments"
+
+  submission = SimpleNamespace(files=[_make_file("a.c"), _make_file("b.c")])
+  feedback = grader.grade_submission(submission)
+
+  assert isinstance(feedback, Feedback)
+  assert feedback.percentage_score == 0.0
+  assert "Configuration error" in feedback.comments
+  assert "appears to be a file target" in feedback.comments
+
+
 def test_template_grader_validates_container_repo_path():
   assert (Grader__template_grader._normalize_container_repo_path(
     "/repo/programming-assignments/") == "/repo/programming-assignments")
