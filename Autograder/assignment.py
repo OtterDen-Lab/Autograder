@@ -60,6 +60,36 @@ class Assignment(abc.ABC):
     """
     pass
 
+  def _filter_submissions_for_student_id(self, student_id) -> None:
+    """
+    Restrict submissions to a single Canvas student ID when requested.
+    """
+    if student_id is None:
+      return
+
+    before = len(self.submissions)
+    target_id = str(student_id)
+    missing_student_id = 0
+    filtered_submissions = []
+
+    for submission in self.submissions:
+      submission_student = getattr(submission, "student", None)
+      submission_student_id = getattr(submission_student, "user_id", None)
+      if submission_student_id is None:
+        missing_student_id += 1
+        continue
+      if str(submission_student_id) == target_id:
+        filtered_submissions.append(submission)
+
+    self.submissions = filtered_submissions
+    log.info(
+      f"Filtered to {len(self.submissions)} submission(s) for canvas_user_id={student_id} "
+      f"(was {before})")
+    if missing_student_id:
+      log.warning(
+        f"Skipped {missing_student_id} submission(s) without a Canvas user ID "
+        f"while filtering assignment '{self.lms_assignment.name}'")
+
   def finalize(self, *args, **kwargs) -> Dict[str, Any]:
     """
     This function is intended to finalize any grading.  This could be reloading the grading CSV and matching names,
@@ -347,6 +377,7 @@ class ProgrammingAssignment(Assignment):
               *args,
               limit=None,
               do_regrade=False,
+              student_id=None,
               only_include_latest=True,
               **kwargs):
 
@@ -355,9 +386,10 @@ class ProgrammingAssignment(Assignment):
     #  2. Filter out submissions we don't want
     #  3. possibly download proactively
     log.info(
-      f"Preparing assignment with do_regrade={do_regrade}, limit={limit}")
+      f"Preparing assignment with do_regrade={do_regrade}, limit={limit}, student_id={student_id}")
+    fetch_limit = None if (not do_regrade or student_id is not None) else limit
     self.submissions = self.lms_assignment.get_submissions(
-      limit=(None if not do_regrade else limit), **kwargs)
+      limit=fetch_limit, **kwargs)
     log.info(f"Retrieved {len(self.submissions)} total submissions from LMS")
 
     if not do_regrade:
@@ -370,6 +402,8 @@ class ProgrammingAssignment(Assignment):
       )
     else:
       log.info("Regrade mode: processing all submissions regardless of status")
+
+    self._filter_submissions_for_student_id(student_id)
 
     log.info(f"Total students to grade: {len(self.submissions)}")
     if limit is not None:
@@ -405,7 +439,12 @@ class TextAssignment(Assignment):
     super().__init__(*args, **kwargs)
     self.submission_data = []
 
-  def prepare(self, limit=None, do_regrade=False, test=False, **kwargs):
+  def prepare(self,
+              limit=None,
+              do_regrade=False,
+              student_id=None,
+              test=False,
+              **kwargs):
     """
     Prepare text submissions by fetching them from Canvas.
 
@@ -417,7 +456,8 @@ class TextAssignment(Assignment):
                   - grade_after_lock_date: If True, skip preparation if assignment is not locked
     """
     log.info(
-      f"Preparing text assignment with do_regrade={do_regrade}, limit={limit}, test={test}"
+      f"Preparing text assignment with do_regrade={do_regrade}, limit={limit}, "
+      f"student_id={student_id}, test={test}"
     )
 
     # Check if we should wait for lock date before grading (BEFORE any Canvas API calls)
@@ -433,8 +473,9 @@ class TextAssignment(Assignment):
         return
 
     # Get submissions from Canvas
+    fetch_limit = None if (not do_regrade or student_id is not None) else limit
     self.submissions = self.lms_assignment.get_submissions(
-      limit=(None if not do_regrade else limit), test=test, **kwargs)
+      limit=fetch_limit, test=test, **kwargs)
     log.info(f"Retrieved {len(self.submissions)} total submissions from LMS")
 
     # Filter for ungraded submissions if not regrading
@@ -448,6 +489,8 @@ class TextAssignment(Assignment):
       )
     else:
       log.info("Regrade mode: processing all submissions regardless of status")
+
+    self._filter_submissions_for_student_id(student_id)
 
     # Apply limit if specified
     if limit is not None:

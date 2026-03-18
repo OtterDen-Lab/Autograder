@@ -221,6 +221,31 @@ def test_parse_args_accepts_dry_run(monkeypatch, tmp_path):
   assert args.dry_run is True
 
 
+def test_parse_args_accepts_student_id(monkeypatch, tmp_path):
+  yaml_file = tmp_path / "config.yaml"
+  yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
+
+  monkeypatch.setattr(
+    sys, "argv",
+    ["grade-assignments", "--yaml",
+     str(yaml_file), "--student-id", "12345"])
+  args = grade_assignments.parse_args()
+  assert args.student_id == 12345
+
+
+def test_parse_args_rejects_non_positive_student_id(monkeypatch, tmp_path):
+  yaml_file = tmp_path / "config.yaml"
+  yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
+
+  monkeypatch.setattr(
+    sys, "argv",
+    ["grade-assignments", "--yaml",
+     str(yaml_file), "--student-id", "0"])
+  with pytest.raises(SystemExit) as exc:
+    grade_assignments.parse_args()
+  assert exc.value.code == 2
+
+
 def test_parse_args_rejects_non_positive_max_workers(monkeypatch, tmp_path):
   yaml_file = tmp_path / "config.yaml"
   yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")

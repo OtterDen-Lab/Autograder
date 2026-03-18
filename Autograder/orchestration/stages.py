@@ -41,6 +41,7 @@ def run_prepare_stage(grader, grading_assignment, args, settings,
         try:
             grading_assignment.prepare(limit=args.limit,
                                        do_regrade=do_regrade,
+                                       student_id=getattr(args, "student_id", None),
                                        test=args.test,
                                        **settings)
         except Exception as e:

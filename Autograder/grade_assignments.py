@@ -134,6 +134,10 @@ def collect_assignments_to_grade(config: RunConfig,
     log.info(
         f"Using privacy_mode={config.privacy_mode}, reveal_identity={reveal_identity}"
     )
+    if getattr(args, "student_id", None) is not None:
+        log.info(
+            f"Filtering grading run to canvas_user_id={args.student_id}"
+        )
     if idempotency_key:
         log.info(
             f"Idempotency enabled with key '{idempotency_key}' (state dir: {idempotency_state_dir})"
@@ -258,6 +262,7 @@ def build_dump_config_payload(
             "idempotency_state_dir":
             (assignments_to_grade[0].idempotency_state_dir if assignments_to_grade
              else config.idempotency_state_dir),
+            "student_id": getattr(args, "student_id", None),
             "assignment_count": len(assignments_to_grade),
         },
         "assignments": assignments_payload,

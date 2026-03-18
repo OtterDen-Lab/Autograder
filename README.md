@@ -115,6 +115,12 @@ grade-assignments --yaml config.yaml --limit 5
 grade-assignments --yaml config.yaml --regrade
 ```
 
+### Regrade a single student submission
+
+```bash
+grade-assignments --yaml config.yaml --regrade --student-id 123456
+```
+
 ### Test submissions without pushing grades
 
 ```bash

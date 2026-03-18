@@ -75,6 +75,10 @@ def parse_args() -> argparse.Namespace:
                         default=None,
                         help="Path to the .env file (defaults to ~/.env)")
     parser.add_argument("--limit", default=None, type=int)
+    parser.add_argument("--student-id",
+                        default=None,
+                        type=int,
+                        help="Only grade the submission for this Canvas student ID")
     parser.add_argument("--regrade",
                         "--do_regrade",
                         dest="do_regrade",
@@ -149,6 +153,8 @@ def parse_args() -> argparse.Namespace:
 
     if args.max_workers is not None and args.max_workers < 1:
         parser.error("--max_workers must be >= 1")
+    if args.student_id is not None and args.student_id < 1:
+        parser.error("--student-id must be >= 1")
 
     return args
 
