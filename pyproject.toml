@@ -24,7 +24,7 @@ classifiers = [
 dependencies = [
     "python-dotenv==1.0.1",
     "PyYAML==6.0.3",
-    "requests==2.32.2",
+    "requests~=2.32.2",
     "canvasapi~=3.2",
     "python-dateutil~=2.9",
     "httpx~=0.28",
