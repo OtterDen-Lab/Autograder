@@ -187,6 +187,7 @@ class TemplateGraderSettings:
   grading_args: List[str] = field(default_factory=list)
   grading_workdir: Optional[str] = None
   num_repeats: Optional[int] = None
+  rubric: Optional[Dict[str, Any]] = None
 
   def __post_init__(self) -> None:
     if not isinstance(self.base_image_name, str):
@@ -201,6 +202,8 @@ class TemplateGraderSettings:
       raise _config_error("template-grader.additional_repos must be a list")
     if not isinstance(self.file_paths, dict):
       raise _config_error("template-grader.file_paths must be a mapping")
+    if self.rubric is not None and not isinstance(self.rubric, dict):
+      raise _config_error("template-grader.rubric must be a mapping")
 
     additional_paths = sorted(repo.container_path for repo in self.additional_repos)
     for i, path_i in enumerate(additional_paths):
@@ -241,6 +244,7 @@ class TemplateGraderSettings:
       "grading_args",
       "grading_workdir",
       "num_repeats",
+      "rubric",
     }
     unknown = sorted(k for k in raw.keys() if k not in allowed)
     if unknown:
@@ -266,6 +270,11 @@ class TemplateGraderSettings:
       additional_repos.append(
         AdditionalRepoConfig.from_raw(
           repo_entry, f"{context_label}.additional_repos[{i}]"))
+
+    rubric_raw = raw.get("rubric")
+    rubric = None
+    if rubric_raw is not None:
+      rubric = dict(_require_mapping(rubric_raw, f"{context_label}.rubric"))
 
     settings = cls(
       base_image_name=str(raw.get("base_image_name", DEFAULT_TEMPLATE_BASE_IMAGE)),
@@ -307,6 +316,7 @@ class TemplateGraderSettings:
                                             f"{context_label}.grading_workdir"),
       num_repeats=_require_optional_int(raw.get("num_repeats"),
                                         f"{context_label}.num_repeats"),
+      rubric=rubric,
     )
     return settings
 
@@ -348,6 +358,7 @@ class TemplateGraderSettings:
       "grading_args": self.grading_args,
       "grading_workdir": self.grading_workdir,
       "num_repeats": self.num_repeats,
+      "rubric": dict(self.rubric) if self.rubric is not None else None,
     }
 
 

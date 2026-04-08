@@ -160,13 +160,20 @@ class Assignment(abc.ABC):
           # Scale the score for Canvas submission
           scaled_score = self.scale_score_for_canvas(
             feedback.percentage_score)
+          rubric_assessment = kwargs.get("rubric_assessment",
+                                         kwargs.get("rubric"))
+          push_kwargs = {
+            "score": scaled_score,
+            "comments": feedback.comments,
+            "attachments": feedback.attachments,
+            "user_id": user_id,
+            "keep_previous_best": True,
+            "clobber_feedback": False,
+          }
+          if rubric_assessment is not None:
+            push_kwargs["rubric_assessment"] = rubric_assessment
           pushed = self.lms_assignment.push_feedback(
-            score=scaled_score,
-            comments=feedback.comments,
-            attachments=feedback.attachments,
-            user_id=user_id,
-            keep_previous_best=True,
-            clobber_feedback=False)
+            **push_kwargs)
         except Exception as e:
           push_failed += 1
           push_failed_students.append(str(submission.student.name))

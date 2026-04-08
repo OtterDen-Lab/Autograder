@@ -31,6 +31,12 @@ courses:
             - "src/main.c"
             - "src/util.c"
           num_repeats: 10
+          # Optional: rubric data passed to LMSInterface.push_feedback(..., rubric_assessment=...)
+          # rubric:
+          #   "criterion 1": 2
+          #   "crit2":
+          #     points: 3
+          #     comments: "Good work."
         assignments:
           - repo_path: PA1
             id: 506889

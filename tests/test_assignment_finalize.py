@@ -42,10 +42,12 @@ class DummyLmsAssignment:
         self.fail_user_ids = fail_user_ids or set()
         self.exception_user_ids = exception_user_ids or set()
         self.push_calls = []
+        self.push_call_kwargs = []
         self.pushed_scores = {}
 
     def push_feedback(self, *, user_id, score=None, **kwargs):
         self.push_calls.append(user_id)
+        self.push_call_kwargs.append(kwargs)
         self.pushed_scores[user_id] = score
         if user_id in self.exception_user_ids:
             raise RuntimeError(f"push exploded for {user_id}")
@@ -313,6 +315,29 @@ class TestPushFailureHandling:
         assignment.finalize(push=False)
 
         assert lms_assignment.push_calls == []
+
+    def test_finalize_forwards_rubric_assessment(self, tmp_path):
+        """Finalize should pass rubric settings through to push_feedback."""
+        lms_assignment = DummyLmsAssignment(points_possible=100)
+        assignment = DummyAssignment(lms_assignment=lms_assignment)
+        assignment.submissions = [_make_submission(1, score=90.0)]
+
+        rubric = {
+            "criterion 1": 2,
+            "crit2": {
+                "points": 3,
+                "comments": "Good work.",
+            },
+        }
+
+        assignment.finalize(
+            push=True,
+            rubric=rubric,
+            idempotency_key="test",
+            idempotency_state_dir=str(tmp_path),
+        )
+
+        assert lms_assignment.push_call_kwargs[0]["rubric_assessment"] == rubric
 
 
 class TestEdgeCases:

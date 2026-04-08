@@ -5,6 +5,7 @@ import pytest
 from Autograder import grade_assignments
 from Autograder import config_models
 from Autograder.config_models import parse_run_config
+from Autograder.grader_settings import TemplateGraderSettings
 
 
 def test_parse_run_config_requires_assignment_types():
@@ -172,6 +173,38 @@ def test_normalize_text_submission_settings_supports_prompt_and_rubric_blocks():
     "Analyze")
   assert normalized["rubric"]["engagement"]["points"] == 5
   assert normalized["rubric"]["word_threshold"] == 300
+
+
+def test_template_grader_settings_preserve_rubric_for_lms_push():
+  settings = TemplateGraderSettings.from_raw(
+    {
+      "rubric": {
+        "criterion 1": 2,
+        "crit2": {
+          "points": 3,
+          "comments": "Good work.",
+        },
+      }
+    },
+    "assignment_types.programming.settings",
+  )
+
+  assert settings.rubric == {
+    "criterion 1": 2,
+    "crit2": {
+      "points": 3,
+      "comments": "Good work.",
+    },
+  }
+
+  normalized = settings.to_kwargs()
+  assert normalized["rubric"] == {
+    "criterion 1": 2,
+    "crit2": {
+      "points": 3,
+      "comments": "Good work.",
+    },
+  }
 
 
 def test_collect_assignments_to_grade_builds_typed_requests(monkeypatch):

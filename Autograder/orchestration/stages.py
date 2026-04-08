@@ -135,6 +135,8 @@ def run_publish_stage(grader, grading_assignment, args, push_grades: bool,
             "record_retention": record_retention,
             "records_dir": records_dir
         })
+    if settings.get("rubric") is not None:
+        finalize_kwargs["rubric"] = settings.get("rubric")
 
     finalize_summary = grading_assignment.finalize(**finalize_kwargs)
     return PublishStageResult(finalized=True, finalize_summary=finalize_summary)
