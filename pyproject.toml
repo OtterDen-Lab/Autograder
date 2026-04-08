@@ -7,7 +7,7 @@ name = "Otter-Autograder"
 version = "0.10.3"
 description = "A collection of tools for grading homework automatically"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 license = {file = "LICENSE"}
 authors = [
     {name = "Sam Ogden", email = "samuel.s.ogden@gmail.com"},
@@ -20,6 +20,7 @@ classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
     "python-dotenv==1.0.1",
