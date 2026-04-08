@@ -364,7 +364,7 @@ requires-dist = [
     { name = "python-dateutil", specifier = "~=2.9" },
     { name = "python-dotenv", specifier = "==1.0.1" },
     { name = "pyyaml", specifier = "==6.0.3" },
-    { name = "requests", specifier = "~=2.32.2" },
+    { name = "requests", specifier = ">=2.32.4,<3" },
     { name = "slack-sdk", specifier = "~=3.36" },
 ]
 provides-extras = ["dev"]
