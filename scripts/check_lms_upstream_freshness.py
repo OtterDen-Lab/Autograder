@@ -45,7 +45,6 @@ def _load_source_config(path: Path) -> dict[str, str]:
   section = data.get("lms_interface", {})
   repository = str(section.get("repository", "")).strip()
   ref = str(section.get("ref", "")).strip()
-  expected_version = str(section.get("expected_version", "")).strip()
 
   if not repository:
     raise ValueError(f"Missing lms_interface.repository in {path}")
@@ -55,7 +54,6 @@ def _load_source_config(path: Path) -> dict[str, str]:
   return {
     "repository": repository,
     "ref": ref,
-    "expected_version": expected_version,
   }
 
 
@@ -109,7 +107,6 @@ def main() -> int:
 
   repository = config["repository"]
   pinned_ref = config["ref"]
-  expected_version = config["expected_version"]
 
   print(f"Pinned LMS repository: {repository}")
   print(f"Pinned LMS ref:        {pinned_ref}")
@@ -124,13 +121,6 @@ def main() -> int:
     return 1 if args.fail_on_error else 0
 
   print(f"Pinned LMS version:    {pinned_version}")
-
-  if expected_version and expected_version != pinned_version:
-    print(
-      "Error: scripts/lms_release_source.toml expected_version does not match "
-      f"{repository}@{pinned_ref} pyproject version ({expected_version} != {pinned_version})"
-    )
-    return 1
 
   try:
     latest_tag = _latest_release_tag(repository)

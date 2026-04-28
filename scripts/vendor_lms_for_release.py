@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 
 DEFAULT_CONFIG = Path("scripts/lms_release_source.toml")
 DEFAULT_PYPROJECT = Path("pyproject.toml")
+RAW_GITHUB_ROOT = "https://raw.githubusercontent.com"
 USER_AGENT = "autograder-release-vendor"
 
 
@@ -22,20 +23,36 @@ def _load_config(path: Path) -> dict[str, str]:
 
   repository = str(section.get("repository", "")).strip()
   ref = str(section.get("ref", "")).strip()
-  expected_version = str(section.get("expected_version", "")).strip()
 
   if not repository:
     raise ValueError(f"Missing lms_interface.repository in {path}")
   if not ref:
     raise ValueError(f"Missing lms_interface.ref in {path}")
-  if not expected_version:
-    expected_version = ref.removeprefix("v")
 
   return {
     "repository": repository,
     "ref": ref,
-    "expected_version": expected_version,
   }
+
+
+def _pyproject_version(repository: str, ref: str) -> str:
+  request = urllib.request.Request(
+    f"{RAW_GITHUB_ROOT}/{repository}/{ref}/pyproject.toml",
+    headers={"User-Agent": USER_AGENT},
+  )
+
+  github_token = os.getenv("GITHUB_TOKEN", "").strip()
+  if github_token:
+    request.add_header("Authorization", f"Bearer {github_token}")
+
+  with urllib.request.urlopen(request, timeout=20) as response:
+    raw_pyproject = response.read().decode("utf-8")
+
+  data = tomllib.loads(raw_pyproject)
+  version = str(data.get("project", {}).get("version", "")).strip()
+  if not version:
+    raise ValueError(f"project.version missing in {repository}@{ref} pyproject.toml")
+  return version
 
 
 def _download_wheel(url: str, output: Path) -> None:
@@ -173,7 +190,7 @@ def main() -> int:
   config = _load_config(args.config)
   repository = config["repository"]
   ref = config["ref"]
-  version = config["expected_version"]
+  version = _pyproject_version(repository, ref)
 
   wheel_name = f"lms_interface-{version}-py3-none-any.whl"
   wheel_url = f"https://github.com/{repository}/releases/download/{ref}/{wheel_name}"
