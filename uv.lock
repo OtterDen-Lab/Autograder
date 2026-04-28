@@ -251,8 +251,8 @@ wheels = [
 
 [[package]]
 name = "lms-interface"
-version = "0.6.0"
-source = { url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.6.0/lms_interface-0.6.0-py3-none-any.whl" }
+version = "0.6.1"
+source = { url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.6.1/lms_interface-0.6.1-py3-none-any.whl" }
 dependencies = [
     { name = "canvasapi" },
     { name = "pytest" },
@@ -261,7 +261,7 @@ dependencies = [
     { name = "requests" },
 ]
 wheels = [
-    { url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.6.0/lms_interface-0.6.0-py3-none-any.whl", hash = "sha256:7c8053a7fa116a8aa7da1e0583abab6d3c04254876c62deb51932a8bea64ecc9" },
+    { url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.6.1/lms_interface-0.6.1-py3-none-any.whl", hash = "sha256:b512d2c250550e0e9f64c7338969038e9a8bd4fe24a11b2b83bffdc8f8569be5" },
 ]
 
 [package.metadata]
@@ -314,7 +314,7 @@ wheels = [
 
 [[package]]
 name = "otter-autograder"
-version = "0.10.4"
+version = "0.10.5"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -344,7 +344,7 @@ requires-dist = [
     { name = "docker", specifier = "~=7.1" },
     { name = "httpx", specifier = "~=0.28" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.112.0" },
-    { name = "lms-interface", url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.6.0/lms_interface-0.6.0-py3-none-any.whl" },
+    { name = "lms-interface", url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.6.1/lms_interface-0.6.1-py3-none-any.whl" },
     { name = "ollama", specifier = "~=0.6" },
     { name = "openai", specifier = "~=1.93" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.3" },
