@@ -339,6 +339,35 @@ class TestPushFailureHandling:
 
         assert lms_assignment.push_call_kwargs[0]["rubric_assessment"] == rubric
 
+    def test_finalize_prefers_rubric_from_feedback(self, tmp_path):
+        """Finalize should prefer rubric data attached to feedback."""
+        lms_assignment = DummyLmsAssignment(points_possible=100)
+        assignment = DummyAssignment(lms_assignment=lms_assignment)
+        submission = _make_submission(1, score=90.0)
+        submission.feedback.rubric_assessment = {
+            "criterion 1": 4,
+            "crit2": {
+                "points": 1,
+            },
+        }
+        assignment.submissions = [submission]
+
+        assignment.finalize(
+            push=True,
+            rubric={
+                "criterion 1": 2,
+            },
+            idempotency_key="test",
+            idempotency_state_dir=str(tmp_path),
+        )
+
+        assert lms_assignment.push_call_kwargs[0]["rubric_assessment"] == {
+            "criterion 1": 4,
+            "crit2": {
+                "points": 1,
+            },
+        }
+
 
 class TestEdgeCases:
     """Edge case tests for finalize."""

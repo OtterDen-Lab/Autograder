@@ -1046,6 +1046,7 @@ class TemplateGrader(DockerGrader):
     #   grade: <percentage 0-100+>  # Percentage score where 100 = full credit
     #   comments: <feedback text>
     #   logs: <optional execution logs>
+    #   rubric: <optional Canvas rubric assessment payload>
     feedback_content = self.read_file_from_container("/tmp/feedback.yaml")
     log.debug(f"feedback_content: {feedback_content}")
 
@@ -1057,12 +1058,19 @@ class TemplateGrader(DockerGrader):
           grade = float(feedback_data.get('grade', 0.0))
           comments = feedback_data.get('comments', 'No comments provided')
           logs = feedback_data.get('logs', '')
+          rubric_assessment = feedback_data.get("rubric")
 
           full_feedback = comments
           if logs and logs.strip():
             full_feedback += f"\n\n--- Execution Logs ---\n{logs}"
 
-          return Feedback(percentage_score=grade, comments=full_feedback)
+          feedback = Feedback(percentage_score=grade, comments=full_feedback)
+          if isinstance(rubric_assessment, dict):
+            setattr(feedback, "rubric_assessment", rubric_assessment)
+          elif rubric_assessment is not None:
+            log.warning(
+              "Ignoring feedback.yaml rubric because it is not a mapping")
+          return feedback
       except Exception as e:
         error_msg = f"Failed to parse feedback YAML: {e}"
         log.error(error_msg)

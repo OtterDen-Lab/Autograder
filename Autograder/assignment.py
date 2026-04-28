@@ -160,8 +160,10 @@ class Assignment(abc.ABC):
           # Scale the score for Canvas submission
           scaled_score = self.scale_score_for_canvas(
             feedback.percentage_score)
-          rubric_assessment = kwargs.get("rubric_assessment",
-                                         kwargs.get("rubric"))
+          rubric_assessment = getattr(feedback, "rubric_assessment", None)
+          if rubric_assessment is None:
+            rubric_assessment = kwargs.get("rubric_assessment",
+                                           kwargs.get("rubric"))
           push_kwargs = {
             "score": scaled_score,
             "comments": feedback.comments,

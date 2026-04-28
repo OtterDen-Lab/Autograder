@@ -245,3 +245,29 @@ def test_template_grader_uv_bootstrap_command_handles_missing_pyproject():
   assert "build-essential" in command
   assert "libpq-dev" in command
   assert "skipping uv sync" in command
+
+
+def test_template_grader_score_grading_attaches_optional_rubric(monkeypatch):
+  grader = object.__new__(Grader__template_grader)
+  grader.container = object()
+  grader.read_file_from_container = lambda path: (
+    "grade: 88\n"
+    "comments: Great work.\n"
+    "rubric:\n"
+    "  criterion 1: 2\n"
+    "  crit2:\n"
+    "    points: 3\n"
+  )
+  grader._report_grading_error = lambda *args, **kwargs: pytest.fail(
+    "Unexpected grading error")
+
+  feedback = grader.score_grading((0, "", ""))
+
+  assert feedback.percentage_score == 88.0
+  assert feedback.comments == "Great work."
+  assert getattr(feedback, "rubric_assessment") == {
+    "criterion 1": 2,
+    "crit2": {
+      "points": 3,
+    },
+  }
