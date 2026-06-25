@@ -9,6 +9,13 @@ from typing import List, Dict, Any
 import abc
 import os
 import json
+from Autograder.external_tools import (
+  PanoptoWatchClient,
+  extract_panopto_base_url,
+  extract_panopto_session_id,
+  extract_student_identifier,
+  resolve_panopto_access_token,
+)
 from Autograder.registry import AssignmentRegistry
 from lms_interface.canvas_interface import CanvasAssignment
 from lms_interface.classes import Student, Submission
@@ -635,6 +642,192 @@ class TextAssignment(Assignment):
     Finalize grading by pushing scores and feedback to Canvas.
     """
     return super().finalize(*args, **kwargs)
+
+
+@AssignmentRegistry.register("ExternalToolAssignment")
+class ExternalToolAssignment(Assignment):
+  """
+  Assignment backed by an external system rather than uploaded student work.
+  """
+
+  def prepare(self,
+              limit=None,
+              do_regrade=False,
+              student_id=None,
+              provider="panopto",
+              panopto_url=None,
+              panopto_base_url=None,
+              panopto_session_id=None,
+              panopto_access_token=None,
+              panopto_access_token_env="PANOPTO_ACCESS_TOKEN",
+              panopto_client_id=None,
+              panopto_client_secret=None,
+              panopto_client_id_env="PANOPTO_CLIENT_ID",
+              panopto_client_secret_env="PANOPTO_CLIENT_SECRET",
+              panopto_refresh_token=None,
+              panopto_refresh_token_env="PANOPTO_REFRESH_TOKEN",
+              panopto_refresh_token_path="~/.autograder/panopto_refresh_token.json",
+              panopto_token_url=None,
+              panopto_scope="api",
+              watch_data_path_template="/Panopto/api/v1/sessions/{session_id}/viewers",
+              canvas_user_attribute="email",
+              external_user_attribute="email",
+              student_identifier_overrides=None,
+              record_identifier_paths=None,
+              record_percent_paths=None,
+              record_viewed_seconds_paths=None,
+              record_duration_seconds_paths=None,
+              request_timeout_seconds=30.0,
+              missing_user_score=0.0,
+              **kwargs):
+    if provider != "panopto":
+      raise ValueError(f"Unsupported external tool provider: {provider}")
+    if not panopto_url:
+      raise ValueError("panopto_url is required for ExternalToolAssignment")
+
+    base_url = panopto_base_url or extract_panopto_base_url(panopto_url)
+    session_id = panopto_session_id or extract_panopto_session_id(panopto_url)
+    if not session_id:
+      raise ValueError(
+        "Unable to determine Panopto session ID from panopto_url. "
+        "Set panopto_session_id explicitly.")
+    token = resolve_panopto_access_token(
+      panopto_access_token,
+      panopto_access_token_env,
+      explicit_client_id=panopto_client_id,
+      explicit_client_secret=panopto_client_secret,
+      client_id_env=panopto_client_id_env,
+      client_secret_env=panopto_client_secret_env,
+      explicit_refresh_token=panopto_refresh_token,
+      refresh_token_env=panopto_refresh_token_env,
+      refresh_token_path=panopto_refresh_token_path,
+      token_url=panopto_token_url,
+      base_url=base_url,
+      scope=panopto_scope,
+      timeout_seconds=request_timeout_seconds,
+    )
+
+    client = PanoptoWatchClient(base_url=base_url,
+                                access_token=token,
+                                timeout_seconds=request_timeout_seconds)
+    watch_records = client.fetch_watch_records(
+      session_id=session_id,
+      path_template=watch_data_path_template,
+      record_identifier_paths=list(record_identifier_paths or []),
+      record_percent_paths=list(record_percent_paths or []),
+      record_viewed_seconds_paths=list(record_viewed_seconds_paths or []),
+      record_duration_seconds_paths=list(record_duration_seconds_paths or []),
+    )
+    watch_by_key = {record.user_key: record for record in watch_records}
+
+    log.debug(
+      f"Panopto returned {len(watch_records)} raw watch record(s) for session {session_id}")
+    for i, record in enumerate(watch_records, 1):
+      log.debug(
+        "Panopto record %d: user_key=%s percent_watched=%s viewed_seconds=%s duration_seconds=%s raw=%s",
+        i,
+        record.user_key,
+        record.percent_watched,
+        record.viewed_seconds,
+        record.duration_seconds,
+        json.dumps(record.raw, indent=2, sort_keys=True, default=str),
+      )
+
+    try:
+      students = list(self.lms_assignment.get_students(include_names=True))
+    except TypeError:
+      students = list(self.lms_assignment.get_students())
+
+    student_identifier_overrides = {
+      str(k): str(v).strip().lower()
+      for k, v in (student_identifier_overrides or {}).items()
+    }
+    student_statuses = self._load_submission_statuses()
+
+    prepared_submissions: list[Submission] = []
+    for student in students:
+      raw_user_id = getattr(student, "user_id", None)
+      if raw_user_id is None:
+        continue
+      user_id = int(raw_user_id)
+
+      if student_id is not None and str(user_id) != str(student_id):
+        continue
+
+      if not do_regrade and student_statuses.get(user_id) == Submission.Status.GRADED:
+        continue
+
+      external_key = student_identifier_overrides.get(str(user_id))
+      if external_key is None:
+        external_key = extract_student_identifier(student, canvas_user_attribute)
+      record = watch_by_key.get(external_key) if external_key else None
+
+      log.debug(
+        "Panopto mapping candidate: canvas_user_id=%s canvas_name=%s canvas_key=%s external_key=%s match=%s",
+        user_id,
+        getattr(student, "name", None),
+        extract_student_identifier(student, canvas_user_attribute),
+        external_key,
+        bool(record),
+      )
+
+      submission = Submission(
+        student=student,
+        status=student_statuses.get(user_id, Submission.Status.MISSING))
+      submission.set_extra({
+        "external_provider": provider,
+        "panopto_url": panopto_url,
+        "panopto_session_id": session_id,
+        "canvas_identifier": external_key,
+        "external_identifier": external_key,
+        "external_user_attribute": external_user_attribute,
+        "missing_user_score": float(missing_user_score),
+        "percent_watched": (
+          record.percent_watched if record is not None else float(missing_user_score)),
+        "viewed_seconds": record.viewed_seconds if record is not None else None,
+        "duration_seconds": record.duration_seconds if record is not None else None,
+        "watch_record_found": record is not None,
+        "watch_record_raw": record.raw if record is not None else None,
+      })
+      prepared_submissions.append(submission)
+
+    if limit is not None:
+      prepared_submissions = prepared_submissions[:limit]
+
+    self.submissions = prepared_submissions
+    matched_count = sum(1 for submission in self.submissions
+                        if submission.extra_info.get("watch_record_found"))
+    zero_score_count = sum(
+      1 for submission in self.submissions
+      if float(submission.extra_info.get("percent_watched", 0.0) or 0.0) <= 0.0)
+    log.info(
+      f"Prepared {len(self.submissions)} external-tool submission(s) from Panopto "
+      f"for assignment '{self.lms_assignment.name}'")
+    if matched_count == 0:
+      log.warning(
+        "No Panopto watch records matched Canvas students. "
+        "Check canvas_user_attribute, external_user_attribute, student_identifier_overrides, "
+        "and record_identifier_paths.")
+    elif zero_score_count == len(self.submissions):
+      log.warning(
+        "Panopto matched students, but all computed watch percentages were 0. "
+        "Check record_percent_paths, record_viewed_seconds_paths, and record_duration_seconds_paths.")
+
+  def _load_submission_statuses(self) -> dict[int, Submission.Status]:
+    try:
+      lms_submissions = list(self.lms_assignment.get_submissions(limit=None))
+    except Exception:
+      return {}
+
+    statuses: dict[int, Submission.Status] = {}
+    for submission in lms_submissions:
+      student = getattr(submission, "student", None)
+      user_id = getattr(student, "user_id", None)
+      if user_id is None:
+        continue
+      statuses[int(user_id)] = getattr(submission, "status",
+                                       Submission.Status.UNGRADED)
+    return statuses
 
 
 # =============================================================================

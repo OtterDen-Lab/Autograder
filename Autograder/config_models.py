@@ -4,13 +4,19 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from Autograder.grader_settings import (
   AdditionalRepoConfig,
+  ExternalToolGraderSettings,
   FilePathTargetConfig,
   TemplateGraderSettings,
   TextSubmissionGraderSettings,
 )
 
-_FALLBACK_ACTIVE_ASSIGNMENT_KINDS = {"ProgrammingAssignment", "TextAssignment"}
+_FALLBACK_ACTIVE_ASSIGNMENT_KINDS = {
+  "ExternalToolAssignment",
+  "ProgrammingAssignment",
+  "TextAssignment"
+}
 _FALLBACK_ACTIVE_GRADERS_BY_KIND = {
+  "ExternalToolAssignment": {"panopto-watch-grader"},
   "ProgrammingAssignment": {"template-grader"},
   "TextAssignment": {"TextSubmissionGrader", "WeeklyStudyNotesGrader"},
 }
@@ -157,6 +163,11 @@ def _normalize_text_submission_grader_settings(
   return TextSubmissionGraderSettings.from_raw(settings, context_label).to_kwargs()
 
 
+def _normalize_external_tool_grader_settings(
+    settings: Dict[str, Any], context_label: str) -> Dict[str, Any]:
+  return ExternalToolGraderSettings.from_raw(settings, context_label).to_kwargs()
+
+
 def _normalize_known_grader_settings_without_registry(
     grader_name: str, settings: Dict[str, Any],
     context_label: str) -> Optional[Dict[str, Any]]:
@@ -164,6 +175,8 @@ def _normalize_known_grader_settings_without_registry(
     return _normalize_template_grader_settings(settings, context_label)
   if grader_name in {"TextSubmissionGrader", "WeeklyStudyNotesGrader"}:
     return _normalize_text_submission_grader_settings(settings, context_label)
+  if grader_name == "panopto-watch-grader":
+    return _normalize_external_tool_grader_settings(settings, context_label)
   return None
 
 

@@ -1,6 +1,6 @@
 # Otter-Autograder
 
-An autograding system for teaching, primarily focused on Canvas LMS integration. Supports automated grading of programming assignments (via Docker) and text submissions (like learning logs).
+An autograding system for teaching, primarily focused on Canvas LMS integration. Supports automated grading of programming assignments (via Docker), text submissions (like learning logs), and external-tool sourced grades such as Panopto watch analytics.
 
 ## Installation
 
@@ -17,7 +17,21 @@ Create a `.env` file (by default this tool reads `~/.env`):
 ```bash
 CANVAS_API_KEY=your_canvas_api_key_here
 CANVAS_API_URL=https://your-institution.instructure.com
+PANOPTO_CLIENT_ID=your_panopto_client_id_here
+PANOPTO_CLIENT_SECRET=your_panopto_client_secret_here
+PANOPTO_REFRESH_TOKEN=your_panopto_refresh_token_here
 ```
+
+If you need to bootstrap the first refresh token, run the helper from a machine
+with a browser:
+
+```bash
+python scripts/bootstrap_panopto_refresh_token.py
+```
+
+It will print an authorization URL, capture the redirect on `127.0.0.1:8765`,
+and write the resulting refresh token to
+`~/.autograder/panopto_refresh_token.json` by default.
 
 ### 2. Create a grading configuration
 
@@ -89,6 +103,7 @@ Path safety defaults:
 
 - **Programming Assignments**: Docker-based grading with template matching and test execution
 - **Text Submissions**: AI-powered grading with rubric generation and clustering analysis
+- **External Tool Assignments**: synthesize grades from external systems such as Panopto watch progress
 
 ### Key Capabilities
 
@@ -182,6 +197,7 @@ See the `example_files/` directory for complete configuration examples:
 - `workhorse.yaml`: Recommended combined programming + text setup
 - `programming_assignments.yaml`: Programming-only setup
 - `learning-logs.yaml`: Text submission grading
+- `minimal-external.yaml`: Simplest Panopto-backed external assignment setup
 - `minimal-programming.yaml`: Simplest programming assignment setup
 - `minimal-text.yaml`: Simplest text assignment setup
 - `example-template.yaml`: All available options

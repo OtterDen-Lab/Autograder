@@ -338,6 +338,50 @@ def test_parse_run_config_accepts_weekly_study_notes_grader():
   assert run_config.assignment_types["weekly_notes"].grader == "WeeklyStudyNotesGrader"
 
 
+def test_parse_run_config_accepts_external_tool_assignment_type():
+  run_config = parse_run_config({
+    "assignment_types": {
+      "panopto_watch": {
+        "kind": "ExternalToolAssignment",
+        "grader": "panopto-watch-grader",
+        "settings": {
+          "panopto_url":
+          "https://videos.example.edu/Panopto/Pages/Viewer.aspx?id=session-123",
+          "panopto_client_id_env": "PANOPTO_CLIENT_ID",
+          "panopto_client_secret_env": "PANOPTO_CLIENT_SECRET",
+        }
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "panopto_watch",
+        "assignments": [{
+          "id": 99
+        }]
+      }]
+    }]
+  })
+
+  assignment_type = run_config.assignment_types["panopto_watch"]
+  assert assignment_type.kind == "ExternalToolAssignment"
+  assert assignment_type.grader == "panopto-watch-grader"
+  assert assignment_type.settings["panopto_client_id_env"] == "PANOPTO_CLIENT_ID"
+  assert assignment_type.settings[
+    "panopto_client_secret_env"] == "PANOPTO_CLIENT_SECRET"
+
+
+def test_normalize_external_tool_settings_validates_required_panopto_url():
+  with pytest.raises(ValueError) as exc:
+    config_models.normalize_grader_settings(
+      "panopto-watch-grader",
+      {},
+      "assignment_types.panopto_watch",
+    )
+
+  assert "panopto_url is required" in str(exc.value)
+
+
 def test_parse_run_config_rejects_invalid_privacy_mode():
   with pytest.raises(ValueError):
     parse_run_config({

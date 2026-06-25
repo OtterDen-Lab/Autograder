@@ -1,0 +1,27 @@
+prod: false
+push: true
+
+assignment_types:
+  panopto_watch:
+    kind: ExternalToolAssignment
+    grader: panopto-watch-grader
+    settings:
+      panopto_url: "https://csumb.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=4992fd5c-fb07-4ddd-8fb2-b30400158378"
+      panopto_refresh_token_path: "~/.autograder/panopto_refresh_token.json"
+      canvas_user_attribute: "sis_user_id"
+      external_user_attribute: "username"
+      record_identifier_paths:
+        - "User.Username"
+      record_percent_paths:
+        - "PercentCompleted"
+      record_viewed_seconds_paths:
+        - "MostRecentViewPositionInSeconds"
+      missing_user_score: 0
+
+courses:
+  - name: "Course 35631"
+    id: 35631
+    assignment_groups:
+      - type: panopto_watch
+        assignments:
+          - id: 601506

@@ -1,0 +1,209 @@
+import json
+
+from Autograder.external_tools import (
+  build_panopto_authorization_url,
+  load_panopto_refresh_token,
+  request_panopto_authorization_code_token,
+  request_panopto_access_token,
+  request_panopto_refresh_token,
+  resolve_panopto_access_token,
+)
+
+
+class _MockResponse:
+  def __init__(self, payload):
+    self.payload = payload
+
+  def raise_for_status(self):
+    return None
+
+  def json(self):
+    return self.payload
+
+
+class _RecordingSession:
+  def __init__(self, payloads):
+    if isinstance(payloads, list):
+      self.payloads = list(payloads)
+    else:
+      self.payloads = [payloads]
+    self.calls = []
+
+  def post(self, url, data=None, auth=None, headers=None, timeout=None):
+    self.calls.append({
+      "url": url,
+      "data": data,
+      "auth": auth,
+      "headers": headers,
+      "timeout": timeout,
+    })
+    payload = self.payloads.pop(0)
+    return _MockResponse(payload)
+
+
+def test_request_panopto_access_token_uses_client_credentials_grant():
+  session = _RecordingSession({"access_token": "token-123"})
+
+  token = request_panopto_access_token(
+    client_id="client-id",
+    client_secret="client-secret",
+    token_url="https://csumb.hosted.panopto.com/Panopto/oauth2/connect/token",
+    timeout_seconds=12.0,
+    session=session,
+  )
+
+  assert token.access_token == "token-123"
+  assert session.calls == [{
+    "url": "https://csumb.hosted.panopto.com/Panopto/oauth2/connect/token",
+    "data": {
+      "grant_type": "client_credentials",
+      "scope": "api",
+    },
+    "auth": ("client-id", "client-secret"),
+    "headers": {
+      "Accept": "application/json"
+    },
+    "timeout": 12.0,
+  }]
+
+
+def test_request_panopto_refresh_token_uses_refresh_grant():
+  session = _RecordingSession({
+    "access_token": "token-456",
+    "refresh_token": "refresh-456",
+  })
+
+  token = request_panopto_refresh_token(
+    client_id="client-id",
+    client_secret="client-secret",
+    refresh_token="refresh-123",
+    token_url="https://csumb.hosted.panopto.com/Panopto/oauth2/connect/token",
+    timeout_seconds=14.0,
+    session=session,
+  )
+
+  assert token.access_token == "token-456"
+  assert token.refresh_token == "refresh-456"
+  assert session.calls == [{
+    "url": "https://csumb.hosted.panopto.com/Panopto/oauth2/connect/token",
+    "data": {
+      "grant_type": "refresh_token",
+      "refresh_token": "refresh-123",
+      "scope": "api",
+    },
+    "auth": ("client-id", "client-secret"),
+    "headers": {
+      "Accept": "application/json"
+    },
+    "timeout": 14.0,
+  }]
+
+
+def test_request_panopto_authorization_code_token_uses_authorization_code_grant():
+  session = _RecordingSession({
+    "access_token": "token-789",
+    "refresh_token": "refresh-789",
+  })
+
+  token = request_panopto_authorization_code_token(
+    client_id="client-id",
+    client_secret="client-secret",
+    authorization_code="auth-code-123",
+    redirect_uri="http://127.0.0.1:8765/callback",
+    token_url="https://csumb.hosted.panopto.com/Panopto/oauth2/connect/token",
+    timeout_seconds=13.0,
+    session=session,
+  )
+
+  assert token.access_token == "token-789"
+  assert token.refresh_token == "refresh-789"
+  assert session.calls == [{
+    "url": "https://csumb.hosted.panopto.com/Panopto/oauth2/connect/token",
+    "data": {
+      "grant_type": "authorization_code",
+      "code": "auth-code-123",
+      "redirect_uri": "http://127.0.0.1:8765/callback",
+      "scope": "api",
+    },
+    "auth": ("client-id", "client-secret"),
+    "headers": {
+      "Accept": "application/json"
+    },
+    "timeout": 13.0,
+  }]
+
+
+def test_build_panopto_authorization_url_includes_expected_query_params():
+  url = build_panopto_authorization_url(
+    authorize_url="https://csumb.hosted.panopto.com/Panopto/oauth2/connect/authorize",
+    client_id="client-id",
+    redirect_uri="http://127.0.0.1:8765/callback",
+    scope="api",
+    state="state-123",
+  )
+
+  assert url.startswith(
+    "https://csumb.hosted.panopto.com/Panopto/oauth2/connect/authorize?")
+  assert "response_type=code" in url
+  assert "client_id=client-id" in url
+  assert "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Fcallback" in url
+  assert "scope=api" in url
+  assert "state=state-123" in url
+
+
+def test_extract_student_identifier_supports_username():
+  class _Student:
+    username = "unified\\0abc123"
+
+  from Autograder.external_tools import extract_student_identifier
+
+  assert extract_student_identifier(_Student(), "username") == "unified\\0abc123"
+
+
+def test_resolve_panopto_access_token_uses_client_credentials_env(monkeypatch):
+  monkeypatch.setenv("PANOPTO_CLIENT_ID", "client-id")
+  monkeypatch.setenv("PANOPTO_CLIENT_SECRET", "client-secret")
+
+  session = _RecordingSession({"access_token": "minted-token"})
+  token = resolve_panopto_access_token(
+    None,
+    None,
+    client_id_env="PANOPTO_CLIENT_ID",
+    client_secret_env="PANOPTO_CLIENT_SECRET",
+    base_url="https://csumb.hosted.panopto.com",
+    timeout_seconds=15.0,
+    session=session,
+  )
+
+  assert token == "minted-token"
+  assert session.calls[0]["url"] == (
+    "https://csumb.hosted.panopto.com/Panopto/oauth2/connect/token")
+  assert session.calls[0]["data"]["scope"] == "api"
+
+
+def test_resolve_panopto_access_token_uses_refresh_token_and_rotates_file(
+    monkeypatch, tmp_path):
+  refresh_path = tmp_path / "panopto_refresh_token.json"
+  refresh_path.write_text(json.dumps({"refresh_token": "refresh-123"}),
+                          encoding="utf-8")
+  monkeypatch.setenv("PANOPTO_CLIENT_ID", "client-id")
+  monkeypatch.setenv("PANOPTO_CLIENT_SECRET", "client-secret")
+
+  session = _RecordingSession({
+    "access_token": "rotated-access-token",
+    "refresh_token": "refresh-456",
+  })
+  token = resolve_panopto_access_token(
+    None,
+    None,
+    client_id_env="PANOPTO_CLIENT_ID",
+    client_secret_env="PANOPTO_CLIENT_SECRET",
+    refresh_token_path=str(refresh_path),
+    base_url="https://csumb.hosted.panopto.com",
+    timeout_seconds=15.0,
+    session=session,
+  )
+
+  assert token == "rotated-access-token"
+  assert session.calls[0]["data"]["grant_type"] == "refresh_token"
+  assert load_panopto_refresh_token(str(refresh_path)) == "refresh-456"

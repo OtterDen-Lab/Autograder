@@ -1,4 +1,7 @@
-from Autograder.assignment import ProgrammingAssignment, TextAssignment
+from types import SimpleNamespace
+
+from Autograder.assignment import (ExternalToolAssignment,
+                                   ProgrammingAssignment, TextAssignment)
 from lms_interface.classes import Student, Submission, TextSubmission
 
 
@@ -11,6 +14,16 @@ class DummyLmsAssignment:
   def get_submissions(self, **kwargs):
     self.calls.append(kwargs)
     return list(self._submissions)
+
+
+class DummyExternalLmsAssignment(DummyLmsAssignment):
+  def __init__(self, submissions, students):
+    super().__init__(submissions)
+    self._students = list(students)
+    self.name = "Video Watch Assignment"
+
+  def get_students(self, include_names=True):
+    return list(self._students)
 
 
 def _make_programming_submission(user_id, status):
@@ -57,3 +70,79 @@ def test_text_assignment_prepare_filters_to_single_student_and_submission_data()
     "submission_obj": assignment.submissions[0],
   }]
   assert lms_assignment.calls == [{"limit": None, "test": False}]
+
+
+def test_external_tool_assignment_prepare_builds_submissions_from_watch_data(
+    monkeypatch):
+  students = [
+    Student(name="Student 101",
+            user_id=101,
+            _inner=SimpleNamespace(email="student101@example.edu")),
+    Student(name="Student 202",
+            user_id=202,
+            _inner=SimpleNamespace(email="student202@example.edu")),
+  ]
+  existing = [
+    Submission(student=students[0], status=Submission.Status.GRADED),
+    Submission(student=students[1], status=Submission.Status.UNGRADED),
+  ]
+  lms_assignment = DummyExternalLmsAssignment(existing, students)
+
+  class FakeWatchRecord:
+    def __init__(self, user_key, percent_watched, viewed_seconds, duration_seconds):
+      self.user_key = user_key
+      self.percent_watched = percent_watched
+      self.viewed_seconds = viewed_seconds
+      self.duration_seconds = duration_seconds
+      self.raw = {"user": user_key}
+
+  class FakePanoptoClient:
+    def __init__(self, **kwargs):
+      pass
+
+    def fetch_watch_records(self, **kwargs):
+      return [
+        FakeWatchRecord("student202@example.edu", 62.5, 750.0, 1200.0),
+      ]
+
+  monkeypatch.setattr("Autograder.assignment.PanoptoWatchClient",
+                      FakePanoptoClient)
+
+  assignment = ExternalToolAssignment(lms_assignment=lms_assignment)
+  assignment.prepare(
+    panopto_url="https://videos.example.edu/Panopto/Pages/Viewer.aspx?id=session-123",
+    panopto_access_token="secret-token",
+  )
+
+  assert [submission.student.user_id for submission in assignment.submissions] == [202]
+  assert assignment.submissions[0].extra_info["percent_watched"] == 62.5
+  assert assignment.submissions[0].extra_info["watch_record_found"] is True
+
+
+def test_external_tool_assignment_prepare_uses_missing_score_when_no_watch_record(
+    monkeypatch):
+  student = Student(name="Student 101",
+                    user_id=101,
+                    _inner=SimpleNamespace(email="student101@example.edu"))
+  lms_assignment = DummyExternalLmsAssignment([], [student])
+
+  class FakePanoptoClient:
+    def __init__(self, **kwargs):
+      pass
+
+    def fetch_watch_records(self, **kwargs):
+      return []
+
+  monkeypatch.setattr("Autograder.assignment.PanoptoWatchClient",
+                      FakePanoptoClient)
+
+  assignment = ExternalToolAssignment(lms_assignment=lms_assignment)
+  assignment.prepare(
+    panopto_url="https://videos.example.edu/Panopto/Pages/Viewer.aspx?id=session-123",
+    panopto_access_token="secret-token",
+    missing_user_score=15.0,
+  )
+
+  assert len(assignment.submissions) == 1
+  assert assignment.submissions[0].extra_info["watch_record_found"] is False
+  assert assignment.submissions[0].extra_info["percent_watched"] == 15.0

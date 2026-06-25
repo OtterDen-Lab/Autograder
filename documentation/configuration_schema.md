@@ -17,7 +17,7 @@ This document describes the supported YAML schema consumed by `grade-assignments
 
 Each entry:
 
-- `kind` (required): currently `ProgrammingAssignment` or `TextAssignment`
+- `kind` (required): currently `ProgrammingAssignment`, `TextAssignment`, or `ExternalToolAssignment`
 - `grader` (required): must be compatible with `kind`
 - `settings` (optional mapping): grader-specific settings
 
@@ -76,6 +76,38 @@ Each entry:
   - `relevance` (`mapping`): `points` (`int >= 0`), `description` (`string|null`)
   - `explanation_quality` (`mapping`): `points` (`int >= 0`), `description` (`string|null`)
   - `word_threshold` (`int >= 1`)
+
+### panopto-watch-grader settings
+
+- `provider` (`string`, default `panopto`)
+- `panopto_url` (`string`, required)
+- `panopto_base_url` (`string|null`)
+- `panopto_session_id` (`string|null`): optional override when the session ID cannot be parsed from `panopto_url`
+- `panopto_access_token` (`string|null`)
+- `panopto_access_token_env` (`string|null`, default `PANOPTO_ACCESS_TOKEN`)
+- `panopto_client_id` (`string|null`)
+- `panopto_client_secret` (`string|null`)
+- `panopto_client_id_env` (`string|null`, default `PANOPTO_CLIENT_ID`)
+- `panopto_client_secret_env` (`string|null`, default `PANOPTO_CLIENT_SECRET`)
+- `panopto_refresh_token` (`string|null`)
+- `panopto_refresh_token_env` (`string|null`, default `PANOPTO_REFRESH_TOKEN`)
+- `panopto_refresh_token_path` (`string|null`, default `~/.autograder/panopto_refresh_token.json`): path used to load and rotate refresh tokens between runs
+- `panopto_token_url` (`string|null`): optional explicit OAuth token endpoint override
+- `panopto_scope` (`string`, default `api`): OAuth scope for token requests; Panopto examples commonly use `openid api`
+- `watch_data_path_template` (`string`, default `/Panopto/api/v1/sessions/{session_id}/viewers`)
+- `canvas_user_attribute` (`email|login_id|username|sis_user_id|name|sortable_name`, default `email`)
+- `external_user_attribute` (`email|login_id|username|sis_user_id|name|sortable_name`, default `email`)
+- `student_identifier_overrides` (`mapping[string|int,string]`, optional): explicit `canvas_user_id -> panopto user key`
+- `record_identifier_paths` (`list[string]`, optional): dotted JSON paths checked in each watch record for the user key
+- `record_percent_paths` (`list[string]`, optional): dotted JSON paths checked for a watched-percent field
+- `record_viewed_seconds_paths` (`list[string]`, optional): dotted JSON paths checked for viewed seconds
+- `record_duration_seconds_paths` (`list[string]`, optional): dotted JSON paths checked for total duration seconds
+- `missing_user_score` (`number`, default `0`)
+- `request_timeout_seconds` (`number`, default `30`)
+- `report_errors` (`bool`, default `true`)
+- `slack_webhook` (`string|null`)
+- `slack_token` (`string|null`)
+- `slack_channel` (`string|null`)
 
 ## courses
 

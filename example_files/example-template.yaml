@@ -5,6 +5,18 @@ assignment_types:
   programming:
     kind: ProgrammingAssignment
     grader: template-grader
+  # External-tool sourced grading example (Panopto watch progress)
+  # panopto_watch:
+  #   kind: ExternalToolAssignment
+  #   grader: panopto-watch-grader
+  #   settings:
+  #     panopto_url: "https://videos.example.edu/Panopto/Pages/Viewer.aspx?id=replace-with-session-id"
+  #     panopto_client_id_env: "PANOPTO_CLIENT_ID"
+  #     panopto_client_secret_env: "PANOPTO_CLIENT_SECRET"
+  #     panopto_refresh_token_env: "PANOPTO_REFRESH_TOKEN"
+  #     panopto_refresh_token_path: "~/.autograder/panopto_refresh_token.json"
+  #     canvas_user_attribute: "email"
+  #     external_user_attribute: "email"
 
 courses:
   - name: CST334

@@ -48,7 +48,14 @@ def run_prepare_stage(grader, grading_assignment, args, settings,
             assignment_obj = getattr(grading_assignment, "lms_assignment", None)
             assignment_name = getattr(assignment_obj, "name", "unknown")
             assignment_id = getattr(assignment_obj, "id", "unknown")
+            assignment_type_name = type(grading_assignment).__name__
             if is_lms_exception(e):
+                if assignment_type_name == "ExternalToolAssignment":
+                    raise autograder_exceptions.LMSError(
+                        f"Failed to fetch external-tool data for assignment "
+                        f"'{assignment_name}' (id={assignment_id}). "
+                        "Verify Panopto API credentials, token scopes, and network connectivity."
+                    ) from e
                 raise autograder_exceptions.LMSError(
                     f"Failed to fetch submissions from Canvas for assignment "
                     f"'{assignment_name}' (id={assignment_id}). "

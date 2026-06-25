@@ -9,6 +9,14 @@ DEFAULT_TEMPLATE_SOURCE_REPO = (
   "https://github.com/CSUMB-SCD-instructors/course-template")
 DEFAULT_CONTAINER_REPO_PATH = "/repo/programming-assignments"
 VALID_TIERS = {"small", "medium", "large"}
+VALID_EXTERNAL_USER_ATTRIBUTES = {
+  "email",
+  "login_id",
+  "username",
+  "sis_user_id",
+  "name",
+  "sortable_name",
+}
 
 
 def _config_error(message: str) -> ValueError:
@@ -64,6 +72,57 @@ def _require_str_list(value: Any, label: str) -> List[str]:
     if not isinstance(item, str):
       raise _config_error(f"{label}[{i}] must be a string")
   return value
+
+
+def _require_non_negative_float(value: Any,
+                                label: str,
+                                default: float = 0.0) -> float:
+  if value is None:
+    return default
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
+    raise _config_error(f"{label} must be a number")
+  if value < 0:
+    raise _config_error(f"{label} must be >= 0")
+  return float(value)
+
+
+def _require_float_in_range(value: Any,
+                            label: str,
+                            *,
+                            minimum: float,
+                            maximum: float,
+                            default: float) -> float:
+  normalized = _require_non_negative_float(value, label, default)
+  if normalized < minimum or normalized > maximum:
+    raise _config_error(f"{label} must be between {minimum} and {maximum}")
+  return normalized
+
+
+def _require_string_keyed_mapping(value: Any, label: str) -> Dict[str, str]:
+  raw = _require_mapping(value, label)
+  normalized: Dict[str, str] = {}
+  for key, item in raw.items():
+    if not isinstance(key, (str, int)):
+      raise _config_error(f"{label} keys must be strings or integers")
+    if not isinstance(item, str):
+      raise _config_error(f"{label}[{key!r}] must be a string")
+    normalized[str(key)] = item
+  return normalized
+
+
+def _require_choice(value: Any,
+                    label: str,
+                    *,
+                    allowed: set[str],
+                    default: str) -> str:
+  if value is None:
+    return default
+  if not isinstance(value, str):
+    raise _config_error(f"{label} must be one of: {', '.join(sorted(allowed))}")
+  normalized = value.strip()
+  if normalized not in allowed:
+    raise _config_error(f"{label} must be one of: {', '.join(sorted(allowed))}")
+  return normalized
 
 
 def _require_tier(value: Any, label: str) -> str:
@@ -625,4 +684,235 @@ class TextSubmissionGraderSettings:
       "slack_channel": self.slack_channel,
       "prompt_templates": dict(self.prompt_templates),
       "rubric": self.rubric.to_kwargs(),
+    }
+
+
+@dataclass
+class ExternalToolGraderSettings:
+  provider: str = "panopto"
+  panopto_url: str = ""
+  panopto_base_url: Optional[str] = None
+  panopto_session_id: Optional[str] = None
+  panopto_access_token: Optional[str] = None
+  panopto_access_token_env: Optional[str] = "PANOPTO_ACCESS_TOKEN"
+  panopto_client_id: Optional[str] = None
+  panopto_client_secret: Optional[str] = None
+  panopto_client_id_env: Optional[str] = "PANOPTO_CLIENT_ID"
+  panopto_client_secret_env: Optional[str] = "PANOPTO_CLIENT_SECRET"
+  panopto_refresh_token: Optional[str] = None
+  panopto_refresh_token_env: Optional[str] = "PANOPTO_REFRESH_TOKEN"
+  panopto_refresh_token_path: Optional[str] = "~/.autograder/panopto_refresh_token.json"
+  panopto_token_url: Optional[str] = None
+  panopto_scope: str = "api"
+  watch_data_path_template: str = "/Panopto/api/v1/sessions/{session_id}/viewers"
+  canvas_user_attribute: str = "email"
+  external_user_attribute: str = "email"
+  student_identifier_overrides: Dict[str, str] = field(default_factory=dict)
+  record_identifier_paths: List[str] = field(default_factory=list)
+  record_percent_paths: List[str] = field(default_factory=list)
+  record_viewed_seconds_paths: List[str] = field(default_factory=list)
+  record_duration_seconds_paths: List[str] = field(default_factory=list)
+  missing_user_score: float = 0.0
+  request_timeout_seconds: float = 30.0
+  report_errors: bool = True
+  slack_webhook: Optional[str] = None
+  slack_token: Optional[str] = None
+  slack_channel: Optional[str] = None
+
+  @classmethod
+  def from_raw(cls, value: Any, context_label: str) -> "ExternalToolGraderSettings":
+    raw = _require_mapping(value, context_label)
+
+    allowed = {
+      "provider",
+      "panopto_url",
+      "panopto_base_url",
+      "panopto_session_id",
+      "panopto_access_token",
+      "panopto_access_token_env",
+      "panopto_client_id",
+      "panopto_client_secret",
+      "panopto_client_id_env",
+      "panopto_client_secret_env",
+      "panopto_refresh_token",
+      "panopto_refresh_token_env",
+      "panopto_refresh_token_path",
+      "panopto_token_url",
+      "panopto_scope",
+      "watch_data_path_template",
+      "canvas_user_attribute",
+      "external_user_attribute",
+      "student_identifier_overrides",
+      "record_identifier_paths",
+      "record_percent_paths",
+      "record_viewed_seconds_paths",
+      "record_duration_seconds_paths",
+      "missing_user_score",
+      "request_timeout_seconds",
+      "report_errors",
+      "slack_webhook",
+      "slack_token",
+      "slack_channel",
+    }
+    unknown = sorted(k for k in raw.keys() if k not in allowed)
+    if unknown:
+      raise _config_error(
+        f"{context_label} contains unsupported external tool setting(s): "
+        f"{', '.join(unknown)}")
+
+    panopto_url = _require_optional_str(raw.get("panopto_url"),
+                                        f"{context_label}.panopto_url")
+    if panopto_url is None or not panopto_url.strip():
+      raise _config_error(f"{context_label}.panopto_url is required")
+
+    default_watch_data_path_template = "/Panopto/api/v1/sessions/{session_id}/viewers"
+    watch_data_path_template = _require_optional_str(
+      raw.get("watch_data_path_template", default_watch_data_path_template),
+      f"{context_label}.watch_data_path_template")
+    if watch_data_path_template is None or "{session_id}" not in watch_data_path_template:
+      raise _config_error(
+        f"{context_label}.watch_data_path_template must contain '{{session_id}}'")
+
+    return cls(
+      provider=_require_choice(raw.get("provider"),
+                               f"{context_label}.provider",
+                               allowed={"panopto"},
+                               default="panopto"),
+      panopto_url=panopto_url.strip(),
+      panopto_base_url=_require_optional_str(raw.get("panopto_base_url"),
+                                             f"{context_label}.panopto_base_url"),
+      panopto_session_id=_require_optional_str(raw.get("panopto_session_id"),
+                                               f"{context_label}.panopto_session_id"),
+      panopto_access_token=_require_optional_str(raw.get("panopto_access_token"),
+                                                 f"{context_label}.panopto_access_token"),
+      panopto_access_token_env=_require_optional_str(
+        raw.get("panopto_access_token_env", "PANOPTO_ACCESS_TOKEN"),
+        f"{context_label}.panopto_access_token_env"),
+      panopto_client_id=_require_optional_str(raw.get("panopto_client_id"),
+                                              f"{context_label}.panopto_client_id"),
+      panopto_client_secret=_require_optional_str(
+        raw.get("panopto_client_secret"),
+        f"{context_label}.panopto_client_secret"),
+      panopto_client_id_env=_require_optional_str(
+        raw.get("panopto_client_id_env", "PANOPTO_CLIENT_ID"),
+        f"{context_label}.panopto_client_id_env"),
+      panopto_client_secret_env=_require_optional_str(
+        raw.get("panopto_client_secret_env", "PANOPTO_CLIENT_SECRET"),
+        f"{context_label}.panopto_client_secret_env"),
+      panopto_refresh_token=_require_optional_str(
+        raw.get("panopto_refresh_token"),
+        f"{context_label}.panopto_refresh_token"),
+      panopto_refresh_token_env=_require_optional_str(
+        raw.get("panopto_refresh_token_env", "PANOPTO_REFRESH_TOKEN"),
+        f"{context_label}.panopto_refresh_token_env"),
+      panopto_refresh_token_path=_require_optional_str(
+        raw.get("panopto_refresh_token_path",
+                "~/.autograder/panopto_refresh_token.json"),
+        f"{context_label}.panopto_refresh_token_path"),
+      panopto_token_url=_require_optional_str(raw.get("panopto_token_url"),
+                                              f"{context_label}.panopto_token_url"),
+      panopto_scope=str(raw.get("panopto_scope", "api")).strip() or "api",
+      watch_data_path_template=watch_data_path_template,
+      canvas_user_attribute=_require_choice(
+        raw.get("canvas_user_attribute"),
+        f"{context_label}.canvas_user_attribute",
+        allowed=VALID_EXTERNAL_USER_ATTRIBUTES,
+        default="email"),
+      external_user_attribute=_require_choice(
+        raw.get("external_user_attribute"),
+        f"{context_label}.external_user_attribute",
+        allowed=VALID_EXTERNAL_USER_ATTRIBUTES,
+        default="email"),
+      student_identifier_overrides=_require_string_keyed_mapping(
+        raw.get("student_identifier_overrides", {}),
+        f"{context_label}.student_identifier_overrides"),
+      record_identifier_paths=_require_str_list(
+        raw.get("record_identifier_paths", [
+          "User.Email",
+          "UserEmail",
+          "Email",
+          "email",
+          "User.Login",
+          "UserLogin",
+          "Viewer.Email",
+          "ViewerEmail",
+          "Viewer.Login",
+        ]),
+        f"{context_label}.record_identifier_paths"),
+      record_percent_paths=_require_str_list(
+        raw.get("record_percent_paths", [
+          "PercentComplete",
+          "PercentCompleted",
+          "PercentWatched",
+          "percentComplete",
+          "percentWatched",
+        ]),
+        f"{context_label}.record_percent_paths"),
+      record_viewed_seconds_paths=_require_str_list(
+        raw.get("record_viewed_seconds_paths", [
+          "SecondsViewed",
+          "ViewerSeconds",
+          "TimeViewedSeconds",
+          "secondsViewed",
+        ]),
+        f"{context_label}.record_viewed_seconds_paths"),
+      record_duration_seconds_paths=_require_str_list(
+        raw.get("record_duration_seconds_paths", [
+          "DurationSeconds",
+          "SessionDurationSeconds",
+          "TotalSeconds",
+          "durationSeconds",
+        ]),
+        f"{context_label}.record_duration_seconds_paths"),
+      missing_user_score=_require_float_in_range(
+        raw.get("missing_user_score"),
+        f"{context_label}.missing_user_score",
+        minimum=0.0,
+        maximum=100.0,
+        default=0.0),
+      request_timeout_seconds=_require_non_negative_float(
+        raw.get("request_timeout_seconds"),
+        f"{context_label}.request_timeout_seconds",
+        30.0),
+      report_errors=_require_bool(raw.get("report_errors", True),
+                                  f"{context_label}.report_errors"),
+      slack_webhook=_require_optional_str(raw.get("slack_webhook"),
+                                          f"{context_label}.slack_webhook"),
+      slack_token=_require_optional_str(raw.get("slack_token"),
+                                        f"{context_label}.slack_token"),
+      slack_channel=_require_optional_str(raw.get("slack_channel"),
+                                          f"{context_label}.slack_channel"),
+    )
+
+  def to_kwargs(self) -> Dict[str, Any]:
+    return {
+      "provider": self.provider,
+      "panopto_url": self.panopto_url,
+      "panopto_base_url": self.panopto_base_url,
+      "panopto_session_id": self.panopto_session_id,
+      "panopto_access_token": self.panopto_access_token,
+      "panopto_access_token_env": self.panopto_access_token_env,
+      "panopto_client_id": self.panopto_client_id,
+      "panopto_client_secret": self.panopto_client_secret,
+      "panopto_client_id_env": self.panopto_client_id_env,
+      "panopto_client_secret_env": self.panopto_client_secret_env,
+      "panopto_refresh_token": self.panopto_refresh_token,
+      "panopto_refresh_token_env": self.panopto_refresh_token_env,
+      "panopto_refresh_token_path": self.panopto_refresh_token_path,
+      "panopto_token_url": self.panopto_token_url,
+      "panopto_scope": self.panopto_scope,
+      "watch_data_path_template": self.watch_data_path_template,
+      "canvas_user_attribute": self.canvas_user_attribute,
+      "external_user_attribute": self.external_user_attribute,
+      "student_identifier_overrides": dict(self.student_identifier_overrides),
+      "record_identifier_paths": list(self.record_identifier_paths),
+      "record_percent_paths": list(self.record_percent_paths),
+      "record_viewed_seconds_paths": list(self.record_viewed_seconds_paths),
+      "record_duration_seconds_paths": list(self.record_duration_seconds_paths),
+      "missing_user_score": self.missing_user_score,
+      "request_timeout_seconds": self.request_timeout_seconds,
+      "report_errors": self.report_errors,
+      "slack_webhook": self.slack_webhook,
+      "slack_token": self.slack_token,
+      "slack_channel": self.slack_channel,
     }
