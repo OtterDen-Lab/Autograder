@@ -146,6 +146,22 @@ class TestScoreScaling:
         # 80% on 50-point assignment = 40 points
         assert lms_assignment.pushed_scores[1] == 40.0
 
+    def test_finalize_can_disable_late_penalty(self, tmp_path):
+        """Finalize should zero out late seconds when requested."""
+        lms_assignment = DummyLmsAssignment(points_possible=50)
+        assignment = DummyAssignment(lms_assignment=lms_assignment)
+        assignment.submissions = [_make_submission(1, score=80.0)]
+
+        assignment.finalize(
+            push=True,
+            allow_late_penalty=False,
+            idempotency_key="test",
+            idempotency_state_dir=str(tmp_path),
+        )
+
+        assert lms_assignment.pushed_scores[1] == 40.0
+        assert lms_assignment.push_call_kwargs[0]["seconds_late"] == 0
+
 
 class TestRecordRetention:
     """Tests for record retention file creation."""

@@ -110,6 +110,7 @@ Each entry:
 - `slack_webhook` (`string|null`)
 - `slack_token` (`string|null`)
 - `slack_channel` (`string|null`)
+- `allow_late_penalty` (`bool`, default `true`): when `false`, pushes use `seconds_late=0`
 
 Only students with a matching Panopto viewer record are turned into prepared
 submissions. Students with no match are left ungraded.

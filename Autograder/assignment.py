@@ -108,6 +108,7 @@ class Assignment(abc.ABC):
     """
 
     push_enabled = bool(kwargs.get("push", False))
+    allow_late_penalty = bool(kwargs.get("allow_late_penalty", True))
     idempotency_key = kwargs.get("idempotency_key")
     idempotency_state_dir = kwargs.get("idempotency_state_dir")
     processed_user_ids = None
@@ -180,6 +181,8 @@ class Assignment(abc.ABC):
             "keep_previous_best": True,
             "clobber_feedback": False,
           }
+          if not allow_late_penalty:
+            push_kwargs["seconds_late"] = 0
           if rubric_assessment is not None:
             push_kwargs["rubric_assessment"] = rubric_assessment
           pushed = self.lms_assignment.push_feedback(

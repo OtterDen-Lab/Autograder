@@ -133,6 +133,7 @@ def run_publish_stage(grader, grading_assignment, args, push_grades: bool,
 
     finalize_kwargs = {
         "push": push_grades,
+        "allow_late_penalty": settings.get("allow_late_penalty", True),
         "idempotency_key": assignment_data.idempotency_key,
         "idempotency_state_dir": assignment_data.idempotency_state_dir,
     }

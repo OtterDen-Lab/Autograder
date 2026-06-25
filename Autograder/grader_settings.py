@@ -247,6 +247,7 @@ class TemplateGraderSettings:
   slack_webhook: Optional[str] = None
   slack_token: Optional[str] = None
   slack_channel: Optional[str] = None
+  allow_late_penalty: bool = True
   grading_script: Optional[str] = None
   grading_args: List[str] = field(default_factory=list)
   grading_workdir: Optional[str] = None
@@ -610,6 +611,7 @@ class TextSubmissionGraderSettings:
       "slack_webhook",
       "slack_token",
       "slack_channel",
+      "allow_late_penalty",
       "prompts",
       "rubric",
     }
@@ -725,6 +727,7 @@ class ExternalToolGraderSettings:
   slack_webhook: Optional[str] = None
   slack_token: Optional[str] = None
   slack_channel: Optional[str] = None
+  allow_late_penalty: bool = True
 
   @classmethod
   def from_raw(cls, value: Any, context_label: str) -> "ExternalToolGraderSettings":
@@ -762,6 +765,7 @@ class ExternalToolGraderSettings:
       "slack_webhook",
       "slack_token",
       "slack_channel",
+      "allow_late_penalty",
     }
     unknown = sorted(k for k in raw.keys() if k not in allowed)
     if unknown:
@@ -906,6 +910,9 @@ class ExternalToolGraderSettings:
                                         f"{context_label}.slack_token"),
       slack_channel=_require_optional_str(raw.get("slack_channel"),
                                           f"{context_label}.slack_channel"),
+      allow_late_penalty=_require_bool(
+        raw.get("allow_late_penalty", True),
+        f"{context_label}.allow_late_penalty"),
     )
 
   def to_kwargs(self) -> Dict[str, Any]:
@@ -941,4 +948,5 @@ class ExternalToolGraderSettings:
       "slack_webhook": self.slack_webhook,
       "slack_token": self.slack_token,
       "slack_channel": self.slack_channel,
+      "allow_late_penalty": self.allow_late_penalty,
     }

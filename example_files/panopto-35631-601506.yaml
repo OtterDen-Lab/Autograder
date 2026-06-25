@@ -16,6 +16,7 @@ assignment_types:
         - "PercentCompleted"
       record_viewed_seconds_paths:
         - "MostRecentViewPositionInSeconds"
+      allow_late_penalty: false
 
 courses:
   - name: "Course 35631"
