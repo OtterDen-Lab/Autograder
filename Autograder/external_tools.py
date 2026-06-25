@@ -146,7 +146,8 @@ class PanoptoWatchClient:
 
     records: list[ExternalWatchRecord] = []
     for page_num in range(10):
-      time.sleep(0.25)
+      if page_num != 0: time.sleep(0.25)
+
       response = self.session.get(
         url,
         headers={
@@ -163,6 +164,8 @@ class PanoptoWatchClient:
       response.raise_for_status()
       payload = response.json()
       raw_records = self._extract_record_list(payload)
+
+      if len(raw_records) == 0: break
 
       for raw in raw_records:
         if not isinstance(raw, dict):
