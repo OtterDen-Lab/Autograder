@@ -10,7 +10,7 @@ assignment_types:
   #   kind: ExternalToolAssignment
   #   grader: panopto-watch-grader
   #   settings:
-  #     panopto_url: "https://videos.example.edu/Panopto/Pages/Viewer.aspx?id=replace-with-session-id"
+  #     panopto_base: "https://videos.example.edu/Panopto/"
   #     panopto_client_id_env: "PANOPTO_CLIENT_ID"
   #     panopto_client_secret_env: "PANOPTO_CLIENT_SECRET"
   #     panopto_refresh_token_env: "PANOPTO_REFRESH_TOKEN"
@@ -96,3 +96,10 @@ courses:
             id: 527876
           - repo_path: PA2
             id: 529948
+  # - name: Example Panopto Course
+  #   id: 12345
+  #   assignment_groups:
+  #     - type: panopto_watch
+  #       assignments:
+  #         - id: 67890
+  #           panopto_id: "replace-with-session-id"

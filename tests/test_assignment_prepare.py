@@ -94,7 +94,7 @@ def test_external_tool_assignment_prepare_builds_submissions_from_watch_data(
       self.percent_watched = percent_watched
       self.viewed_seconds = viewed_seconds
       self.duration_seconds = duration_seconds
-      self.raw = {"user": user_key}
+      self.raw = {"User": {"Username": user_key}}
 
   class FakePanoptoClient:
     def __init__(self, **kwargs):
@@ -102,7 +102,8 @@ def test_external_tool_assignment_prepare_builds_submissions_from_watch_data(
 
     def fetch_watch_records(self, **kwargs):
       return [
-        FakeWatchRecord("student202@example.edu", 62.5, 750.0, 1200.0),
+        FakeWatchRecord("unified\\student202@example.edu", 62.5, 750.0,
+                        1200.0),
       ]
 
   monkeypatch.setattr("Autograder.assignment.PanoptoWatchClient",
@@ -112,6 +113,7 @@ def test_external_tool_assignment_prepare_builds_submissions_from_watch_data(
   assignment.prepare(
     panopto_url="https://videos.example.edu/Panopto/Pages/Viewer.aspx?id=session-123",
     panopto_access_token="secret-token",
+    record_identifier_paths=["User.Username"],
   )
 
   assert [submission.student.user_id for submission in assignment.submissions] == [202]
@@ -119,7 +121,7 @@ def test_external_tool_assignment_prepare_builds_submissions_from_watch_data(
   assert assignment.submissions[0].extra_info["watch_record_found"] is True
 
 
-def test_external_tool_assignment_prepare_uses_missing_score_when_no_watch_record(
+def test_external_tool_assignment_prepare_skips_students_without_watch_records(
     monkeypatch):
   student = Student(name="Student 101",
                     user_id=101,
@@ -140,9 +142,8 @@ def test_external_tool_assignment_prepare_uses_missing_score_when_no_watch_recor
   assignment.prepare(
     panopto_url="https://videos.example.edu/Panopto/Pages/Viewer.aspx?id=session-123",
     panopto_access_token="secret-token",
+    record_identifier_paths=["User.Username"],
     missing_user_score=15.0,
   )
 
-  assert len(assignment.submissions) == 1
-  assert assignment.submissions[0].extra_info["watch_record_found"] is False
-  assert assignment.submissions[0].extra_info["percent_watched"] == 15.0
+  assert assignment.submissions == []

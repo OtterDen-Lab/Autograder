@@ -67,6 +67,30 @@ courses:
             repo_path: "PA1"
 ```
 
+For Panopto watch grading, put the shared Panopto base URL in the assignment
+type settings and the per-video session id on each assignment:
+
+```yaml
+assignment_types:
+  panopto_watch:
+    kind: ExternalToolAssignment
+    grader: panopto-watch-grader
+    settings:
+      panopto_base: "https://csumb.hosted.panopto.com/Panopto/"
+      panopto_refresh_token_path: "~/.autograder/panopto_refresh_token.json"
+      canvas_user_attribute: "sis_user_id"
+      external_user_attribute: "username"
+
+courses:
+  - name: "Course 35631"
+    id: 35631
+    assignment_groups:
+      - type: panopto_watch
+        assignments:
+          - id: 601506
+            panopto_id: "4992fd5c-fb07-4ddd-8fb2-b30400158378"
+```
+
 ### 3. Run the grader
 
 ```bash

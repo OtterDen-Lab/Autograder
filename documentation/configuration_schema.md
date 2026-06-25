@@ -80,9 +80,11 @@ Each entry:
 ### panopto-watch-grader settings
 
 - `provider` (`string`, default `panopto`)
-- `panopto_url` (`string`, required)
-- `panopto_base_url` (`string|null`)
-- `panopto_session_id` (`string|null`): optional override when the session ID cannot be parsed from `panopto_url`
+- `panopto_base` (`string`, required unless `panopto_url` is provided for backwards compatibility)
+- `panopto_url` (`string|null`): legacy compatibility field; the session ID may be parsed from here when present
+- `panopto_base_url` (`string|null`): legacy compatibility alias for `panopto_base`
+- `panopto_session_id` (`string|null`): legacy compatibility override when the session ID cannot be parsed from `panopto_url`
+- `panopto_id` (`string|null`): assignment-level Panopto session/video id to grade
 - `panopto_access_token` (`string|null`)
 - `panopto_access_token_env` (`string|null`, default `PANOPTO_ACCESS_TOKEN`)
 - `panopto_client_id` (`string|null`)
@@ -108,6 +110,9 @@ Each entry:
 - `slack_webhook` (`string|null`)
 - `slack_token` (`string|null`)
 - `slack_channel` (`string|null`)
+
+Only students with a matching Panopto viewer record are turned into prepared
+submissions. Students with no match are left ungraded.
 
 ## courses
 

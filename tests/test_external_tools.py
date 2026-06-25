@@ -3,6 +3,7 @@ import json
 from Autograder.external_tools import (
   build_panopto_authorization_url,
   load_panopto_refresh_token,
+  normalize_panopto_identifier,
   request_panopto_authorization_code_token,
   request_panopto_access_token,
   request_panopto_refresh_token,
@@ -13,6 +14,7 @@ from Autograder.external_tools import (
 class _MockResponse:
   def __init__(self, payload):
     self.payload = payload
+    self.status_code = 200
 
   def raise_for_status(self):
     return None
@@ -39,6 +41,20 @@ class _RecordingSession:
     })
     payload = self.payloads.pop(0)
     return _MockResponse(payload)
+
+
+class _RecordingGetSession(_RecordingSession):
+  def get(self, url, headers=None, timeout=None, params=None):
+    self.calls.append({
+      "url": url,
+      "headers": headers,
+      "timeout": timeout,
+      "params": params,
+    })
+    payload = self.payloads.pop(0)
+    response = _MockResponse(payload["payload"])
+    response.status_code = payload.get("status_code", 200)
+    return response
 
 
 def test_request_panopto_access_token_uses_client_credentials_grant():
@@ -160,6 +176,11 @@ def test_extract_student_identifier_supports_username():
   assert extract_student_identifier(_Student(), "username") == "unified\\0abc123"
 
 
+def test_normalize_panopto_identifier_strips_unified_prefix():
+  assert normalize_panopto_identifier("unified\\0abc123") == "0abc123"
+  assert normalize_panopto_identifier(" unified/0abc123 ") == "0abc123"
+
+
 def test_resolve_panopto_access_token_uses_client_credentials_env(monkeypatch):
   monkeypatch.setenv("PANOPTO_CLIENT_ID", "client-id")
   monkeypatch.setenv("PANOPTO_CLIENT_SECRET", "client-secret")
@@ -207,3 +228,75 @@ def test_resolve_panopto_access_token_uses_refresh_token_and_rotates_file(
   assert token == "rotated-access-token"
   assert session.calls[0]["data"]["grant_type"] == "refresh_token"
   assert load_panopto_refresh_token(str(refresh_path)) == "refresh-456"
+
+
+def test_resolve_panopto_access_token_caches_refresh_results(
+    monkeypatch, tmp_path):
+  from Autograder import external_tools
+
+  external_tools._PANOPTO_TOKEN_CACHE.clear()
+  refresh_path = tmp_path / "panopto_refresh_token.json"
+  refresh_path.write_text(json.dumps({"refresh_token": "refresh-123"}),
+                          encoding="utf-8")
+  monkeypatch.setenv("PANOPTO_CLIENT_ID", "client-id")
+  monkeypatch.setenv("PANOPTO_CLIENT_SECRET", "client-secret")
+
+  calls = []
+
+  def fake_request_panopto_refresh_token(**kwargs):
+    calls.append(kwargs["refresh_token"])
+    return external_tools.PanoptoTokenBundle(
+      access_token="cached-access-token",
+      refresh_token="refresh-456",
+    )
+
+  monkeypatch.setattr(external_tools, "request_panopto_refresh_token",
+                      fake_request_panopto_refresh_token)
+
+  token1 = resolve_panopto_access_token(
+    None,
+    None,
+    client_id_env="PANOPTO_CLIENT_ID",
+    client_secret_env="PANOPTO_CLIENT_SECRET",
+    refresh_token_path=str(refresh_path),
+    base_url="https://csumb.hosted.panopto.com",
+    timeout_seconds=15.0,
+  )
+  token2 = resolve_panopto_access_token(
+    None,
+    None,
+    client_id_env="PANOPTO_CLIENT_ID",
+    client_secret_env="PANOPTO_CLIENT_SECRET",
+    refresh_token_path=str(refresh_path),
+    base_url="https://csumb.hosted.panopto.com",
+    timeout_seconds=15.0,
+  )
+
+  assert token1 == "cached-access-token"
+  assert token2 == "cached-access-token"
+  assert calls == ["refresh-123"]
+
+
+def test_fetch_watch_records_treats_404_as_empty_list():
+  from Autograder.external_tools import PanoptoWatchClient
+
+  session = _RecordingGetSession([{
+    "status_code": 404,
+    "payload": {"Error": {"Message": "not found"}},
+  }])
+  client = PanoptoWatchClient(
+    base_url="https://csumb.hosted.panopto.com",
+    access_token="token",
+    session=session,
+  )
+
+  records = client.fetch_watch_records(
+    session_id="missing-session",
+    path_template="/Panopto/api/v1/sessions/{session_id}/viewers",
+    record_identifier_paths=["User.Username"],
+    record_percent_paths=["PercentCompleted"],
+    record_viewed_seconds_paths=["MostRecentViewPositionInSeconds"],
+    record_duration_seconds_paths=[],
+  )
+
+  assert records == []

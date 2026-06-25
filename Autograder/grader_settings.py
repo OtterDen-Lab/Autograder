@@ -4,6 +4,11 @@ from dataclasses import dataclass, field
 import posixpath
 from typing import Any, Dict, List, Optional
 
+from Autograder.external_tools import (
+  extract_panopto_base_url,
+  extract_panopto_session_id,
+)
+
 DEFAULT_TEMPLATE_BASE_IMAGE = "python:3.11-slim"
 DEFAULT_TEMPLATE_SOURCE_REPO = (
   "https://github.com/CSUMB-SCD-instructors/course-template")
@@ -690,9 +695,11 @@ class TextSubmissionGraderSettings:
 @dataclass
 class ExternalToolGraderSettings:
   provider: str = "panopto"
-  panopto_url: str = ""
+  panopto_url: Optional[str] = None
+  panopto_base: Optional[str] = None
   panopto_base_url: Optional[str] = None
   panopto_session_id: Optional[str] = None
+  panopto_id: Optional[str] = None
   panopto_access_token: Optional[str] = None
   panopto_access_token_env: Optional[str] = "PANOPTO_ACCESS_TOKEN"
   panopto_client_id: Optional[str] = None
@@ -726,8 +733,10 @@ class ExternalToolGraderSettings:
     allowed = {
       "provider",
       "panopto_url",
+      "panopto_base",
       "panopto_base_url",
       "panopto_session_id",
+      "panopto_id",
       "panopto_access_token",
       "panopto_access_token_env",
       "panopto_client_id",
@@ -762,8 +771,22 @@ class ExternalToolGraderSettings:
 
     panopto_url = _require_optional_str(raw.get("panopto_url"),
                                         f"{context_label}.panopto_url")
-    if panopto_url is None or not panopto_url.strip():
-      raise _config_error(f"{context_label}.panopto_url is required")
+    panopto_base = _require_optional_str(
+      raw.get("panopto_base", raw.get("panopto_base_url")),
+      f"{context_label}.panopto_base")
+    if panopto_base is None and panopto_url is not None:
+      panopto_base = extract_panopto_base_url(panopto_url)
+    if panopto_base is None or not panopto_base.strip():
+      raise _config_error(
+        f"{context_label}.panopto_base is required (or provide panopto_url)")
+
+    panopto_id = _require_optional_str(raw.get("panopto_id"),
+                                       f"{context_label}.panopto_id")
+    panopto_session_id = _require_optional_str(
+      raw.get("panopto_session_id"),
+      f"{context_label}.panopto_session_id")
+    if panopto_id is None and panopto_session_id is None and panopto_url:
+      panopto_session_id = extract_panopto_session_id(panopto_url)
 
     default_watch_data_path_template = "/Panopto/api/v1/sessions/{session_id}/viewers"
     watch_data_path_template = _require_optional_str(
@@ -778,11 +801,12 @@ class ExternalToolGraderSettings:
                                f"{context_label}.provider",
                                allowed={"panopto"},
                                default="panopto"),
-      panopto_url=panopto_url.strip(),
+      panopto_url=panopto_url.strip() if panopto_url is not None else None,
+      panopto_base=panopto_base.strip() if panopto_base is not None else None,
       panopto_base_url=_require_optional_str(raw.get("panopto_base_url"),
                                              f"{context_label}.panopto_base_url"),
-      panopto_session_id=_require_optional_str(raw.get("panopto_session_id"),
-                                               f"{context_label}.panopto_session_id"),
+      panopto_session_id=panopto_session_id,
+      panopto_id=panopto_id,
       panopto_access_token=_require_optional_str(raw.get("panopto_access_token"),
                                                  f"{context_label}.panopto_access_token"),
       panopto_access_token_env=_require_optional_str(
@@ -888,8 +912,10 @@ class ExternalToolGraderSettings:
     return {
       "provider": self.provider,
       "panopto_url": self.panopto_url,
+      "panopto_base": self.panopto_base,
       "panopto_base_url": self.panopto_base_url,
       "panopto_session_id": self.panopto_session_id,
+      "panopto_id": self.panopto_id,
       "panopto_access_token": self.panopto_access_token,
       "panopto_access_token_env": self.panopto_access_token_env,
       "panopto_client_id": self.panopto_client_id,

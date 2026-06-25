@@ -4,12 +4,15 @@ from dataclasses import dataclass
 import json
 import logging
 import os
+import threading
 from typing import Any, Optional
 from urllib.parse import urlencode, urlparse, parse_qs
 import time
 import requests
 
 log = logging.getLogger(__name__)
+_PANOPTO_TOKEN_CACHE_LOCK = threading.Lock()
+_PANOPTO_TOKEN_CACHE: dict[tuple[str, ...], PanoptoTokenBundle] = {}
 
 
 @dataclass
@@ -58,6 +61,18 @@ def _normalize_percent(value: Optional[float]) -> Optional[float]:
   if 0.0 <= value <= 1.0:
     return value * 100.0
   return max(0.0, min(100.0, value))
+
+
+def normalize_panopto_identifier(value: Any) -> Optional[str]:
+  if value in (None, ""):
+    return None
+
+  text = str(value).strip().lower()
+  for prefix in ("unified\\", "unified/"):
+    if text.startswith(prefix):
+      text = text[len(prefix):]
+      break
+  return text or None
 
 
 def extract_panopto_base_url(panopto_url: str) -> str:
@@ -145,7 +160,7 @@ class PanoptoWatchClient:
     log.debug(f"Url being used: {url}")
 
     records: list[ExternalWatchRecord] = []
-    for page_num in range(10):
+    for page_num in range(100):
       if page_num != 0: time.sleep(0.25)
 
       response = self.session.get(
@@ -161,6 +176,12 @@ class PanoptoWatchClient:
           "pageNumber" : page_num,
         }
       )
+      if response.status_code == 404:
+        log.warning(
+          "Panopto viewer endpoint returned 404 for session %s; treating it as no watch records.",
+          session_id,
+        )
+        break
       response.raise_for_status()
       payload = response.json()
       raw_records = self._extract_record_list(payload)
@@ -185,9 +206,13 @@ class PanoptoWatchClient:
         if percent_watched is None and viewed_seconds is not None and duration_seconds:
           percent_watched = _normalize_percent(viewed_seconds / duration_seconds)
 
+        normalized_user_key = normalize_panopto_identifier(user_key)
+        if normalized_user_key is None:
+          continue
+
         records.append(
           ExternalWatchRecord(
-            user_key=str(user_key).strip().lower().replace("unified\\", ""),
+            user_key=normalized_user_key,
             percent_watched=percent_watched,
             viewed_seconds=viewed_seconds,
             duration_seconds=duration_seconds,
@@ -251,32 +276,55 @@ def resolve_panopto_access_token(explicit_token: Optional[str],
         )
       # Inference based on Panopto OAuth deployments; keep configurable.
       resolved_token_url = f"{base_url.rstrip('/')}/Panopto/oauth2/connect/token"
-    refresh_token = (explicit_refresh_token or _get_optional_env(refresh_token_env)
-                     or load_panopto_refresh_token(refresh_token_path))
-    if refresh_token:
-      token_bundle = request_panopto_refresh_token(
+    if explicit_refresh_token:
+      refresh_token_source = f"explicit:{explicit_refresh_token}"
+    elif refresh_token_env:
+      refresh_token_source = f"env:{refresh_token_env}"
+    elif refresh_token_path:
+      refresh_token_source = f"path:{os.path.abspath(os.path.expanduser(refresh_token_path))}"
+    else:
+      refresh_token_source = "none"
+
+    cache_key = (
+      client_id,
+      client_secret,
+      resolved_token_url,
+      scope,
+      refresh_token_source,
+    )
+    with _PANOPTO_TOKEN_CACHE_LOCK:
+      cached_bundle = _PANOPTO_TOKEN_CACHE.get(cache_key)
+      if cached_bundle and cached_bundle.access_token:
+        return cached_bundle.access_token
+
+      refresh_token = (explicit_refresh_token or _get_optional_env(refresh_token_env)
+                       or load_panopto_refresh_token(refresh_token_path))
+      if refresh_token:
+        token_bundle = request_panopto_refresh_token(
+          client_id=client_id,
+          client_secret=client_secret,
+          refresh_token=refresh_token,
+          token_url=resolved_token_url,
+          scope=scope,
+          timeout_seconds=timeout_seconds,
+          session=session,
+        )
+        persistable_refresh_token = token_bundle.refresh_token or refresh_token
+        if refresh_token_path and persistable_refresh_token:
+          save_panopto_refresh_token(refresh_token_path, persistable_refresh_token)
+        _PANOPTO_TOKEN_CACHE[cache_key] = token_bundle
+        return token_bundle.access_token
+
+      token_bundle = request_panopto_access_token(
         client_id=client_id,
         client_secret=client_secret,
-        refresh_token=refresh_token,
         token_url=resolved_token_url,
         scope=scope,
         timeout_seconds=timeout_seconds,
         session=session,
       )
-      persistable_refresh_token = token_bundle.refresh_token or refresh_token
-      if refresh_token_path and persistable_refresh_token:
-        save_panopto_refresh_token(refresh_token_path, persistable_refresh_token)
+      _PANOPTO_TOKEN_CACHE[cache_key] = token_bundle
       return token_bundle.access_token
-
-    token_bundle = request_panopto_access_token(
-      client_id=client_id,
-      client_secret=client_secret,
-      token_url=resolved_token_url,
-      scope=scope,
-      timeout_seconds=timeout_seconds,
-      session=session,
-    )
-    return token_bundle.access_token
   raise ValueError(
     "Panopto credentials are required. Set panopto_access_token, populate "
     "panopto_access_token_env, provide a Panopto refresh token, or provide "

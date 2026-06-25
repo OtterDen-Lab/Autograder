@@ -14,6 +14,7 @@ from Autograder.external_tools import (
   extract_panopto_base_url,
   extract_panopto_session_id,
   extract_student_identifier,
+  normalize_panopto_identifier,
   resolve_panopto_access_token,
 )
 from Autograder.registry import AssignmentRegistry
@@ -656,8 +657,10 @@ class ExternalToolAssignment(Assignment):
               student_id=None,
               provider="panopto",
               panopto_url=None,
+              panopto_base=None,
               panopto_base_url=None,
               panopto_session_id=None,
+              panopto_id=None,
               panopto_access_token=None,
               panopto_access_token_env="PANOPTO_ACCESS_TOKEN",
               panopto_client_id=None,
@@ -682,15 +685,22 @@ class ExternalToolAssignment(Assignment):
               **kwargs):
     if provider != "panopto":
       raise ValueError(f"Unsupported external tool provider: {provider}")
-    if not panopto_url:
-      raise ValueError("panopto_url is required for ExternalToolAssignment")
 
-    base_url = panopto_base_url or extract_panopto_base_url(panopto_url)
-    session_id = panopto_session_id or extract_panopto_session_id(panopto_url)
+    base_url = panopto_base or panopto_base_url
+    if base_url is None and panopto_url:
+      base_url = extract_panopto_base_url(panopto_url)
+    if not base_url:
+      raise ValueError(
+        "panopto_base is required for ExternalToolAssignment "
+        "(or provide panopto_url for backwards compatibility)")
+
+    session_id = panopto_id or panopto_session_id
+    if session_id is None and panopto_url:
+      session_id = extract_panopto_session_id(panopto_url)
     if not session_id:
       raise ValueError(
-        "Unable to determine Panopto session ID from panopto_url. "
-        "Set panopto_session_id explicitly.")
+        "Unable to determine Panopto session ID. Set panopto_id explicitly "
+        "or provide panopto_url for backwards compatibility.")
     token = resolve_panopto_access_token(
       panopto_access_token,
       panopto_access_token_env,
@@ -718,7 +728,12 @@ class ExternalToolAssignment(Assignment):
       record_viewed_seconds_paths=list(record_viewed_seconds_paths or []),
       record_duration_seconds_paths=list(record_duration_seconds_paths or []),
     )
-    watch_by_key = {record.user_key: record for record in watch_records}
+    watch_by_key = {}
+    for record in watch_records:
+      normalized_key = normalize_panopto_identifier(record.user_key)
+      if normalized_key is None:
+        continue
+      watch_by_key[normalized_key] = record
 
     log.debug(
       f"Panopto returned {len(watch_records)} raw watch record(s) for session {session_id}")
@@ -730,7 +745,7 @@ class ExternalToolAssignment(Assignment):
         record.percent_watched,
         record.viewed_seconds,
         record.duration_seconds,
-        record.raw["LastViewedDateTime"],
+        (record.raw or {}).get("LastViewedDateTime"),
         {} #json.dumps(record.raw, indent=2, sort_keys=True, default=str),
       )
 
@@ -746,6 +761,8 @@ class ExternalToolAssignment(Assignment):
     student_statuses = self._load_submission_statuses()
 
     prepared_submissions: list[Submission] = []
+    skipped_no_watch_record = 0
+    matched_students = 0
     for student in students:
       raw_user_id = getattr(student, "user_id", None)
       if raw_user_id is None:
@@ -772,6 +789,10 @@ class ExternalToolAssignment(Assignment):
         bool(record),
       )
 
+      if record is None:
+        skipped_no_watch_record += 1
+        continue
+
       submission = Submission(
         student=student,
         status=student_statuses.get(user_id, Submission.Status.MISSING))
@@ -783,36 +804,32 @@ class ExternalToolAssignment(Assignment):
         "external_identifier": external_key,
         "external_user_attribute": external_user_attribute,
         "missing_user_score": float(missing_user_score),
-        "percent_watched": (
-          record.percent_watched if record is not None else float(missing_user_score)),
-        "viewed_seconds": record.viewed_seconds if record is not None else None,
-        "duration_seconds": record.duration_seconds if record is not None else None,
-        "watch_record_found": record is not None,
-        "watch_record_raw": record.raw if record is not None else None,
+        "percent_watched": record.percent_watched,
+        "viewed_seconds": record.viewed_seconds,
+        "duration_seconds": record.duration_seconds,
+        "watch_record_found": True,
+        "watch_record_raw": record.raw,
       })
       prepared_submissions.append(submission)
+      matched_students += 1
 
     if limit is not None:
       prepared_submissions = prepared_submissions[:limit]
 
     self.submissions = prepared_submissions
-    matched_count = sum(1 for submission in self.submissions
-                        if submission.extra_info.get("watch_record_found"))
-    zero_score_count = sum(
-      1 for submission in self.submissions
-      if float(submission.extra_info.get("percent_watched", 0.0) or 0.0) <= 0.0)
     log.info(
       f"Prepared {len(self.submissions)} external-tool submission(s) from Panopto "
       f"for assignment '{self.lms_assignment.name}'")
-    if matched_count == 0:
+    if matched_students == 0:
       log.warning(
         "No Panopto watch records matched Canvas students. "
+        "Students without matching records were left ungraded. "
         "Check canvas_user_attribute, external_user_attribute, student_identifier_overrides, "
         "and record_identifier_paths.")
-    elif zero_score_count == len(self.submissions):
-      log.warning(
-        "Panopto matched students, but all computed watch percentages were 0. "
-        "Check record_percent_paths, record_viewed_seconds_paths, and record_duration_seconds_paths.")
+    elif skipped_no_watch_record > 0:
+      log.info(
+        f"Skipped {skipped_no_watch_record} Canvas student(s) with no matching Panopto watch record; "
+        "they were left ungraded.")
 
   def _load_submission_statuses(self) -> dict[int, Submission.Status]:
     try:

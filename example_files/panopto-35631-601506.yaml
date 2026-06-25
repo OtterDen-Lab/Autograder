@@ -6,7 +6,7 @@ assignment_types:
     kind: ExternalToolAssignment
     grader: panopto-watch-grader
     settings:
-      panopto_url: "https://csumb.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=4992fd5c-fb07-4ddd-8fb2-b30400158378"
+      panopto_base: "https://csumb.hosted.panopto.com/"
       panopto_refresh_token_path: "~/.autograder/panopto_refresh_token.json"
       canvas_user_attribute: "sis_user_id"
       external_user_attribute: "username"
@@ -16,7 +16,6 @@ assignment_types:
         - "PercentCompleted"
       record_viewed_seconds_paths:
         - "MostRecentViewPositionInSeconds"
-      missing_user_score: 0
 
 courses:
   - name: "Course 35631"
@@ -24,4 +23,15 @@ courses:
     assignment_groups:
       - type: panopto_watch
         assignments:
-          - id: 601506
+          - id: 601506 # Week 1.1: Introduction to OS
+            panopto_id: 4992fd5c-fb07-4ddd-8fb2-b30400158378
+          - id: 601507 # Week 1.2: Computer Architecture Review
+            panopto_id: cc6b45a7-ef52-4c7e-b576-b304000dd64c
+          - id: 601508 # Week 1.3: Linux and the shell
+            panopto_id: 1dc02a04-9adf-4606-b1b2-b3040133baed
+          - id: 601509 # Week 1.4: Programming in C
+            panopto_id: 70eb4123-db64-4789-b328-b303018a7ec9
+          - id: 601510 # Week 1.5: Command Line Introduction
+            panopto_id: 0a2a0af1-af39-49db-8c27-b30401586907
+          - id: 601511 # Week 1.6: Math Addendum
+            panopto_id: b4531cc4-1678-42fd-bdf8-b305003304e7
