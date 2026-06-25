@@ -1,4 +1,4 @@
-prod: false
+prod: true
 push: true
 
 assignment_types:

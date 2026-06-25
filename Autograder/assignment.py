@@ -385,7 +385,7 @@ class ProgrammingAssignment(Assignment):
   Assignment for programming assignment grading, where prepare will download files and finalize will upload feedback.
   Will hopefully be run automatically.
   """
-  
+
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
 
@@ -722,15 +722,16 @@ class ExternalToolAssignment(Assignment):
 
     log.debug(
       f"Panopto returned {len(watch_records)} raw watch record(s) for session {session_id}")
-    for i, record in enumerate(watch_records, 1):
+    for i, record in enumerate(sorted(watch_records, key=lambda r: r.user_key), 1):
       log.debug(
-        "Panopto record %d: user_key=%s percent_watched=%s viewed_seconds=%s duration_seconds=%s raw=%s",
+        "Panopto record %d: user_key=%s percent_watched=%s viewed_seconds=%s duration_seconds=%s time=%s raw=%s",
         i,
         record.user_key,
         record.percent_watched,
         record.viewed_seconds,
         record.duration_seconds,
-        json.dumps(record.raw, indent=2, sort_keys=True, default=str),
+        record.raw["LastViewedDateTime"],
+        {} #json.dumps(record.raw, indent=2, sort_keys=True, default=str),
       )
 
     try:

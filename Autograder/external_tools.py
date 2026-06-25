@@ -142,6 +142,7 @@ class PanoptoWatchClient:
                           record_duration_seconds_paths: list[str]
                           ) -> list[ExternalWatchRecord]:
     url = f"{self.base_url}{path_template.format(session_id=session_id)}"
+    log.debug(f"Url being used: {url}")
     response = self.session.get(
       url,
       headers={
@@ -149,6 +150,10 @@ class PanoptoWatchClient:
         "Accept": "application/json",
       },
       timeout=self.timeout_seconds,
+      params={
+        "sortField" : "LastViewedDateTime",
+        "sortorder" : "Desc"
+      }
     )
     response.raise_for_status()
     payload = response.json()
