@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any, Optional
 from urllib.parse import urlencode, urlparse, parse_qs
-
+import time
 import requests
 
 log = logging.getLogger(__name__)
@@ -143,49 +143,54 @@ class PanoptoWatchClient:
                           ) -> list[ExternalWatchRecord]:
     url = f"{self.base_url}{path_template.format(session_id=session_id)}"
     log.debug(f"Url being used: {url}")
-    response = self.session.get(
-      url,
-      headers={
-        "Authorization": f"Bearer {self.access_token}",
-        "Accept": "application/json",
-      },
-      timeout=self.timeout_seconds,
-      params={
-        "sortField" : "LastViewedDateTime",
-        "sortorder" : "Desc"
-      }
-    )
-    response.raise_for_status()
-    payload = response.json()
-    raw_records = self._extract_record_list(payload)
 
     records: list[ExternalWatchRecord] = []
-    for raw in raw_records:
-      if not isinstance(raw, dict):
-        continue
+    for page_num in range(10):
+      time.sleep(0.25)
+      response = self.session.get(
+        url,
+        headers={
+          "Authorization": f"Bearer {self.access_token}",
+          "Accept": "application/json",
+        },
+        timeout=self.timeout_seconds,
+        params={
+          "sortField" : "LastViewedDateTime",
+          "sortorder" : "Desc",
+          "pageNumber" : page_num,
+        }
+      )
+      response.raise_for_status()
+      payload = response.json()
+      raw_records = self._extract_record_list(payload)
 
-      user_key = _first_path_value(raw, record_identifier_paths)
-      if user_key in (None, ""):
-        continue
+      for raw in raw_records:
+        if not isinstance(raw, dict):
+          continue
 
-      percent_watched = _normalize_percent(
-        _coerce_float(_first_path_value(raw, record_percent_paths)))
-      viewed_seconds = _coerce_float(
-        _first_path_value(raw, record_viewed_seconds_paths))
-      duration_seconds = _coerce_float(
-        _first_path_value(raw, record_duration_seconds_paths))
+        user_key = _first_path_value(raw, record_identifier_paths)
+        if user_key in (None, ""):
+          continue
 
-      if percent_watched is None and viewed_seconds is not None and duration_seconds:
-        percent_watched = _normalize_percent(viewed_seconds / duration_seconds)
+        percent_watched = _normalize_percent(
+          _coerce_float(_first_path_value(raw, record_percent_paths)))
+        viewed_seconds = _coerce_float(
+          _first_path_value(raw, record_viewed_seconds_paths))
+        duration_seconds = _coerce_float(
+          _first_path_value(raw, record_duration_seconds_paths))
 
-      records.append(
-        ExternalWatchRecord(
-          user_key=str(user_key).strip().lower().replace("unified\\", ""),
-          percent_watched=percent_watched,
-          viewed_seconds=viewed_seconds,
-          duration_seconds=duration_seconds,
-          raw=raw,
-        ))
+        if percent_watched is None and viewed_seconds is not None and duration_seconds:
+          percent_watched = _normalize_percent(viewed_seconds / duration_seconds)
+
+        records.append(
+          ExternalWatchRecord(
+            user_key=str(user_key).strip().lower().replace("unified\\", ""),
+            percent_watched=percent_watched,
+            viewed_seconds=viewed_seconds,
+            duration_seconds=duration_seconds,
+            raw=raw,
+          ))
+
 
     return records
 
