@@ -186,6 +186,7 @@ class PanoptoWatchClient:
       payload = response.json()
       raw_records = self._extract_record_list(payload)
 
+      # If the page is empty then we are done.
       if len(raw_records) == 0: break
 
       for raw in raw_records:
