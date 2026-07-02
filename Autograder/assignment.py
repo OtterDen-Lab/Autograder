@@ -184,11 +184,22 @@ class Assignment(abc.ABC):
           continue
 
         log.debug(f"Pushing feedback for: {submission}")
-        push_attempted += 1
         try:
           # Scale the score for Canvas submission
           scaled_score = self.scale_score_for_canvas(
             feedback.percentage_score)
+          current_canvas_score = self._get_existing_canvas_score(submission)
+          if (current_canvas_score is not None
+              and self._score_is_noop_update(scaled_score,
+                                             current_canvas_score)):
+            push_skipped += 1
+            log.info(
+              f"Skipping Canvas push for assignment '{self.lms_assignment.name}', "
+              f"student '{submission.student.name}' (canvas_user_id={user_id}) "
+              f"because Canvas already has score {current_canvas_score:.2f} "
+              f"and the new score would not improve it."
+            )
+            continue
           rubric_assessment = getattr(feedback, "rubric_assessment", None)
           if rubric_assessment is None:
             rubric_assessment = kwargs.get("rubric_assessment",
@@ -209,6 +220,7 @@ class Assignment(abc.ABC):
             log.info(
               f"Skipping rubric push for assignment '{self.lms_assignment.name}' because Canvas has no attached rubric."
             )
+          push_attempted += 1
           pushed = self.lms_assignment.push_feedback(
             **push_kwargs)
         except Exception as e:
@@ -262,6 +274,35 @@ class Assignment(abc.ABC):
       "push_failed_students": push_failed_students,
       "push_skipped_ungraded_students": push_skipped_ungraded_students,
     }
+
+  @staticmethod
+  def _score_is_noop_update(new_score: float, existing_score: float) -> bool:
+    try:
+      return float(new_score) <= float(existing_score) or math.isclose(
+        float(new_score), float(existing_score), rel_tol=0.0, abs_tol=1e-9)
+    except (TypeError, ValueError):
+      return False
+
+  def _get_existing_canvas_score(self, submission: Submission) -> float | None:
+    extras = getattr(submission, "extra_info", {}) or {}
+    for key in ("current_canvas_score", "existing_canvas_score", "canvas_score"):
+      score = extras.get(key)
+      if score is not None:
+        try:
+          return float(score)
+        except (TypeError, ValueError):
+          continue
+
+    canvas_submission_data = getattr(submission, "canvas_submission_data", None)
+    if canvas_submission_data is not None:
+      score = getattr(canvas_submission_data, "score", None)
+      if score is not None:
+        try:
+          return float(score)
+        except (TypeError, ValueError):
+          return None
+
+    return None
 
   def _save_feedback_record(self, student: Student, comments: str,
                             records_dir: str, assignment_name: str) -> None:
@@ -799,7 +840,8 @@ class ExternalToolAssignment(Assignment):
       if student_id is not None and str(user_id) != str(student_id):
         continue
 
-      if not do_regrade and student_statuses.get(user_id) == Submission.Status.GRADED:
+      status_info = student_statuses.get(user_id, {})
+      if not do_regrade and status_info.get("status") == Submission.Status.GRADED:
         continue
 
       external_key = student_identifier_overrides.get(str(user_id))
@@ -822,7 +864,7 @@ class ExternalToolAssignment(Assignment):
 
       submission = Submission(
         student=student,
-        status=student_statuses.get(user_id, Submission.Status.MISSING))
+        status=status_info.get("status", Submission.Status.MISSING))
       submission.set_extra({
         "external_provider": provider,
         "panopto_url": panopto_url,
@@ -831,6 +873,7 @@ class ExternalToolAssignment(Assignment):
         "external_identifier": external_key,
         "external_user_attribute": external_user_attribute,
         "missing_user_score": float(missing_user_score),
+        "current_canvas_score": status_info.get("score"),
         "percent_watched": record.percent_watched,
         "viewed_seconds": record.viewed_seconds,
         "duration_seconds": record.duration_seconds,
@@ -858,20 +901,31 @@ class ExternalToolAssignment(Assignment):
         f"Skipped {skipped_no_watch_record} Canvas student(s) with no matching Panopto watch record; "
         "they were left ungraded.")
 
-  def _load_submission_statuses(self) -> dict[int, Submission.Status]:
+  def _load_submission_statuses(self) -> dict[int, dict[str, Any]]:
     try:
       lms_submissions = list(self.lms_assignment.get_submissions(limit=None))
     except Exception:
       return {}
 
-    statuses: dict[int, Submission.Status] = {}
+    statuses: dict[int, dict[str, Any]] = {}
     for submission in lms_submissions:
       student = getattr(submission, "student", None)
       user_id = getattr(student, "user_id", None)
       if user_id is None:
         continue
-      statuses[int(user_id)] = getattr(submission, "status",
-                                       Submission.Status.UNGRADED)
+      score = getattr(submission, "score", None)
+      if score is None:
+        canvas_submission_data = getattr(submission, "canvas_submission_data", None)
+        score = getattr(canvas_submission_data, "score", None)
+      try:
+        score = None if score is None else float(score)
+      except (TypeError, ValueError):
+        score = None
+
+      statuses[int(user_id)] = {
+        "status": getattr(submission, "status", Submission.Status.UNGRADED),
+        "score": score,
+      }
     return statuses
 
 

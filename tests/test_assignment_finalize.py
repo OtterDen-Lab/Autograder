@@ -171,6 +171,26 @@ class TestScoreScaling:
         assert lms_assignment.pushed_scores[1] == 40.0
         assert lms_assignment.push_call_kwargs[0]["seconds_late"] == 0
 
+    def test_finalize_skips_noop_canvas_updates_when_score_is_unchanged(
+        self, tmp_path
+    ):
+        """Finalize should skip Canvas writes when the score would not change."""
+        lms_assignment = DummyLmsAssignment(points_possible=10)
+        assignment = DummyAssignment(lms_assignment=lms_assignment)
+        submission = _make_submission(1, score=100.0)
+        submission.set_extra({"current_canvas_score": 10.0})
+        assignment.submissions = [submission]
+
+        summary = assignment.finalize(
+            push=True,
+            idempotency_key="test",
+            idempotency_state_dir=str(tmp_path),
+        )
+
+        assert lms_assignment.push_calls == []
+        assert summary["push_attempted"] == 0
+        assert summary["push_skipped"] == 1
+
 
 class TestRecordRetention:
     """Tests for record retention file creation."""
