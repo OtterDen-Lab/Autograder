@@ -66,6 +66,7 @@ from Autograder.orchestration import (
     error_hint_for_exception,
 )
 from Autograder.cli.validators import resolve_records_dir
+from Autograder.schedule_state import ScheduleStateManager
 
 # Re-export for backwards compatibility with tests
 from Autograder.grader import GraderRegistry
@@ -143,6 +144,21 @@ def collect_assignments_to_grade(config: RunConfig,
             f"Idempotency enabled with key '{idempotency_key}' (state dir: {idempotency_state_dir})"
         )
 
+    due_assignment_types = None
+    schedule_manager = getattr(args, "schedule_state_manager", None)
+    if schedule_manager is not None:
+        due_assignment_types = {
+            type_name
+            for type_name, type_config in config.assignment_types.items()
+            if schedule_manager.is_assignment_type_due(type_name,
+                                                       type_config.schedule)
+        }
+        if not due_assignment_types:
+            log.info(
+                "No assignment types are due based on schedule state; skipping Canvas access."
+            )
+            return []
+
     # Create the LMS interface
     try:
         lms_interface = CanvasInterface(prod=config.prod,
@@ -158,7 +174,6 @@ def collect_assignments_to_grade(config: RunConfig,
         raise
 
     assignments_to_grade = []
-
     for course_config in config.courses:
         try:
             course = lms_interface.get_course(course_config.id)
@@ -173,6 +188,11 @@ def collect_assignments_to_grade(config: RunConfig,
 
         for group in course_config.assignment_groups:
             type_config = config.assignment_types[group.type_name]
+            if due_assignment_types is not None and group.type_name not in due_assignment_types:
+                log.info(
+                    f"Skipping assignment type '{group.type_name}' for course {course_config.id}: not due yet."
+                )
+                continue
 
             for assignment in group.assignments:
                 if assignment.disabled:
@@ -316,14 +336,27 @@ def main() -> int:
     with ensure_single_instance():
         try:
             config = load_and_validate_config(args.yaml)
+            schedule_manager = None
+            if any(type_config.schedule is not None
+                   for type_config in config.assignment_types.values()):
+                schedule_manager = ScheduleStateManager.load_default()
+            args.schedule_state_manager = schedule_manager
 
             assignments_to_grade = collect_assignments_to_grade(config, args)
+            if schedule_manager is not None:
+                schedule_manager.register_planned_assignments(assignments_to_grade)
             if args.dump_config:
                 dump_effective_config(config, assignments_to_grade, args)
             if args.dry_run:
                 print_dry_run_summary(assignments_to_grade)
                 return 0
             results = execute_grading(assignments_to_grade, args)
+
+            if schedule_manager is not None and schedule_manager.write_error is not None:
+                log.error(
+                    f"Schedule state update failed: {schedule_manager.write_error}"
+                )
+                exit_code = 1
 
             print_results_summary(results)
             if args.show_stage_timings:

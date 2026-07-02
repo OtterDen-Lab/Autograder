@@ -47,6 +47,9 @@ assignment_types:
   programming:
     kind: ProgrammingAssignment
     grader: template-grader
+    schedule:
+      timezone: America/New_York
+      rrule: "FREQ=DAILY;BYHOUR=0,12;BYMINUTE=0;BYSECOND=0"
     settings:
       base_image_name: "your-docker-image"
       # Optional: mount extra repositories into specific container paths
@@ -120,6 +123,7 @@ Path safety defaults:
 - `record_retention: true` requires an explicit absolute `records_dir` (or `~/...`).
 - `records_dir` is blocked if it points inside this git repo unless `AUTOGRADER_ALLOW_IN_REPO_RECORDS=1`.
 - Idempotency state defaults to `~/.autograder/idempotency`.
+- Schedule state defaults to `LOG_DIR/schedule_state.yaml`.
 
 ## Features
 

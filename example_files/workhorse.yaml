@@ -11,13 +11,33 @@ assignment_types:
   programming:
     kind: ProgrammingAssignment
     grader: template-grader
+    schedule:
+      timezone: America/Los_Angeles
+      rrule: "FREQ=DAILY;BYHOUR=0,12;BYMINUTE=0;BYSECOND=0"
     settings:
       record_retention: true
       records_dir: "~/autograder-records/workhorse"
 
-  text:
+  weekly-study-notes:
     kind: TextAssignment
     grader: TextSubmissionGrader
+    schedule:
+      timezone: America/Los_Angeles
+      rrule: "FREQ=WEEKLY;BYDAY=SU;BYHOUR=0;BYMINUTE=0;BYSECOND=0"
+    settings:
+      grade_after_lock_date: true
+      prefer_anthropic: true
+      # Model tier settings (small, medium, large)
+      phase1_tier: medium    # Aggregate analysis
+      phase2_tier: medium    # Individual grading
+      phase25_tier: medium   # Question consolidation
+
+  weekly-study-notes-online:
+    kind: TextAssignment
+    grader: TextSubmissionGrader
+    schedule:
+      timezone: America/Los_Angeles
+      rrule: "FREQ=WEEKLY;BYDAY=MO;BYHOUR=2;BYMINUTE=0;BYSECOND=0"
     settings:
       grade_after_lock_date: true
       prefer_anthropic: true
@@ -29,6 +49,9 @@ assignment_types:
   panopto_watch:
     kind: ExternalToolAssignment
     grader: panopto-watch-grader
+    schedule:
+      timezone: America/Los_Angeles
+      rrule: "FREQ=MINUTELY;INTERVAL=5"
     settings:
       panopto_base: "https://csumb.hosted.panopto.com/"
       panopto_refresh_token_path: "~/.autograder/panopto_refresh_token.json"
@@ -72,7 +95,7 @@ courses:
   #         - {id: 553741, repo_path: PA6}
 
   #     - name: Learning Logs
-  #       type: text
+  #       type: weekly-study-notes
   #       assignments:
   #         - 553728  # LL2
   #         - 553729  # LL3
@@ -116,7 +139,7 @@ courses:
           - {id: 601500, repo_path: PA5}
 
       - name: Learning Logs
-        type: text
+        type: weekly-study-notes-online
         assignments:
           - 601455
           - 601456
@@ -204,8 +227,6 @@ courses:
             panopto_id: 724244df-985d-458d-95b5-b3290136154c
           - id: 601494 # OSTEP 40b
             panopto_id: 1692f727-0b90-4e4f-b328-b32901462e98
-
-
 
 
 

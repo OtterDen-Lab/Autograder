@@ -310,6 +310,11 @@ def execute_grading(assignments_to_grade: List[AssignmentRunRequest],
             try:
                 result = future.result()
                 results.append(result)
+                schedule_manager = getattr(getattr(assignment_data, "args", None),
+                                           "schedule_state_manager", None)
+                if schedule_manager is not None:
+                    schedule_manager.record_assignment_result(assignment_data,
+                                                              result)
 
                 if result['success']:
                     log.info(

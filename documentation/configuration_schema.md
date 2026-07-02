@@ -19,7 +19,18 @@ Each entry:
 
 - `kind` (required): currently `ProgrammingAssignment`, `TextAssignment`, or `ExternalToolAssignment`
 - `grader` (required): must be compatible with `kind`
+- `schedule` (optional mapping): recurring run window for this assignment type
 - `settings` (optional mapping): grader-specific settings
+
+### schedule
+
+- `timezone` (`string`, default `America/Los_Angeles`): IANA timezone used to interpret the recurrence rule
+- `rrule` (`string`, required): RFC 5545 recurrence rule, parsed with `dateutil.rrule`
+
+The scheduler is run by the CLI when the process wakes up. Use cron or a
+similar external trigger to invoke `grade-assignments` frequently, then the
+tool consults `LOG_DIR/schedule_state.yaml` to decide whether a type is due.
+The state file is written atomically after each completed assignment type.
 
 ### template-grader settings
 

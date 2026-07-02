@@ -373,6 +373,62 @@ def test_parse_run_config_accepts_external_tool_assignment_type():
     "panopto_id"] == "session-123"
 
 
+def test_parse_run_config_accepts_assignment_type_schedule():
+  run_config = parse_run_config({
+    "assignment_types": {
+      "programming": {
+        "kind": "ProgrammingAssignment",
+        "grader": "template-grader",
+        "schedule": {
+          "timezone": "UTC",
+          "rrule": "FREQ=DAILY;BYHOUR=0,12;BYMINUTE=0;BYSECOND=0",
+        }
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "programming",
+        "assignments": [{
+          "id": 99
+        }]
+      }]
+    }]
+  })
+
+  schedule = run_config.assignment_types["programming"].schedule
+  assert schedule is not None
+  assert schedule.timezone == "UTC"
+  assert schedule.rrule == "FREQ=DAILY;BYHOUR=0,12;BYMINUTE=0;BYSECOND=0"
+
+
+def test_parse_run_config_defaults_schedule_timezone_to_los_angeles():
+  run_config = parse_run_config({
+    "assignment_types": {
+      "programming": {
+        "kind": "ProgrammingAssignment",
+        "grader": "template-grader",
+        "schedule": {
+          "rrule": "FREQ=DAILY;BYHOUR=0;BYMINUTE=0;BYSECOND=0",
+        }
+      }
+    },
+    "courses": [{
+      "id": 10,
+      "assignment_groups": [{
+        "type": "programming",
+        "assignments": [{
+          "id": 99
+        }]
+      }]
+    }]
+  })
+
+  schedule = run_config.assignment_types["programming"].schedule
+  assert schedule is not None
+  assert schedule.timezone == "America/Los_Angeles"
+
+
 def test_normalize_external_tool_settings_validates_required_panopto_base():
   with pytest.raises(ValueError) as exc:
     config_models.normalize_grader_settings(

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from dateutil.rrule import rrulestr
+from zoneinfo import ZoneInfo
+
 from Autograder.grader_settings import (
   AdditionalRepoConfig,
   ExternalToolGraderSettings,
@@ -81,6 +86,36 @@ class AssignmentTypeConfig:
   kind: str
   grader: str
   settings: Dict[str, Any] = field(default_factory=dict)
+  schedule: Optional["ScheduleConfig"] = None
+
+
+@dataclass
+class ScheduleConfig:
+  timezone: str = "America/Los_Angeles"
+  rrule: str = ""
+
+  def validate(self, context_label: str) -> None:
+    if not isinstance(self.timezone, str) or not self.timezone.strip():
+      raise _config_error(
+        f"{context_label}.timezone must be a non-empty string")
+    if not isinstance(self.rrule, str) or not self.rrule.strip():
+      raise _config_error(
+        f"{context_label}.rrule must be a non-empty string")
+    try:
+      ZoneInfo(self.timezone.strip())
+    except Exception as e:
+      raise _config_error(
+        f"{context_label}.timezone '{self.timezone}' is not a valid IANA timezone: {e}"
+      ) from e
+    try:
+      rrulestr(
+        self.rrule.strip(),
+        dtstart=datetime(1970, 1, 1, tzinfo=timezone.utc),
+      )
+    except Exception as e:
+      raise _config_error(
+        f"{context_label}.rrule is not a valid RFC 5545 recurrence rule: {e}"
+      ) from e
 
 
 @dataclass
@@ -151,6 +186,16 @@ def _require_dict(value: Any, label: str) -> Dict[str, Any]:
   if not isinstance(value, dict):
     raise _config_error(f"{label} must be a mapping")
   return value
+
+
+def _parse_schedule_config(raw: Any, context_label: str) -> ScheduleConfig:
+  schedule = _require_dict(raw, context_label)
+  parsed = ScheduleConfig(
+    timezone=str(schedule.get("timezone", "America/Los_Angeles")).strip(),
+    rrule=str(schedule.get("rrule", "")).strip(),
+  )
+  parsed.validate(context_label)
+  return parsed
 
 
 def _normalize_template_grader_settings(
@@ -328,11 +373,17 @@ def _parse_assignment_types(
         f"assignment_types.{name}.grader '{grader}' is not supported for kind '{kind}'. "
         f"Allowed graders: {allowed}")
 
+    schedule = None
+    if 'schedule' in type_config:
+      schedule = _parse_schedule_config(
+        type_config['schedule'], f"assignment_types.{name}.schedule")
+
     parsed[name] = AssignmentTypeConfig(
       name=name,
       kind=kind,
       grader=grader,
       settings=dict(type_config.get('settings', {})),
+      schedule=schedule,
     )
 
   return parsed

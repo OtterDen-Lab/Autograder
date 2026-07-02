@@ -17,6 +17,9 @@ This runbook covers how to diagnose and recover from failed or partial grading r
 3. For any run where retry safety matters, set an idempotency key:
    - `grade-assignments --yaml <config.yaml> --idempotency-key <stable-key>`
    - optional custom state dir: `grade-assignments --yaml <config.yaml> --idempotency-key <stable-key> --idempotency-state-dir <state-dir>`
+4. If using per-assignment-type schedules, keep cron or another external trigger
+   running frequently and inspect `LOG_DIR/schedule_state.yaml` when debugging
+   skip behavior.
 
 ## During/After Run: Fast Triage
 

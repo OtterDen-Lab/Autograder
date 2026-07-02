@@ -10,7 +10,8 @@ import pytest
 
 from Autograder import grade_assignments
 from Autograder import exceptions as autograder_exceptions
-from Autograder.config_models import AssignmentRunRequest, CourseConfig, RunConfig
+from Autograder.config_models import (AssignmentRunRequest, CourseConfig,
+                                      RunConfig, parse_run_config)
 from Autograder.grader_context import GraderContext
 from lms_interface.classes import Feedback, Submission, Student
 
@@ -774,6 +775,56 @@ def test_collect_assignments_wraps_course_lookup_errors(monkeypatch):
   with pytest.raises(autograder_exceptions.LMSError,
                      match="Failed to load Canvas course id=101"):
     grade_assignments.collect_assignments_to_grade(config, args)
+
+
+def test_collect_assignments_skips_not_due_assignment_types(monkeypatch):
+  class DummyCourse:
+    name = "CST334"
+
+  class DummyCanvasInterface:
+    def __init__(self, *args, **kwargs):
+      pass
+
+    def get_course(self, _):
+      return DummyCourse()
+
+  class DummyScheduleManager:
+    def is_assignment_type_due(self, assignment_type_name, schedule):
+      return False
+
+  monkeypatch.setattr(grade_assignments, "CanvasInterface", DummyCanvasInterface)
+
+  config = parse_run_config({
+    "assignment_types": {
+      "programming": {
+        "kind": "ProgrammingAssignment",
+        "grader": "template-grader",
+        "schedule": {
+          "timezone": "UTC",
+          "rrule": "FREQ=DAILY;BYHOUR=0;BYMINUTE=0;BYSECOND=0",
+        }
+      }
+    },
+    "courses": [{
+      "id": 101,
+      "name": "CST334",
+      "assignment_groups": [{
+        "type": "programming",
+        "assignments": [{
+          "id": 555
+        }]
+      }]
+    }]
+  })
+  args = SimpleNamespace(env=None,
+                         reveal_identity=False,
+                         idempotency_key=None,
+                         idempotency_state_dir=None,
+                         schedule_state_manager=DummyScheduleManager())
+
+  assignments = grade_assignments.collect_assignments_to_grade(config, args)
+
+  assert assignments == []
 
 
 def test_resolve_records_dir_requires_absolute_path():

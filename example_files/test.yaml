@@ -1,0 +1,102 @@
+prod: true
+push: false
+privacy_mode: id_only
+
+reporting:
+  slack_channel: C0AAD94FX5K
+  notify_on: failures #all
+
+# Define assignment types with default graders and settings
+assignment_types:
+  programming:
+    kind: ProgrammingAssignment
+    grader: template-grader
+    schedule:
+      timezone: America/Los_Angeles
+      rrule: "FREQ=DAILY;BYHOUR=0,12;BYMINUTE=0;BYSECOND=0"
+    settings:
+      record_retention: true
+      records_dir: "~/autograder-records/workhorse"
+
+  weekly-study-notes:
+    kind: TextAssignment
+    grader: TextSubmissionGrader
+    schedule:
+      timezone: America/Los_Angeles
+      rrule: "FREQ=WEEKLY;BYDAY=SU;BYHOUR=0;BYMINUTE=0;BYSECOND=0"
+    settings:
+      grade_after_lock_date: true
+      prefer_anthropic: true
+      # Model tier settings (small, medium, large)
+      phase1_tier: medium    # Aggregate analysis
+      phase2_tier: medium    # Individual grading
+      phase25_tier: medium   # Question consolidation
+
+  weekly-study-notes-online:
+    kind: TextAssignment
+    grader: TextSubmissionGrader
+    schedule:
+      timezone: America/Los_Angeles
+      rrule: "FREQ=WEEKLY;BYDAY=MO;BYHOUR=2;BYMINUTE=0;BYSECOND=0"
+    settings:
+      grade_after_lock_date: true
+      prefer_anthropic: true
+      # Model tier settings (small, medium, large)
+      phase1_tier: medium    # Aggregate analysis
+      phase2_tier: medium    # Individual grading
+      phase25_tier: medium   # Question consolidation
+
+  panopto_watch:
+    kind: ExternalToolAssignment
+    grader: panopto-watch-grader
+    schedule:
+      timezone: America/Los_Angeles
+      rrule: "FREQ=MINUTELY;INTERVAL=5"
+    settings:
+      panopto_base: "https://csumb.hosted.panopto.com/"
+      panopto_refresh_token_path: "~/.autograder/panopto_refresh_token.json"
+      canvas_user_attribute: "sis_user_id"
+      external_user_attribute: "username"
+      record_identifier_paths:
+        - "User.Username"
+      record_percent_paths:
+        - "PercentCompleted"
+      record_viewed_seconds_paths:
+        - "MostRecentViewPositionInSeconds"
+      allow_late_penalty: false
+
+courses:
+
+  - name: CST334online
+    id: 35631
+    slack_channel: C09HR2J5EBF
+
+    assignment_groups:
+      - name: Programming Assignments
+        type: programming
+        settings:
+          base_image_name: "samogden/cst334"
+          source_repo: "https://github.com/CSUMB-SCD-instructors/CST334-online"
+          golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
+          files_from_golden:
+            - "tests/unittests_reserved.c"
+          student_code_path: "src"
+          num_repeats: 10
+        file_paths:
+          '.*student_code.*\.c':
+            path: "src/student_code.c" # target filename, will force to change into this
+          '.*student_code.*\.h':
+            path: "include/student_code.h" # target filename, will force to change into this
+        assignments:
+          - {id: 601496, repo_path: PA1}
+
+      - name: Learning Logs
+        type: weekly-study-notes-online
+        assignments:
+          - 601455
+
+      - name: Lecture Videos
+        type: panopto_watch
+        assignments:
+          - id: 601506 # Week 1.1: Introduction to OS
+            panopto_id: 4992fd5c-fb07-4ddd-8fb2-b30400158378

@@ -49,6 +49,28 @@ Use these settings for text grading:
   - points/description for `engagement`, `length`, `relevance`, `explanation_quality`
   - `word_threshold`
 
+## 5) Assignment Type Scheduling
+
+Add `schedule` under `assignment_types.<type>` to control how often a type is
+eligible to run. The common pattern is to keep cron as the wake-up mechanism and
+let Autograder skip types that are not due yet.
+
+```yaml
+assignment_types:
+  programming:
+    kind: ProgrammingAssignment
+    grader: template-grader
+    schedule:
+      timezone: America/New_York
+      rrule: "FREQ=DAILY;BYHOUR=0,12;BYMINUTE=0;BYSECOND=0"
+```
+
+If `timezone` is omitted, Autograder defaults it to `America/Los_Angeles`.
+
+State is persisted in `LOG_DIR/schedule_state.yaml` and updated atomically when
+an assignment type finishes successfully. The file records `last_completed_at`
+per assignment type.
+
 ## Common Recipes
 
 ### Recipe: Multi-file Student Submissions
@@ -106,7 +128,7 @@ assignment_types:
   - `_build_individual_grading_prompt(...)`
   - `_build_question_consolidation_prompt(...)`
 
-## 5) Validation And Safe Rollout
+## 6) Validation And Safe Rollout
 
 1. `--dry-run`
 2. `--dump-config`
