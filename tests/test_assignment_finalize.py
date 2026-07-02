@@ -36,14 +36,23 @@ class DummyLmsAssignment:
         points_possible: float = None,
         fail_user_ids: set = None,
         exception_user_ids: set = None,
+        rubric_criterion_index: dict = None,
     ):
         self.canvas_course = SimpleNamespace(id=99999)
         self.points_possible = points_possible
         self.fail_user_ids = fail_user_ids or set()
         self.exception_user_ids = exception_user_ids or set()
+        self._rubric_criterion_index = (
+            rubric_criterion_index
+            if rubric_criterion_index is not None
+            else {"criterion 1": "criterion-1"}
+        )
         self.push_calls = []
         self.push_call_kwargs = []
         self.pushed_scores = {}
+
+    def _get_rubric_criterion_index(self):
+        return self._rubric_criterion_index
 
     def push_feedback(self, *, user_id, score=None, **kwargs):
         self.push_calls.append(user_id)
@@ -383,6 +392,28 @@ class TestPushFailureHandling:
                 "points": 1,
             },
         }
+
+    def test_finalize_skips_rubric_when_canvas_has_none(self, tmp_path):
+        """Finalize should not send rubric data to Canvas without an attached rubric."""
+        lms_assignment = DummyLmsAssignment(
+            points_possible=100,
+            rubric_criterion_index={},
+        )
+        assignment = DummyAssignment(lms_assignment=lms_assignment)
+        assignment.submissions = [_make_submission(1, score=90.0)]
+
+        rubric = {
+            "criterion 1": 2,
+        }
+
+        assignment.finalize(
+            push=True,
+            rubric=rubric,
+            idempotency_key="test",
+            idempotency_state_dir=str(tmp_path),
+        )
+
+        assert "rubric_assessment" not in lms_assignment.push_call_kwargs[0]
 
 
 class TestEdgeCases:

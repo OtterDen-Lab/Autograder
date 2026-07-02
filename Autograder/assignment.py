@@ -128,6 +128,26 @@ class Assignment(abc.ABC):
     push_skipped_ungraded = 0
     push_failed_students = []
     push_skipped_ungraded_students = []
+
+    def _has_attached_rubric() -> bool:
+      """
+      Check whether the Canvas assignment has a rubric attached.
+
+      Some graders always generate local rubric-style feedback, but Canvas
+      only accepts rubric assessments when the assignment itself has an
+      attached rubric definition.
+      """
+      try:
+        rubric_index_getter = getattr(self.lms_assignment,
+                                      "_get_rubric_criterion_index", None)
+        if callable(rubric_index_getter):
+          return bool(rubric_index_getter())
+      except Exception as e:
+        log.debug(
+          f"Unable to determine whether assignment '{self.lms_assignment.name}' has an attached rubric: {e}"
+        )
+      return False
+
     for submission in self.submissions:
       user_id = submission.student.user_id
       if push_enabled and processed_user_ids is not None and user_id in processed_user_ids:
@@ -183,8 +203,12 @@ class Assignment(abc.ABC):
           }
           if not allow_late_penalty:
             push_kwargs["seconds_late"] = 0
-          if rubric_assessment is not None:
+          if rubric_assessment is not None and _has_attached_rubric():
             push_kwargs["rubric_assessment"] = rubric_assessment
+          elif rubric_assessment is not None:
+            log.info(
+              f"Skipping rubric push for assignment '{self.lms_assignment.name}' because Canvas has no attached rubric."
+            )
           pushed = self.lms_assignment.push_feedback(
             **push_kwargs)
         except Exception as e:

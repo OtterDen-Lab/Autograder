@@ -43,7 +43,7 @@ courses:
             - "src/main.c"
             - "src/util.c"
           num_repeats: 10
-          # Optional: rubric data passed to LMSInterface.push_feedback(..., rubric_assessment=...)
+          # Optional, explicit Canvas rubric data passed to LMSInterface.push_feedback(..., rubric_assessment=...)
           # rubric:
           #   "criterion 1": 2
           #   "crit2":

@@ -25,6 +25,9 @@ assignment_types:
       timezone: America/Los_Angeles
       rrule: "FREQ=WEEKLY;BYDAY=SU;BYHOUR=0;BYMINUTE=0;BYSECOND=0"
     settings:
+      # Text grading uses its built-in scoring defaults.
+      # Add an explicit rubric block here only if the Canvas assignment has
+      # an attached rubric and you want rubric assessment pushed back to LMS.
       grade_after_lock_date: true
       prefer_anthropic: true
       # Model tier settings (small, medium, large)
@@ -39,6 +42,9 @@ assignment_types:
       timezone: America/Los_Angeles
       rrule: "FREQ=WEEKLY;BYDAY=MO;BYHOUR=2;BYMINUTE=0;BYSECOND=0"
     settings:
+      # Text grading uses its built-in scoring defaults.
+      # Add an explicit rubric block here only if the Canvas assignment has
+      # an attached rubric and you want rubric assessment pushed back to LMS.
       grade_after_lock_date: true
       prefer_anthropic: true
       # Model tier settings (small, medium, large)
@@ -227,7 +233,6 @@ courses:
             panopto_id: 724244df-985d-458d-95b5-b3290136154c
           - id: 601494 # OSTEP 40b
             panopto_id: 1692f727-0b90-4e4f-b328-b32901462e98
-
 
 
 

@@ -175,6 +175,21 @@ def test_normalize_text_submission_settings_supports_prompt_and_rubric_blocks():
   assert normalized["rubric"]["word_threshold"] == 300
 
 
+def test_normalize_text_submission_settings_omits_rubric_when_unspecified():
+  normalized = config_models.normalize_grader_settings(
+    "TextSubmissionGrader",
+    {
+      "phase1_tier": "medium",
+      "rate_limit_retries": 2,
+    },
+    "assignment_types.text",
+  )
+
+  assert normalized["phase1_tier"] == "medium"
+  assert normalized["rate_limit_retries"] == 2
+  assert "rubric" not in normalized
+
+
 def test_template_grader_settings_preserve_rubric_for_lms_push():
   settings = TemplateGraderSettings.from_raw(
     {

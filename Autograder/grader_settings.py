@@ -584,7 +584,7 @@ class TextSubmissionGraderSettings:
   slack_token: Optional[str] = None
   slack_channel: Optional[str] = None
   prompt_templates: Dict[str, str] = field(default_factory=dict)
-  rubric: TextRubricSettings = field(default_factory=TextRubricSettings)
+  rubric: Optional[TextRubricSettings] = None
 
   def __post_init__(self) -> None:
     self.phase1_tier = _require_tier(self.phase1_tier,
@@ -671,12 +671,13 @@ class TextSubmissionGraderSettings:
       slack_channel=_require_optional_str(raw.get("slack_channel"),
                                           f"{context_label}.slack_channel"),
       prompt_templates=normalized_prompts,
-      rubric=TextRubricSettings.from_raw(raw.get("rubric"),
-                                         f"{context_label}.rubric"),
+      rubric=(TextRubricSettings.from_raw(raw.get("rubric"),
+                                          f"{context_label}.rubric")
+              if raw.get("rubric") is not None else None),
     )
 
   def to_kwargs(self) -> Dict[str, Any]:
-    return {
+    kwargs = {
       "grade_after_lock_date": self.grade_after_lock_date,
       "prefer_anthropic": self.prefer_anthropic,
       "phase1_tier": self.phase1_tier,
@@ -690,8 +691,10 @@ class TextSubmissionGraderSettings:
       "slack_token": self.slack_token,
       "slack_channel": self.slack_channel,
       "prompt_templates": dict(self.prompt_templates),
-      "rubric": self.rubric.to_kwargs(),
     }
+    if self.rubric is not None:
+      kwargs["rubric"] = self.rubric.to_kwargs()
+    return kwargs
 
 
 @dataclass
