@@ -1,5 +1,5 @@
-prod: true
-push: false
+prod: false
+push: true
 privacy_mode: id_only
 
 reporting:
@@ -25,6 +25,9 @@ assignment_types:
       timezone: America/Los_Angeles
       rrule: "FREQ=WEEKLY;BYDAY=SU;BYHOUR=0;BYMINUTE=0;BYSECOND=0"
     settings:
+      # Text grading uses its built-in scoring defaults.
+      # Add an explicit rubric block here only if the Canvas assignment has
+      # an attached rubric and you want rubric assessment pushed back to LMS.
       grade_after_lock_date: true
       prefer_anthropic: true
       # Model tier settings (small, medium, large)
@@ -39,6 +42,9 @@ assignment_types:
       timezone: America/Los_Angeles
       rrule: "FREQ=WEEKLY;BYDAY=MO;BYHOUR=2;BYMINUTE=0;BYSECOND=0"
     settings:
+      # Text grading uses its built-in scoring defaults.
+      # Add an explicit rubric block here only if the Canvas assignment has
+      # an attached rubric and you want rubric assessment pushed back to LMS.
       grade_after_lock_date: true
       prefer_anthropic: true
       # Model tier settings (small, medium, large)
@@ -57,6 +63,7 @@ assignment_types:
       panopto_refresh_token_path: "~/.autograder/panopto_refresh_token.json"
       canvas_user_attribute: "sis_user_id"
       external_user_attribute: "username"
+      skip_non_improvable: true
       record_identifier_paths:
         - "User.Username"
       record_percent_paths:
@@ -72,28 +79,28 @@ courses:
     slack_channel: C09HR2J5EBF
 
     assignment_groups:
-      - name: Programming Assignments
-        type: programming
-        settings:
-          base_image_name: "samogden/cst334"
-          source_repo: "https://github.com/CSUMB-SCD-instructors/CST334-online"
-          golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
-          files_from_golden:
-            - "tests/unittests_reserved.c"
-          student_code_path: "src"
-          num_repeats: 10
-        file_paths:
-          '.*student_code.*\.c':
-            path: "src/student_code.c" # target filename, will force to change into this
-          '.*student_code.*\.h':
-            path: "include/student_code.h" # target filename, will force to change into this
-        assignments:
-          - {id: 601496, repo_path: PA1}
+      # - name: Programming Assignments
+      #   type: programming
+      #   settings:
+      #     base_image_name: "samogden/cst334"
+      #     source_repo: "https://github.com/CSUMB-SCD-instructors/CST334-online"
+      #     golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
+      #     files_from_golden:
+      #       - "tests/unittests_reserved.c"
+      #     student_code_path: "src"
+      #     num_repeats: 10
+      #   file_paths:
+      #     '.*student_code.*\.c':
+      #       path: "src/student_code.c" # target filename, will force to change into this
+      #     '.*student_code.*\.h':
+      #       path: "include/student_code.h" # target filename, will force to change into this
+      #   assignments:
+      #     - {id: 601496, repo_path: PA1}
 
-      - name: Learning Logs
-        type: weekly-study-notes-online
-        assignments:
-          - 601455
+      # - name: Learning Logs
+      #   type: weekly-study-notes-online
+      #   assignments:
+      #     - 601455
 
       - name: Lecture Videos
         type: panopto_watch

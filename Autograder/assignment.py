@@ -846,6 +846,13 @@ class ExternalToolAssignment(Assignment):
         "could not be determined. Falling back to grading all matched students.",
         self.lms_assignment.name,
       )
+    elif skip_non_improvable:
+      log.info(
+        "skip_non_improvable is enabled for assignment '%s'; students already "
+        "at %.2f Canvas points will be skipped before grading.",
+        self.lms_assignment.name,
+        max_canvas_score,
+      )
 
     prepared_submissions: list[Submission] = []
     skipped_no_watch_record = 0
@@ -943,7 +950,12 @@ class ExternalToolAssignment(Assignment):
 
   def _load_submission_statuses(self) -> dict[int, dict[str, Any]]:
     try:
-      lms_submissions = list(self.lms_assignment.get_submissions(limit=None))
+      raw_assignment = getattr(self.lms_assignment, "assignment", None)
+      if raw_assignment is not None and hasattr(raw_assignment, "get_submissions"):
+        lms_submissions = list(
+          raw_assignment.get_submissions(include="submission_history"))
+      else:
+        lms_submissions = list(self.lms_assignment.get_submissions(limit=None))
     except Exception:
       return {}
 
@@ -952,18 +964,32 @@ class ExternalToolAssignment(Assignment):
       student = getattr(submission, "student", None)
       user_id = getattr(student, "user_id", None)
       if user_id is None:
+        user_id = getattr(submission, "user_id", None)
+      if user_id is None:
         continue
+
       score = getattr(submission, "score", None)
-      if score is None:
+      workflow_state = getattr(submission, "workflow_state", "submitted")
+      submission_history = getattr(submission, "submission_history", None)
+      if submission_history:
+        latest_submission = submission_history[-1]
+        score = latest_submission.get("score", score)
+        workflow_state = latest_submission.get("workflow_state", workflow_state)
+      else:
         canvas_submission_data = getattr(submission, "canvas_submission_data", None)
-        score = getattr(canvas_submission_data, "score", None)
+        if score is None and canvas_submission_data is not None:
+          score = getattr(canvas_submission_data, "score", None)
+          workflow_state = getattr(canvas_submission_data, "workflow_state",
+                                   workflow_state)
+
       try:
         score = None if score is None else float(score)
       except (TypeError, ValueError):
         score = None
 
       statuses[int(user_id)] = {
-        "status": getattr(submission, "status", Submission.Status.UNGRADED),
+        "status": getattr(submission, "status", None)
+        or Submission.Status.from_string(workflow_state, score),
         "score": score,
       }
     return statuses

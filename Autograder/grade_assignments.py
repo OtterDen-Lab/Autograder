@@ -146,18 +146,29 @@ def collect_assignments_to_grade(config: RunConfig,
 
     due_assignment_types = None
     schedule_manager = getattr(args, "schedule_state_manager", None)
+    force_schedule = bool(getattr(args, "skip_scheduling_check", False))
     if schedule_manager is not None:
-        due_assignment_types = {
-            type_name
-            for type_name, type_config in config.assignment_types.items()
-            if schedule_manager.is_assignment_type_due(type_name,
-                                                       type_config.schedule)
-        }
-        if not due_assignment_types:
+        if force_schedule:
+            due_assignment_types = {
+                type_name
+                for type_name, type_config in config.assignment_types.items()
+                if type_config.schedule is not None
+            }
             log.info(
-                "No assignment types are due based on schedule state; skipping Canvas access."
+                "Schedule-check override enabled; ignoring due-window checks for scheduled assignment types."
             )
-            return []
+        else:
+            due_assignment_types = {
+                type_name
+                for type_name, type_config in config.assignment_types.items()
+                if schedule_manager.is_assignment_type_due(type_name,
+                                                           type_config.schedule)
+            }
+            if not due_assignment_types:
+                log.info(
+                    "No assignment types are due based on schedule state; skipping Canvas access."
+                )
+                return []
 
     # Create the LMS interface
     try:

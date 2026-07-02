@@ -20,6 +20,8 @@ This runbook covers how to diagnose and recover from failed or partial grading r
 4. If using per-assignment-type schedules, keep cron or another external trigger
    running frequently and inspect `LOG_DIR/schedule_state.yaml` when debugging
    skip behavior.
+5. For debugging, `--skip-scheduling-check` ignores due-window checks and runs all
+   scheduled assignment types in the current invocation.
 
 ## During/After Run: Fast Triage
 
