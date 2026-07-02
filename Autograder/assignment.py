@@ -304,6 +304,22 @@ class Assignment(abc.ABC):
 
     return None
 
+  def _resolve_canvas_points_possible(self) -> tuple[float | None, str | None]:
+    if self.canvas_points is not None:
+      try:
+        return float(self.canvas_points), "explicit_canvas_points"
+      except (TypeError, ValueError):
+        return None, None
+
+    if hasattr(self.lms_assignment, 'points_possible'
+               ) and self.lms_assignment.points_possible is not None:
+      try:
+        return float(self.lms_assignment.points_possible), "canvas_points_possible"
+      except (TypeError, ValueError):
+        return None, None
+
+    return None, None
+
   def _save_feedback_record(self, student: Student, comments: str,
                             records_dir: str, assignment_name: str) -> None:
     """
@@ -408,21 +424,15 @@ class Assignment(abc.ABC):
     """
     try:
       # Determine Canvas points to use (in priority order)
-      canvas_points_possible = None
-
-      # 1. Use explicit canvas_points parameter from YAML config
-      if self.canvas_points is not None:
-        canvas_points_possible = float(self.canvas_points)
-        log.info(
-          f"Using explicit canvas_points from config: {canvas_points_possible}"
-        )
-
-      # 2. Try to get points_possible from Canvas assignment
-      elif hasattr(self.lms_assignment, 'points_possible'
-                   ) and self.lms_assignment.points_possible is not None:
-        canvas_points_possible = float(self.lms_assignment.points_possible)
-        log.info(
-          f"Using Canvas assignment points_possible: {canvas_points_possible}")
+      canvas_points_possible, source = self._resolve_canvas_points_possible()
+      if canvas_points_possible is not None:
+        if source == "explicit_canvas_points":
+          log.info(
+            f"Using explicit canvas_points from config: {canvas_points_possible}"
+          )
+        elif source == "canvas_points_possible":
+          log.info(
+            f"Using Canvas assignment points_possible: {canvas_points_possible}")
 
       # Scale percentage to Canvas points
       if canvas_points_possible is not None:
@@ -750,6 +760,7 @@ class ExternalToolAssignment(Assignment):
               record_duration_seconds_paths=None,
               request_timeout_seconds=30.0,
               missing_user_score=0.0,
+              skip_non_improvable=False,
               **kwargs):
     if provider != "panopto":
       raise ValueError(f"Unsupported external tool provider: {provider}")
@@ -827,10 +838,19 @@ class ExternalToolAssignment(Assignment):
       for k, v in (student_identifier_overrides or {}).items()
     }
     student_statuses = self._load_submission_statuses()
+    canvas_points_possible, _ = self._resolve_canvas_points_possible()
+    max_canvas_score = canvas_points_possible
+    if skip_non_improvable and max_canvas_score is None:
+      log.info(
+        "skip_non_improvable is enabled for assignment '%s', but Canvas points "
+        "could not be determined. Falling back to grading all matched students.",
+        self.lms_assignment.name,
+      )
 
     prepared_submissions: list[Submission] = []
     skipped_no_watch_record = 0
-    matched_students = 0
+    skipped_non_improvable = 0
+    matched_watch_records = 0
     for student in students:
       raw_user_id = getattr(student, "user_id", None)
       if raw_user_id is None:
@@ -844,6 +864,7 @@ class ExternalToolAssignment(Assignment):
       if not do_regrade and status_info.get("status") == Submission.Status.GRADED:
         continue
 
+      current_canvas_score = status_info.get("score")
       external_key = student_identifier_overrides.get(str(user_id))
       if external_key is None:
         external_key = extract_student_identifier(student, canvas_user_attribute)
@@ -861,6 +882,21 @@ class ExternalToolAssignment(Assignment):
       if record is None:
         skipped_no_watch_record += 1
         continue
+      matched_watch_records += 1
+
+      if (skip_non_improvable and max_canvas_score is not None
+          and current_canvas_score is not None
+          and self._score_is_noop_update(max_canvas_score,
+                                         current_canvas_score)):
+        skipped_non_improvable += 1
+        log.debug(
+          "Skipping Panopto submission for canvas_user_id=%s because current "
+          "Canvas score %.2f is already at the maximum %.2f.",
+          user_id,
+          current_canvas_score,
+          max_canvas_score,
+        )
+        continue
 
       submission = Submission(
         student=student,
@@ -873,7 +909,7 @@ class ExternalToolAssignment(Assignment):
         "external_identifier": external_key,
         "external_user_attribute": external_user_attribute,
         "missing_user_score": float(missing_user_score),
-        "current_canvas_score": status_info.get("score"),
+        "current_canvas_score": current_canvas_score,
         "percent_watched": record.percent_watched,
         "viewed_seconds": record.viewed_seconds,
         "duration_seconds": record.duration_seconds,
@@ -881,7 +917,6 @@ class ExternalToolAssignment(Assignment):
         "watch_record_raw": record.raw,
       })
       prepared_submissions.append(submission)
-      matched_students += 1
 
     if limit is not None:
       prepared_submissions = prepared_submissions[:limit]
@@ -890,16 +925,21 @@ class ExternalToolAssignment(Assignment):
     log.info(
       f"Prepared {len(self.submissions)} external-tool submission(s) from Panopto "
       f"for assignment '{self.lms_assignment.name}'")
-    if matched_students == 0:
+    if matched_watch_records == 0:
       log.warning(
         "No Panopto watch records matched Canvas students. "
         "Students without matching records were left ungraded. "
         "Check canvas_user_attribute, external_user_attribute, student_identifier_overrides, "
         "and record_identifier_paths.")
-    elif skipped_no_watch_record > 0:
-      log.info(
-        f"Skipped {skipped_no_watch_record} Canvas student(s) with no matching Panopto watch record; "
-        "they were left ungraded.")
+    else:
+      if skipped_non_improvable > 0:
+        log.info(
+          f"Skipped {skipped_non_improvable} Canvas student(s) already at the maximum "
+          f"score; they were left ungraded.")
+      if skipped_no_watch_record > 0:
+        log.info(
+          f"Skipped {skipped_no_watch_record} Canvas student(s) with no matching Panopto watch record; "
+          "they were left ungraded.")
 
   def _load_submission_statuses(self) -> dict[int, dict[str, Any]]:
     try:

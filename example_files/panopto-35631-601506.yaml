@@ -10,6 +10,7 @@ assignment_types:
       panopto_refresh_token_path: "~/.autograder/panopto_refresh_token.json"
       canvas_user_attribute: "sis_user_id"
       external_user_attribute: "username"
+      skip_non_improvable: true
       record_identifier_paths:
         - "User.Username"
       record_percent_paths:

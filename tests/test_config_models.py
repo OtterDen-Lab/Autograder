@@ -363,6 +363,7 @@ def test_parse_run_config_accepts_external_tool_assignment_type():
           "panopto_base": "https://videos.example.edu/Panopto/",
           "panopto_client_id_env": "PANOPTO_CLIENT_ID",
           "panopto_client_secret_env": "PANOPTO_CLIENT_SECRET",
+          "skip_non_improvable": True,
         }
       }
     },
@@ -384,6 +385,7 @@ def test_parse_run_config_accepts_external_tool_assignment_type():
   assert assignment_type.settings["panopto_client_id_env"] == "PANOPTO_CLIENT_ID"
   assert assignment_type.settings[
     "panopto_client_secret_env"] == "PANOPTO_CLIENT_SECRET"
+  assert assignment_type.settings["skip_non_improvable"] is True
   assert run_config.courses[0].assignment_groups[0].assignments[0].settings[
     "panopto_id"] == "session-123"
 

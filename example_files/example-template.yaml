@@ -15,6 +15,7 @@ assignment_types:
   #     panopto_client_secret_env: "PANOPTO_CLIENT_SECRET"
   #     panopto_refresh_token_env: "PANOPTO_REFRESH_TOKEN"
   #     panopto_refresh_token_path: "~/.autograder/panopto_refresh_token.json"
+  #     skip_non_improvable: true
   #     canvas_user_attribute: "email"
   #     external_user_attribute: "email"
 

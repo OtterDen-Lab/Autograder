@@ -17,10 +17,11 @@ class DummyLmsAssignment:
 
 
 class DummyExternalLmsAssignment(DummyLmsAssignment):
-  def __init__(self, submissions, students):
+  def __init__(self, submissions, students, points_possible=None):
     super().__init__(submissions)
     self._students = list(students)
     self.name = "Video Watch Assignment"
+    self.points_possible = points_possible
 
   def get_students(self, include_names=True):
     return list(self._students)
@@ -165,6 +166,63 @@ def test_external_tool_assignment_prepare_carries_current_canvas_score(
 
   assert [submission.student.user_id for submission in assignment.submissions] == [101]
   assert assignment.submissions[0].extra_info["current_canvas_score"] == 10.0
+
+
+def test_external_tool_assignment_prepare_skips_non_improvable_scores(
+    monkeypatch):
+  students = [
+    Student(name="Student 101",
+            user_id=101,
+            _inner=SimpleNamespace(email="student101@example.edu")),
+    Student(name="Student 202",
+            user_id=202,
+            _inner=SimpleNamespace(email="student202@example.edu")),
+  ]
+  existing = [
+    SimpleNamespace(student=students[0],
+                    status=Submission.Status.UNGRADED,
+                    score=10.0),
+    SimpleNamespace(student=students[1],
+                    status=Submission.Status.UNGRADED,
+                    score=8.0),
+  ]
+  lms_assignment = DummyExternalLmsAssignment(existing,
+                                               students,
+                                               points_possible=10.0)
+
+  class FakeWatchRecord:
+    def __init__(self, user_key, percent_watched, viewed_seconds, duration_seconds):
+      self.user_key = user_key
+      self.percent_watched = percent_watched
+      self.viewed_seconds = viewed_seconds
+      self.duration_seconds = duration_seconds
+      self.raw = {"User": {"Username": user_key}}
+
+  class FakePanoptoClient:
+    def __init__(self, **kwargs):
+      pass
+
+    def fetch_watch_records(self, **kwargs):
+      return [
+        FakeWatchRecord("unified\\student101@example.edu", 100.0, 1200.0,
+                        1200.0),
+        FakeWatchRecord("unified\\student202@example.edu", 80.0, 960.0,
+                        1200.0),
+      ]
+
+  monkeypatch.setattr("Autograder.assignment.PanoptoWatchClient",
+                      FakePanoptoClient)
+
+  assignment = ExternalToolAssignment(lms_assignment=lms_assignment)
+  assignment.prepare(
+    panopto_url="https://videos.example.edu/Panopto/Pages/Viewer.aspx?id=session-123",
+    panopto_access_token="secret-token",
+    record_identifier_paths=["User.Username"],
+    skip_non_improvable=True,
+  )
+
+  assert [submission.student.user_id for submission in assignment.submissions] == [202]
+  assert assignment.submissions[0].extra_info["percent_watched"] == 80.0
 
 
 def test_external_tool_assignment_prepare_skips_students_without_watch_records(
