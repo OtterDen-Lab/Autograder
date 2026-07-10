@@ -932,6 +932,15 @@ class ExternalToolAssignment(Assignment):
     log.info(
       f"Prepared {len(self.submissions)} external-tool submission(s) from Panopto "
       f"for assignment '{self.lms_assignment.name}'")
+    log.info(
+      "Panopto prepare summary for '%s': matched_watch_records=%d, "
+      "prepared=%d, skipped_non_improvable=%d, skipped_no_watch_record=%d",
+      self.lms_assignment.name,
+      matched_watch_records,
+      len(self.submissions),
+      skipped_non_improvable,
+      skipped_no_watch_record,
+    )
     if matched_watch_records == 0:
       log.warning(
         "No Panopto watch records matched Canvas students. "

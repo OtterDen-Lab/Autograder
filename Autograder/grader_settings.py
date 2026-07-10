@@ -726,6 +726,7 @@ class ExternalToolGraderSettings:
   record_duration_seconds_paths: List[str] = field(default_factory=list)
   missing_user_score: float = 0.0
   skip_non_improvable: bool = False
+  regrade: bool = False
   request_timeout_seconds: float = 30.0
   report_errors: bool = True
   slack_webhook: Optional[str] = None
@@ -765,6 +766,7 @@ class ExternalToolGraderSettings:
       "record_duration_seconds_paths",
       "missing_user_score",
       "skip_non_improvable",
+      "regrade",
       "request_timeout_seconds",
       "report_errors",
       "slack_webhook",
@@ -906,6 +908,8 @@ class ExternalToolGraderSettings:
       skip_non_improvable=_require_bool(
         raw.get("skip_non_improvable", False),
         f"{context_label}.skip_non_improvable"),
+      regrade=_require_bool(raw.get("regrade", False),
+                            f"{context_label}.regrade"),
       request_timeout_seconds=_require_non_negative_float(
         raw.get("request_timeout_seconds"),
         f"{context_label}.request_timeout_seconds",
@@ -952,6 +956,7 @@ class ExternalToolGraderSettings:
       "record_duration_seconds_paths": list(self.record_duration_seconds_paths),
       "missing_user_score": self.missing_user_score,
       "skip_non_improvable": self.skip_non_improvable,
+      "regrade": self.regrade,
       "request_timeout_seconds": self.request_timeout_seconds,
       "report_errors": self.report_errors,
       "slack_webhook": self.slack_webhook,

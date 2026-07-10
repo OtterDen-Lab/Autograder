@@ -64,6 +64,7 @@ assignment_types:
       canvas_user_attribute: "sis_user_id"
       external_user_attribute: "username"
       skip_non_improvable: true
+      regrade: true
       record_identifier_paths:
         - "User.Username"
       record_percent_paths:
@@ -234,7 +235,6 @@ courses:
             panopto_id: 724244df-985d-458d-95b5-b3290136154c
           - id: 601494 # OSTEP 40b
             panopto_id: 1692f727-0b90-4e4f-b328-b32901462e98
-
 
 
 
