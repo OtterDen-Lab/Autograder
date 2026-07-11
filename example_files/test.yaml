@@ -84,8 +84,5 @@ courses:
       - name: Lecture Videos
         type: panopto_watch
         assignments:
-
-          - id: 601469 # OSTEP 05
-            panopto_id: f38eb220-a9b8-4951-adc6-b1e7017e4256
-          - id: 601470 # OSTEP 06
-            panopto_id: f7927e17-cc32-418b-a7ae-b1e8000c4d55
+          - id: 601478 # OSTEP 18
+            panopto_id: 2896515f-474c-4240-b708-b313012fa03c

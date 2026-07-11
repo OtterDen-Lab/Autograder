@@ -750,6 +750,7 @@ class ExternalToolAssignment(Assignment):
               panopto_refresh_token_path="~/.autograder/panopto_refresh_token.json",
               panopto_token_url=None,
               panopto_scope="api",
+              session_data_path_template="/Panopto/api/v1/sessions/{session_id}",
               watch_data_path_template="/Panopto/api/v1/sessions/{session_id}/viewers",
               canvas_user_attribute="email",
               external_user_attribute="email",
@@ -799,9 +800,25 @@ class ExternalToolAssignment(Assignment):
     client = PanoptoWatchClient(base_url=base_url,
                                 access_token=token,
                                 timeout_seconds=request_timeout_seconds)
+    fetch_session_duration = getattr(client, "fetch_session_duration_seconds",
+                                     None)
+    if callable(fetch_session_duration):
+      session_duration_seconds = fetch_session_duration(
+        session_id=session_id,
+        path_template=session_data_path_template,
+      )
+    else:
+      session_duration_seconds = None
+    if session_duration_seconds is not None:
+      log.debug(
+        f"Panopto session duration for {session_id}: {session_duration_seconds}")
+    else:
+      log.debug(
+        f"Panopto session duration for {session_id} could not be determined; falling back to viewer records")
     watch_records = client.fetch_watch_records(
       session_id=session_id,
       path_template=watch_data_path_template,
+      session_duration_seconds=session_duration_seconds,
       record_identifier_paths=list(record_identifier_paths or []),
       record_percent_paths=list(record_percent_paths or []),
       record_viewed_seconds_paths=list(record_viewed_seconds_paths or []),

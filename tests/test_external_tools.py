@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from Autograder.external_tools import (
   build_panopto_authorization_url,
   load_panopto_refresh_token,
@@ -300,3 +302,65 @@ def test_fetch_watch_records_treats_404_as_empty_list():
   )
 
   assert records == []
+
+
+def test_fetch_session_duration_seconds_reads_session_metadata():
+  from Autograder.external_tools import PanoptoWatchClient
+
+  session = _RecordingGetSession([{
+    "payload": {
+      "Session": {
+        "DurationSeconds": 3723.5,
+      }
+    }
+  }])
+  client = PanoptoWatchClient(
+    base_url="https://csumb.hosted.panopto.com",
+    access_token="token",
+    session=session,
+  )
+
+  duration = client.fetch_session_duration_seconds(
+    session_id="abc123",
+    path_template="/Panopto/api/v1/sessions/{session_id}",
+  )
+
+  assert duration == 3723.5
+  assert session.calls[0]["url"] == (
+    "https://csumb.hosted.panopto.com/Panopto/api/v1/sessions/abc123")
+
+
+def test_fetch_watch_records_uses_session_duration_for_percent_calculation():
+  from Autograder.external_tools import PanoptoWatchClient
+
+  session = _RecordingGetSession([{
+    "payload": [
+      {
+        "User": {"Username": "unified\\student@example.edu"},
+        "PercentCompleted": 100.0,
+        "MostRecentViewPositionInSeconds": 0.385631,
+      }
+    ]
+  }, {
+    "payload": []
+  }])
+  client = PanoptoWatchClient(
+    base_url="https://csumb.hosted.panopto.com",
+    access_token="token",
+    session=session,
+  )
+
+  records = client.fetch_watch_records(
+    session_id="abc123",
+    path_template="/Panopto/api/v1/sessions/{session_id}/viewers",
+    session_duration_seconds=1200.0,
+    record_identifier_paths=["User.Username"],
+    record_percent_paths=["PercentCompleted"],
+    record_viewed_seconds_paths=["MostRecentViewPositionInSeconds"],
+    record_duration_seconds_paths=[],
+  )
+
+  assert len(records) == 1
+  assert records[0].viewed_seconds == 0.385631
+  assert records[0].duration_seconds == 1200.0
+  assert records[0].percent_watched == pytest.approx(0.032135916666666664)

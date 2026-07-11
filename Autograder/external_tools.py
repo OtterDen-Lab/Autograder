@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import logging
 import os
+import re
 import threading
 from typing import Any, Optional
 from urllib.parse import urlencode, urlparse, parse_qs
@@ -61,6 +62,50 @@ def _normalize_percent(value: Optional[float]) -> Optional[float]:
   if 0.0 <= value <= 1.0:
     return value * 100.0
   return max(0.0, min(100.0, value))
+
+
+def _parse_duration_seconds(value: Any) -> Optional[float]:
+  if value is None or value == "":
+    return None
+  if isinstance(value, (int, float)):
+    return float(value)
+
+  text = str(value).strip()
+  if not text:
+    return None
+
+  try:
+    return float(text)
+  except (TypeError, ValueError):
+    pass
+
+  iso_match = re.fullmatch(
+    r"(?P<sign>-)?P(?:(?P<days>\d+(?:\.\d+)?)D)?(?:T(?:(?P<hours>\d+(?:\.\d+)?)H)?(?:(?P<minutes>\d+(?:\.\d+)?)M)?(?:(?P<seconds>\d+(?:\.\d+)?)S)?)?",
+    text,
+  )
+  if iso_match:
+    sign = -1.0 if iso_match.group("sign") else 1.0
+    days = float(iso_match.group("days") or 0.0)
+    hours = float(iso_match.group("hours") or 0.0)
+    minutes = float(iso_match.group("minutes") or 0.0)
+    seconds = float(iso_match.group("seconds") or 0.0)
+    return sign * (days * 86400.0 + hours * 3600.0 + minutes * 60.0 + seconds)
+
+  colon_parts = text.split(":")
+  if len(colon_parts) in {2, 3}:
+    try:
+      if len(colon_parts) == 2:
+        minutes = float(colon_parts[0])
+        seconds = float(colon_parts[1])
+        return minutes * 60.0 + seconds
+      hours = float(colon_parts[0])
+      minutes = float(colon_parts[1])
+      seconds = float(colon_parts[2])
+      return hours * 3600.0 + minutes * 60.0 + seconds
+    except (TypeError, ValueError):
+      return None
+
+  return None
 
 
 def normalize_panopto_identifier(value: Any) -> Optional[str]:
@@ -151,6 +196,7 @@ class PanoptoWatchClient:
                           *,
                           session_id: str,
                           path_template: str,
+                          session_duration_seconds: float | None = None,
                           record_identifier_paths: list[str],
                           record_percent_paths: list[str],
                           record_viewed_seconds_paths: list[str],
@@ -197,15 +243,24 @@ class PanoptoWatchClient:
         if user_key in (None, ""):
           continue
 
-        percent_watched = _normalize_percent(
-          _coerce_float(_first_path_value(raw, record_percent_paths)))
         viewed_seconds = _coerce_float(
           _first_path_value(raw, record_viewed_seconds_paths))
         duration_seconds = _coerce_float(
           _first_path_value(raw, record_duration_seconds_paths))
+        effective_duration_seconds = (session_duration_seconds
+                                      if session_duration_seconds is not None
+                                      else duration_seconds)
 
-        if percent_watched is None and viewed_seconds is not None and duration_seconds:
-          percent_watched = _normalize_percent(viewed_seconds / duration_seconds)
+        percent_watched = None
+        if viewed_seconds is not None and effective_duration_seconds:
+          percent_watched = _normalize_percent(
+            viewed_seconds / effective_duration_seconds)
+        else:
+          percent_watched = _normalize_percent(
+            _coerce_float(_first_path_value(raw, record_percent_paths)))
+
+        if effective_duration_seconds is None:
+          effective_duration_seconds = duration_seconds
 
         normalized_user_key = normalize_panopto_identifier(user_key)
         if normalized_user_key is None:
@@ -216,12 +271,67 @@ class PanoptoWatchClient:
             user_key=normalized_user_key,
             percent_watched=percent_watched,
             viewed_seconds=viewed_seconds,
-            duration_seconds=duration_seconds,
+            duration_seconds=effective_duration_seconds,
             raw=raw,
           ))
 
 
     return records
+
+  def fetch_session_duration_seconds(self,
+                                     *,
+                                     session_id: str,
+                                     path_template: str) -> Optional[float]:
+    url = f"{self.base_url}{path_template.format(session_id=session_id)}"
+    log.debug(f"Session metadata url being used: {url}")
+
+    response = self.session.get(
+      url,
+      headers={
+        "Authorization": f"Bearer {self.access_token}",
+        "Accept": "application/json",
+      },
+      timeout=self.timeout_seconds,
+    )
+    if response.status_code == 404:
+      log.warning(
+        "Panopto session endpoint returned 404 for session %s; treating duration as unknown.",
+        session_id,
+      )
+      return None
+    response.raise_for_status()
+
+    payload = response.json()
+    if not isinstance(payload, dict):
+      return None
+
+    duration_value = _first_path_value(payload, [
+      "DurationSeconds",
+      "durationSeconds",
+      "DurationInSeconds",
+      "durationInSeconds",
+      "Duration",
+      "duration",
+      "TotalDuration",
+      "totalDuration",
+      "LengthSeconds",
+      "lengthSeconds",
+      "Length",
+      "length",
+      "Session.DurationSeconds",
+      "Session.durationSeconds",
+      "Session.DurationInSeconds",
+      "Session.durationInSeconds",
+      "Session.Duration",
+      "Session.duration",
+      "Session.TotalDuration",
+      "Session.totalDuration",
+      "Session.LengthSeconds",
+      "Session.lengthSeconds",
+      "Session.Length",
+      "Session.length",
+    ])
+    return _parse_duration_seconds(duration_value)
 
   def _extract_record_list(self, payload: Any) -> list[Any]:
     if isinstance(payload, list):
