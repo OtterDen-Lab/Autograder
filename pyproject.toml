@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "Otter-Autograder"
-version = "0.12.6"
+version = "0.13.0"
 description = "A collection of tools for grading homework automatically"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
