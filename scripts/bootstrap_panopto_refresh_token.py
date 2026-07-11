@@ -73,7 +73,7 @@ def main() -> int:
                                         "http://127.0.0.1:8765/callback"))
   parser.add_argument("--output",
                       default=os.getenv("PANOPTO_REFRESH_TOKEN_PATH",
-                                        "~/.autograder/panopto_refresh_token.json"))
+                                        "~/.tokens/Autograder.panopto.json"))
   parser.add_argument("--port", type=int, default=8765)
   args = parser.parse_args()
 

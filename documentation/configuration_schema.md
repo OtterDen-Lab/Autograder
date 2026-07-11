@@ -104,7 +104,7 @@ The state file is written atomically after each completed assignment type.
 - `panopto_client_secret_env` (`string|null`, default `PANOPTO_CLIENT_SECRET`)
 - `panopto_refresh_token` (`string|null`)
 - `panopto_refresh_token_env` (`string|null`, default `PANOPTO_REFRESH_TOKEN`)
-- `panopto_refresh_token_path` (`string|null`, default `~/.autograder/panopto_refresh_token.json`): path used to load and rotate refresh tokens between runs
+- `panopto_refresh_token_path` (`string|null`, default `~/.tokens/Autograder.panopto.json`): path used to load and rotate refresh tokens between runs
 - `panopto_token_url` (`string|null`): optional explicit OAuth token endpoint override
 - `panopto_scope` (`string`, default `api`): OAuth scope for token requests; Panopto examples commonly use `openid api`
 - `watch_data_path_template` (`string`, default `/Panopto/api/v1/sessions/{session_id}/viewers`)

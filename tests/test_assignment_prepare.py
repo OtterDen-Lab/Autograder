@@ -291,6 +291,104 @@ def test_external_tool_assignment_prepare_uses_raw_submission_history_scores(
   assert assignment.submissions[0].extra_info["current_canvas_score"] == 8.0
 
 
+def test_external_tool_assignment_prepare_skips_stale_watch_records(
+    monkeypatch):
+  students = [
+    Student(name="Student 101",
+            user_id=101,
+            _inner=SimpleNamespace(email="student101@example.edu")),
+    Student(name="Student 202",
+            user_id=202,
+            _inner=SimpleNamespace(email="student202@example.edu")),
+  ]
+  lms_assignment = DummyExternalLmsAssignment([], students, points_possible=10.0)
+
+  class FakeWatchRecord:
+    def __init__(self, user_key, percent_watched, viewed_seconds, duration_seconds,
+                 last_viewed_at):
+      self.user_key = user_key
+      self.percent_watched = percent_watched
+      self.viewed_seconds = viewed_seconds
+      self.duration_seconds = duration_seconds
+      self.last_viewed_at = last_viewed_at
+      self.raw = {"User": {"Username": user_key}}
+
+  class FakePanoptoClient:
+    def __init__(self, **kwargs):
+      pass
+
+    def fetch_watch_records(self, **kwargs):
+      return [
+        FakeWatchRecord("unified\\student101@example.edu", 100.0, 1200.0,
+                        1200.0, "2026-07-10T14:31:33.193Z"),
+        FakeWatchRecord("unified\\student202@example.edu", 80.0, 960.0,
+                        1200.0, "2026-07-10T13:31:33.193Z"),
+      ]
+
+  monkeypatch.setattr("Autograder.assignment.PanoptoWatchClient",
+                      FakePanoptoClient)
+
+  assignment = ExternalToolAssignment(lms_assignment=lms_assignment)
+  assignment.prepare(
+    panopto_url="https://videos.example.edu/Panopto/Pages/Viewer.aspx?id=session-123",
+    panopto_access_token="secret-token",
+    record_identifier_paths=["User.Username"],
+    skip_stale_watch_buffer_multiplier=10,
+    schedule_last_completed_at="2026-07-10T14:00:00Z",
+  )
+
+  assert [submission.student.user_id for submission in assignment.submissions] == [101]
+
+
+def test_external_tool_assignment_prepare_keeps_all_records_when_stale_buffer_disabled(
+    monkeypatch):
+  students = [
+    Student(name="Student 101",
+            user_id=101,
+            _inner=SimpleNamespace(email="student101@example.edu")),
+    Student(name="Student 202",
+            user_id=202,
+            _inner=SimpleNamespace(email="student202@example.edu")),
+  ]
+  lms_assignment = DummyExternalLmsAssignment([], students, points_possible=10.0)
+
+  class FakeWatchRecord:
+    def __init__(self, user_key, percent_watched, viewed_seconds, duration_seconds,
+                 last_viewed_at):
+      self.user_key = user_key
+      self.percent_watched = percent_watched
+      self.viewed_seconds = viewed_seconds
+      self.duration_seconds = duration_seconds
+      self.last_viewed_at = last_viewed_at
+      self.raw = {"User": {"Username": user_key}}
+
+  class FakePanoptoClient:
+    def __init__(self, **kwargs):
+      pass
+
+    def fetch_watch_records(self, **kwargs):
+      return [
+        FakeWatchRecord("unified\\student101@example.edu", 100.0, 1200.0,
+                        1200.0, "2026-07-10T14:31:33.193Z"),
+        FakeWatchRecord("unified\\student202@example.edu", 80.0, 960.0,
+                        1200.0, "2026-07-10T13:31:33.193Z"),
+      ]
+
+  monkeypatch.setattr("Autograder.assignment.PanoptoWatchClient",
+                      FakePanoptoClient)
+
+  assignment = ExternalToolAssignment(lms_assignment=lms_assignment)
+  assignment.prepare(
+    panopto_url="https://videos.example.edu/Panopto/Pages/Viewer.aspx?id=session-123",
+    panopto_access_token="secret-token",
+    record_identifier_paths=["User.Username"],
+    skip_stale_watch_buffer_multiplier=0,
+    schedule_last_completed_at="2026-07-10T14:00:00Z",
+  )
+
+  assert sorted(submission.student.user_id for submission in assignment.submissions) == [101, 202]
+
+
 def test_external_tool_assignment_prepare_skips_students_without_watch_records(
     monkeypatch):
   student = Student(name="Student 101",

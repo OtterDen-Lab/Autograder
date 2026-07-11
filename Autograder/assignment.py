@@ -15,6 +15,7 @@ from Autograder.external_tools import (
   extract_panopto_session_id,
   extract_student_identifier,
   normalize_panopto_identifier,
+  parse_panopto_datetime,
   resolve_panopto_access_token,
 )
 from Autograder.registry import AssignmentRegistry
@@ -747,7 +748,7 @@ class ExternalToolAssignment(Assignment):
               panopto_client_secret_env="PANOPTO_CLIENT_SECRET",
               panopto_refresh_token=None,
               panopto_refresh_token_env="PANOPTO_REFRESH_TOKEN",
-              panopto_refresh_token_path="~/.autograder/panopto_refresh_token.json",
+              panopto_refresh_token_path="~/.tokens/Autograder.panopto.json",
               panopto_token_url=None,
               panopto_scope="api",
               session_data_path_template="/Panopto/api/v1/sessions/{session_id}",
@@ -762,6 +763,10 @@ class ExternalToolAssignment(Assignment):
               request_timeout_seconds=30.0,
               missing_user_score=0.0,
               skip_non_improvable=False,
+              skip_stale_watch_records=False,
+              skip_stale_watch_buffer_multiplier=0.0,
+              schedule_last_completed_at=None,
+              schedule_stale_watch_cutoff_at=None,
               **kwargs):
     if provider != "panopto":
       raise ValueError(f"Unsupported external tool provider: {provider}")
@@ -855,6 +860,15 @@ class ExternalToolAssignment(Assignment):
       for k, v in (student_identifier_overrides or {}).items()
     }
     student_statuses = self._load_submission_statuses()
+    last_completed_at = parse_panopto_datetime(schedule_last_completed_at)
+    stale_watch_cutoff_at = parse_panopto_datetime(
+      schedule_stale_watch_cutoff_at)
+    effective_skip_stale_watch_records = bool(
+      skip_stale_watch_records or skip_stale_watch_buffer_multiplier > 0)
+    if skip_stale_watch_buffer_multiplier <= 0:
+      stale_watch_cutoff_at = None
+    elif stale_watch_cutoff_at is None:
+      stale_watch_cutoff_at = last_completed_at
     canvas_points_possible, _ = self._resolve_canvas_points_possible()
     max_canvas_score = canvas_points_possible
     if skip_non_improvable and max_canvas_score is None:
@@ -870,10 +884,22 @@ class ExternalToolAssignment(Assignment):
         self.lms_assignment.name,
         max_canvas_score,
       )
+    if effective_skip_stale_watch_records and stale_watch_cutoff_at is None:
+      log.info(
+        "Stale-watch filtering is enabled for assignment '%s', but there is "
+        "no usable cutoff yet. All matched watch records will be kept.",
+        self.lms_assignment.name,
+      )
+    elif not effective_skip_stale_watch_records:
+      log.info(
+        "Stale-watch filtering is disabled for assignment '%s' (buffer multiplier=0).",
+        self.lms_assignment.name,
+      )
 
     prepared_submissions: list[Submission] = []
     skipped_no_watch_record = 0
     skipped_non_improvable = 0
+    skipped_stale_watch_record = 0
     matched_watch_records = 0
     for student in students:
       raw_user_id = getattr(student, "user_id", None)
@@ -893,6 +919,8 @@ class ExternalToolAssignment(Assignment):
       if external_key is None:
         external_key = extract_student_identifier(student, canvas_user_attribute)
       record = watch_by_key.get(external_key) if external_key else None
+      record_last_viewed_at = parse_panopto_datetime(
+        getattr(record, "last_viewed_at", None)) if record is not None else None
 
       log.debug(
         "Panopto mapping candidate: canvas_user_id=%s canvas_name=%s canvas_key=%s external_key=%s match=%s",
@@ -907,6 +935,19 @@ class ExternalToolAssignment(Assignment):
         skipped_no_watch_record += 1
         continue
       matched_watch_records += 1
+
+      if (effective_skip_stale_watch_records and stale_watch_cutoff_at is not None
+          and record_last_viewed_at is not None
+          and record_last_viewed_at <= stale_watch_cutoff_at):
+        skipped_stale_watch_record += 1
+        log.debug(
+          "Skipping Panopto submission for canvas_user_id=%s because last view "
+          "time %s is not newer than the stale cutoff %s.",
+          user_id,
+          record_last_viewed_at.isoformat(),
+          stale_watch_cutoff_at.isoformat(),
+        )
+        continue
 
       if (skip_non_improvable and max_canvas_score is not None
           and current_canvas_score is not None
@@ -937,6 +978,8 @@ class ExternalToolAssignment(Assignment):
         "percent_watched": record.percent_watched,
         "viewed_seconds": record.viewed_seconds,
         "duration_seconds": record.duration_seconds,
+        "last_viewed_at": (record_last_viewed_at.isoformat()
+                            if record_last_viewed_at is not None else None),
         "watch_record_found": True,
         "watch_record_raw": record.raw,
       })
@@ -951,11 +994,13 @@ class ExternalToolAssignment(Assignment):
       f"for assignment '{self.lms_assignment.name}'")
     log.info(
       "Panopto prepare summary for '%s': matched_watch_records=%d, "
-      "prepared=%d, skipped_non_improvable=%d, skipped_no_watch_record=%d",
+      "prepared=%d, skipped_non_improvable=%d, skipped_stale_watch_record=%d, "
+      "skipped_no_watch_record=%d",
       self.lms_assignment.name,
       matched_watch_records,
       len(self.submissions),
       skipped_non_improvable,
+      skipped_stale_watch_record,
       skipped_no_watch_record,
     )
     if matched_watch_records == 0:

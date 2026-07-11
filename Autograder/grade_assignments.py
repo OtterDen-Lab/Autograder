@@ -18,6 +18,7 @@ The heavy lifting is delegated to specialized modules:
 import json
 import logging
 import os
+from datetime import timedelta, timezone
 from typing import Dict, List
 
 import yaml
@@ -67,6 +68,7 @@ from Autograder.orchestration import (
 )
 from Autograder.cli.validators import resolve_records_dir
 from Autograder.schedule_state import ScheduleStateManager
+from Autograder.schedule_state import estimate_schedule_interval_seconds
 
 # Re-export for backwards compatibility with tests
 from Autograder.grader import GraderRegistry
@@ -218,6 +220,28 @@ def collect_assignments_to_grade(config: RunConfig,
                     settings,
                     (f"course[{course_config.id}] group[{group.type_name}] "
                      f"assignment[{assignment.id}]"))
+                if (schedule_manager is not None and type_config.schedule is not None
+                    and type_config.kind == "ExternalToolAssignment"):
+                    last_completed_entry = schedule_manager.state.assignment_types.get(
+                        group.type_name)
+                    if (last_completed_entry is not None
+                        and last_completed_entry.last_completed_at is not None):
+                        interval_seconds = estimate_schedule_interval_seconds(
+                            type_config.schedule)
+                        buffer_multiplier = float(
+                            settings.get("skip_stale_watch_buffer_multiplier", 0.0))
+                        buffer_seconds = (interval_seconds * buffer_multiplier
+                                          if interval_seconds is not None else 0.0)
+                        cutoff = (last_completed_entry.last_completed_at -
+                                  timedelta(seconds=buffer_seconds))
+                        settings["schedule_last_completed_at"] = (
+                            last_completed_entry.last_completed_at.astimezone(
+                                timezone.utc).isoformat(timespec="seconds").replace(
+                                    "+00:00", "Z"))
+                        if buffer_multiplier > 0.0:
+                            settings["schedule_stale_watch_cutoff_at"] = (
+                                cutoff.astimezone(timezone.utc).isoformat(
+                                    timespec="seconds").replace("+00:00", "Z"))
 
                 assignments_to_grade.append(
                     AssignmentRunRequest(

@@ -60,10 +60,11 @@ assignment_types:
       rrule: "FREQ=MINUTELY;INTERVAL=5"
     settings:
       panopto_base: "https://csumb.hosted.panopto.com/"
-      panopto_refresh_token_path: "~/.autograder/panopto_refresh_token.json"
+      panopto_refresh_token_path: "~/.tokens/Autograder.panopto.json"
       canvas_user_attribute: "sis_user_id"
       external_user_attribute: "username"
       skip_non_improvable: true
+      skip_stale_watch_buffer_multiplier: 10
       regrade: true
       record_identifier_paths:
         - "User.Username"
@@ -235,10 +236,6 @@ courses:
             panopto_id: 724244df-985d-458d-95b5-b3290136154c
           - id: 601494 # OSTEP 40b
             panopto_id: 1692f727-0b90-4e4f-b328-b32901462e98
-
-
-
-
 
 
 

@@ -364,6 +364,7 @@ def test_parse_run_config_accepts_external_tool_assignment_type():
           "panopto_client_id_env": "PANOPTO_CLIENT_ID",
           "panopto_client_secret_env": "PANOPTO_CLIENT_SECRET",
           "skip_non_improvable": True,
+          "skip_stale_watch_buffer_multiplier": 0,
           "regrade": True,
         }
       }
@@ -387,9 +388,20 @@ def test_parse_run_config_accepts_external_tool_assignment_type():
   assert assignment_type.settings[
     "panopto_client_secret_env"] == "PANOPTO_CLIENT_SECRET"
   assert assignment_type.settings["skip_non_improvable"] is True
+  assert assignment_type.settings["skip_stale_watch_buffer_multiplier"] == 0
   assert assignment_type.settings["regrade"] is True
   assert run_config.courses[0].assignment_groups[0].assignments[0].settings[
     "panopto_id"] == "session-123"
+
+
+def test_external_tool_settings_default_panopto_refresh_token_path():
+  from Autograder.grader_settings import ExternalToolGraderSettings
+
+  settings = ExternalToolGraderSettings.from_raw({
+    "panopto_base": "https://videos.example.edu/Panopto/",
+  }, "assignment_types.panopto_watch.settings")
+
+  assert settings.panopto_refresh_token_path == "~/.tokens/Autograder.panopto.json"
 
 
 def test_parse_run_config_accepts_assignment_type_schedule():

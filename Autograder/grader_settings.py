@@ -713,7 +713,7 @@ class ExternalToolGraderSettings:
   panopto_client_secret_env: Optional[str] = "PANOPTO_CLIENT_SECRET"
   panopto_refresh_token: Optional[str] = None
   panopto_refresh_token_env: Optional[str] = "PANOPTO_REFRESH_TOKEN"
-  panopto_refresh_token_path: Optional[str] = "~/.autograder/panopto_refresh_token.json"
+  panopto_refresh_token_path: Optional[str] = "~/.tokens/Autograder.panopto.json"
   panopto_token_url: Optional[str] = None
   panopto_scope: str = "api"
   watch_data_path_template: str = "/Panopto/api/v1/sessions/{session_id}/viewers"
@@ -726,6 +726,7 @@ class ExternalToolGraderSettings:
   record_duration_seconds_paths: List[str] = field(default_factory=list)
   missing_user_score: float = 0.0
   skip_non_improvable: bool = False
+  skip_stale_watch_buffer_multiplier: float = 0.0
   regrade: bool = False
   request_timeout_seconds: float = 30.0
   report_errors: bool = True
@@ -766,6 +767,7 @@ class ExternalToolGraderSettings:
       "record_duration_seconds_paths",
       "missing_user_score",
       "skip_non_improvable",
+      "skip_stale_watch_buffer_multiplier",
       "regrade",
       "request_timeout_seconds",
       "report_errors",
@@ -842,7 +844,7 @@ class ExternalToolGraderSettings:
         f"{context_label}.panopto_refresh_token_env"),
       panopto_refresh_token_path=_require_optional_str(
         raw.get("panopto_refresh_token_path",
-                "~/.autograder/panopto_refresh_token.json"),
+                "~/.tokens/Autograder.panopto.json"),
         f"{context_label}.panopto_refresh_token_path"),
       panopto_token_url=_require_optional_str(raw.get("panopto_token_url"),
                                               f"{context_label}.panopto_token_url"),
@@ -908,6 +910,10 @@ class ExternalToolGraderSettings:
       skip_non_improvable=_require_bool(
         raw.get("skip_non_improvable", False),
         f"{context_label}.skip_non_improvable"),
+      skip_stale_watch_buffer_multiplier=_require_non_negative_float(
+        raw.get("skip_stale_watch_buffer_multiplier", 0.0),
+        f"{context_label}.skip_stale_watch_buffer_multiplier",
+        0.0),
       regrade=_require_bool(raw.get("regrade", False),
                             f"{context_label}.regrade"),
       request_timeout_seconds=_require_non_negative_float(
@@ -956,6 +962,7 @@ class ExternalToolGraderSettings:
       "record_duration_seconds_paths": list(self.record_duration_seconds_paths),
       "missing_user_score": self.missing_user_score,
       "skip_non_improvable": self.skip_non_improvable,
+      "skip_stale_watch_buffer_multiplier": self.skip_stale_watch_buffer_multiplier,
       "regrade": self.regrade,
       "request_timeout_seconds": self.request_timeout_seconds,
       "report_errors": self.report_errors,

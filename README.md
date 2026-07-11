@@ -31,7 +31,7 @@ python scripts/bootstrap_panopto_refresh_token.py
 
 It will print an authorization URL, capture the redirect on `127.0.0.1:8765`,
 and write the resulting refresh token to
-`~/.autograder/panopto_refresh_token.json` by default.
+`~/.tokens/Autograder.panopto.json` by default.
 
 ### 2. Create a grading configuration
 
@@ -80,7 +80,7 @@ assignment_types:
     grader: panopto-watch-grader
     settings:
       panopto_base: "https://csumb.hosted.panopto.com/Panopto/"
-      panopto_refresh_token_path: "~/.autograder/panopto_refresh_token.json"
+      panopto_refresh_token_path: "~/.tokens/Autograder.panopto.json"
       canvas_user_attribute: "sis_user_id"
       external_user_attribute: "username"
 

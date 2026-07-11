@@ -161,6 +161,21 @@ def _compile_rule(schedule: ScheduleConfig):
   return rrulestr(schedule.rrule, dtstart=dtstart)
 
 
+def estimate_schedule_interval_seconds(schedule: ScheduleConfig) -> Optional[float]:
+  rule = _compile_rule(schedule)
+  first = rule.after(datetime(1970, 1, 1, tzinfo=ZoneInfo(schedule.timezone)),
+                     inc=True)
+  if first is None:
+    return None
+  second = rule.after(first, inc=False)
+  if second is None:
+    return None
+  interval_seconds = (second - first).total_seconds()
+  if interval_seconds <= 0:
+    return None
+  return interval_seconds
+
+
 def latest_due_occurrence(schedule: ScheduleConfig,
                           now_utc: Optional[datetime] = None) -> Optional[datetime]:
   now_utc = now_utc or datetime.now(timezone.utc)

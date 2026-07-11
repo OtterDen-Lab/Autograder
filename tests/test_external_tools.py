@@ -339,6 +339,7 @@ def test_fetch_watch_records_uses_session_duration_for_percent_calculation():
         "User": {"Username": "unified\\student@example.edu"},
         "PercentCompleted": 100.0,
         "MostRecentViewPositionInSeconds": 0.385631,
+        "LastViewedDateTime": "2026-07-10T14:31:33.193Z",
       }
     ]
   }, {
@@ -364,3 +365,5 @@ def test_fetch_watch_records_uses_session_duration_for_percent_calculation():
   assert records[0].viewed_seconds == 0.385631
   assert records[0].duration_seconds == 1200.0
   assert records[0].percent_watched == pytest.approx(0.032135916666666664)
+  assert records[0].last_viewed_at is not None
+  assert records[0].last_viewed_at.isoformat() == "2026-07-10T14:31:33.193000+00:00"

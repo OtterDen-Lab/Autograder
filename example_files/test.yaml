@@ -60,10 +60,11 @@ assignment_types:
       rrule: "FREQ=MINUTELY;INTERVAL=5"
     settings:
       panopto_base: "https://csumb.hosted.panopto.com/"
-      panopto_refresh_token_path: "~/.autograder/panopto_refresh_token.json"
+      panopto_refresh_token_path: "~/.tokens/Autograder.panopto.json"
       canvas_user_attribute: "sis_user_id"
       external_user_attribute: "username"
       skip_non_improvable: true
+      skip_stale_watch_buffer_multiplier: 10
       regrade: true
       record_identifier_paths:
         - "User.Username"

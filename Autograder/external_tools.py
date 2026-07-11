@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ class ExternalWatchRecord:
   percent_watched: Optional[float] = None
   viewed_seconds: Optional[float] = None
   duration_seconds: Optional[float] = None
+  last_viewed_at: Optional[datetime] = None
   raw: Optional[dict[str, Any]] = None
 
 
@@ -62,6 +64,26 @@ def _normalize_percent(value: Optional[float]) -> Optional[float]:
   if 0.0 <= value <= 1.0:
     return value * 100.0
   return max(0.0, min(100.0, value))
+
+
+def parse_panopto_datetime(value: Any) -> Optional[datetime]:
+  if value is None or value == "":
+    return None
+  if isinstance(value, datetime):
+    dt = value
+  else:
+    text = str(value).strip()
+    if not text:
+      return None
+    if text.endswith("Z"):
+      text = f"{text[:-1]}+00:00"
+    try:
+      dt = datetime.fromisoformat(text)
+    except ValueError:
+      return None
+  if dt.tzinfo is None:
+    dt = dt.replace(tzinfo=timezone.utc)
+  return dt.astimezone(timezone.utc)
 
 
 def _parse_duration_seconds(value: Any) -> Optional[float]:
@@ -262,6 +284,14 @@ class PanoptoWatchClient:
         if effective_duration_seconds is None:
           effective_duration_seconds = duration_seconds
 
+        last_viewed_at = parse_panopto_datetime(
+          _first_path_value(raw, [
+            "LastViewedDateTime",
+            "lastViewedDateTime",
+            "ViewedDateTime",
+            "viewedDateTime",
+          ]))
+
         normalized_user_key = normalize_panopto_identifier(user_key)
         if normalized_user_key is None:
           continue
@@ -272,6 +302,7 @@ class PanoptoWatchClient:
             percent_watched=percent_watched,
             viewed_seconds=viewed_seconds,
             duration_seconds=effective_duration_seconds,
+            last_viewed_at=last_viewed_at,
             raw=raw,
           ))
 
