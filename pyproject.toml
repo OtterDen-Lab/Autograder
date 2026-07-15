@@ -34,7 +34,7 @@ dependencies = [
     "openai~=1.93",
     "anthropic~=0.57",
     "ollama~=0.6",
-    "lms-interface @ https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.6.1/lms_interface-0.6.1-py3-none-any.whl",
+    "lms-interface @ https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.6.2/lms_interface-0.6.2-py3-none-any.whl",
 ]
 
 [project.optional-dependencies]
