@@ -1,3 +1,4 @@
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -299,6 +300,8 @@ def test_collect_assignments_to_grade_builds_typed_requests(monkeypatch):
   assert request.settings["records_dir"] == "/tmp/records"
   assert captured_init["privacy_mode"] == "blind"
   assert captured_init["reveal_identity"] is False
+  assert captured_init["env_path"] == os.path.expanduser(
+    "~/.tokens/autograder.env")
 
 
 def test_parse_run_config_accepts_privacy_mode_and_reveal_identity():
@@ -401,7 +404,7 @@ def test_external_tool_settings_default_panopto_refresh_token_path():
     "panopto_base": "https://videos.example.edu/Panopto/",
   }, "assignment_types.panopto_watch.settings")
 
-  assert settings.panopto_refresh_token_path == "~/.tokens/Autograder.panopto.json"
+  assert settings.panopto_refresh_token_path == "~/.tokens/autograder.panopto.json"
 
 
 def test_parse_run_config_accepts_assignment_type_schedule():

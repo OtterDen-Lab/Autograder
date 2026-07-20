@@ -32,6 +32,7 @@ from Autograder.config_models import (
     parse_run_config,
 )
 from Autograder import exceptions as autograder_exceptions
+from Autograder.helpers.panopto import refresh_panopto_token
 
 # Import from new modular structure
 from Autograder.cli import (
@@ -130,7 +131,7 @@ def collect_assignments_to_grade(config: RunConfig,
     Returns:
         List of assignment run requests ready for grading
     """
-    env_path = args.env or os.path.join(os.path.expanduser("~"), ".env")
+    env_path = args.env or os.path.expanduser("~/.tokens/autograder.env")
     reveal_identity = resolve_reveal_identity(args, config)
     idempotency_key, idempotency_state_dir = resolve_idempotency_settings(
         args, config)
@@ -182,7 +183,7 @@ def collect_assignments_to_grade(config: RunConfig,
         if is_lms_exception(e) or isinstance(e, ValueError):
             raise autograder_exceptions.LMSError(
                 "Failed to initialize Canvas interface. "
-                "Verify .env credentials (CANVAS_API_URL/CANVAS_API_KEY), network connectivity, and API token validity."
+                "Verify credentials in ~/.tokens/autograder.env (CANVAS_API_URL/CANVAS_API_KEY), network connectivity, and API token validity."
             ) from e
         raise
 
@@ -359,6 +360,9 @@ def main() -> int:
         Exit code (0 for success, 1 for failure)
     """
     args = parse_args()
+
+    if getattr(args, "command", None) == "refresh-panopto-token":
+        return refresh_panopto_token(args)
 
     # Handle --list-graders early, before any config loading
     if getattr(args, 'list_graders', False):

@@ -1,5 +1,5 @@
 prod: true
-push: false
+push: true
 privacy_mode: id_only
 
 reporting:
@@ -60,7 +60,7 @@ assignment_types:
       rrule: "FREQ=MINUTELY;INTERVAL=5"
     settings:
       panopto_base: "https://csumb.hosted.panopto.com/"
-      panopto_refresh_token_path: "~/.tokens/Autograder.panopto.json"
+      panopto_refresh_token_path: "~/.tokens/autograder.panopto.json"
       canvas_user_attribute: "sis_user_id"
       external_user_attribute: "username"
       skip_non_improvable: true
@@ -75,15 +75,58 @@ assignment_types:
       allow_late_penalty: false
 
 courses:
+  # - name: CST334
+  #   id: 31580
+  #   slack_channel: C09HR2J5EBF
+
+  #   assignment_groups:
+  #     - name: Programming Assignments
+  #       type: programming
+  #       settings:
+  #         base_image_name: "samogden/cst334"
+  #         source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
+  #         golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
+  #         files_from_golden:
+  #           - "tests/unittests_reserved.c"
+  #         student_code_path: "src"
+  #         num_repeats: 10
+  #       file_paths:
+  #         '.*student_code.*\.c':
+  #           path: "src/student_code.c" # target filename, will force to change into this
+  #         '.*student_code.*\.h':
+  #           path: "include/student_code.h" # target filename, will force to change into this
+  #       assignments:
+  #         - {id: 553736, repo_path: PA1}
+  #         - {id: 553737, repo_path: PA2}
+  #         - {id: 553738, repo_path: PA3}
+  #         - {id: 553739, repo_path: PA4}
+  #         - {id: 553740, repo_path: PA5}
+  #         - {id: 553741, repo_path: PA6}
+
+  #     - name: Learning Logs
+  #       type: weekly-study-notes
+  #       assignments:
+  #         - 553728  # LL2
+  #         - 553729  # LL3
+  #         - 553730  # LL4
+  #         - 553731  # LL5
+  #         - 553732  # LL6
+  #         - 553733  # LL7
+  #         - 553734  # LL8
+  #         - 553735  # LL9
+  #         - 553723  # LL10
+  #         - 553724  # LL11
+  #         - 553725  # LL12
+  #         - 553726  # LL13
+  #         - 553727  # LL14
 
   - name: CST334online
     id: 35631
     slack_channel: C09HR2J5EBF
 
     assignment_groups:
-
-      - name: Lecture Videos
-        type: panopto_watch
+      - name: Learning Logs
+        type: weekly-study-notes-online
         assignments:
-          - id: 601478 # OSTEP 18
-            panopto_id: 2896515f-474c-4240-b708-b313012fa03c
+          - 601457 # Week 3
+          

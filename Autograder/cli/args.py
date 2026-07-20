@@ -7,6 +7,7 @@ import logging
 import os
 
 from Autograder.registry import GraderRegistry, AssignmentRegistry
+from Autograder.helpers.panopto import add_refresh_panopto_token_arguments
 
 log = logging.getLogger(__name__)
 
@@ -72,8 +73,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Path to grading YAML configuration")
     parser.add_argument("--env",
-                        default=None,
-                        help="Path to the .env file (defaults to ~/.env)")
+                        default="~/.tokens/autograder.env",
+                        help="Path to the credential env file (defaults to ~/.tokens/autograder.env)")
     parser.add_argument("--limit", default=None, type=int)
     parser.add_argument("--student-id",
                         default=None,
@@ -138,8 +139,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="List available graders and their compatible assignment kinds, then exit"
     )
+    subparsers = parser.add_subparsers(dest="command")
+    refresh_parser = subparsers.add_parser(
+        "refresh-panopto-token",
+        help="Refresh the Panopto OAuth token using a browser login")
+    add_refresh_panopto_token_arguments(refresh_parser, include_env=True)
 
     args = parser.parse_args()
+
+    if args.command == "refresh-panopto-token":
+        args.env = os.path.abspath(
+            os.path.expanduser(getattr(args, "env", "~/.tokens/autograder.env")))
+        return args
 
     # --list-graders doesn't need a YAML file
     if args.list_graders:
@@ -151,8 +162,9 @@ def parse_args() -> argparse.Namespace:
     if not os.path.isfile(args.yaml):
         parser.error(f"--yaml file not found: {args.yaml}")
 
-    if args.env is not None:
-        args.env = os.path.abspath(os.path.expanduser(args.env))
+    raw_env_path = args.env
+    args.env = os.path.abspath(os.path.expanduser(args.env))
+    if raw_env_path != "~/.tokens/autograder.env":
         if not os.path.isfile(args.env):
             parser.error(f"--env file not found: {args.env}")
 

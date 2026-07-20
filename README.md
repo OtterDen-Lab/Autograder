@@ -12,26 +12,25 @@ pip install Otter-Autograder
 
 ### 1. Set up Canvas API credentials
 
-Create a `.env` file (by default this tool reads `~/.env`):
+Create `~/.tokens/autograder.env`:
 
 ```bash
 CANVAS_API_KEY=your_canvas_api_key_here
 CANVAS_API_URL=https://your-institution.instructure.com
 PANOPTO_CLIENT_ID=your_panopto_client_id_here
 PANOPTO_CLIENT_SECRET=your_panopto_client_secret_here
-PANOPTO_REFRESH_TOKEN=your_panopto_refresh_token_here
 ```
 
-If you need to bootstrap the first refresh token, run the helper from a machine
-with a browser:
+To bootstrap or refresh the Panopto token, run this from a machine with a
+browser:
 
 ```bash
-python scripts/bootstrap_panopto_refresh_token.py
+grade-assignments refresh-panopto-token
 ```
 
 It will print an authorization URL, capture the redirect on `127.0.0.1:8765`,
 and write the resulting refresh token to
-`~/.tokens/Autograder.panopto.json` by default.
+`~/.tokens/autograder.panopto.json` by default.
 
 ### 2. Create a grading configuration
 
@@ -80,7 +79,7 @@ assignment_types:
     grader: panopto-watch-grader
     settings:
       panopto_base: "https://csumb.hosted.panopto.com/Panopto/"
-      panopto_refresh_token_path: "~/.tokens/Autograder.panopto.json"
+      panopto_refresh_token_path: "~/.tokens/autograder.panopto.json"
       canvas_user_attribute: "sis_user_id"
       external_user_attribute: "username"
 
@@ -103,7 +102,7 @@ grade-assignments --yaml assignments.yaml
 Use a specific env file:
 
 ```bash
-grade-assignments --yaml assignments.yaml --env /path/to/.env
+grade-assignments --yaml assignments.yaml --env /path/to/credentials.env
 ```
 
 Temporarily include Canvas numeric IDs in logs (break-glass):

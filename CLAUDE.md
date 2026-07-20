@@ -204,7 +204,7 @@ Use example files in `example_files/` as templates:
 The system defaults to non-prod Canvas for safety. To use production:
 
 ```bash
-# In ~/.env
+# In ~/.tokens/autograder.env
 USE_PROD_CANVAS=true
 CANVAS_API_KEY_PROD=your_prod_key
 CANVAS_API_URL_PROD=https://csumb.instructure.com

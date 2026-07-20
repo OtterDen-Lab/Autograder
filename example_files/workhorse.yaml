@@ -60,7 +60,7 @@ assignment_types:
       rrule: "FREQ=MINUTELY;INTERVAL=5"
     settings:
       panopto_base: "https://csumb.hosted.panopto.com/"
-      panopto_refresh_token_path: "~/.tokens/Autograder.panopto.json"
+      panopto_refresh_token_path: "~/.tokens/autograder.panopto.json"
       canvas_user_attribute: "sis_user_id"
       external_user_attribute: "username"
       skip_non_improvable: true
@@ -150,13 +150,13 @@ courses:
       - name: Learning Logs
         type: weekly-study-notes-online
         assignments:
-          - 601455
-          - 601456
-          - 601457
-          - 601458
-          - 601459
-          - 601460
-          - 601461
+          - 601455 # Week 1
+          - 601456 # Week 2
+          - 601457 # Week 3
+          - 601458 # Week 4
+          - 601459 # Week 5
+          - 601460 # Week 6
+          - 601461 # Week 7
 
       - name: Lecture Videos
         type: panopto_watch
@@ -236,7 +236,6 @@ courses:
             panopto_id: 724244df-985d-458d-95b5-b3290136154c
           - id: 601494 # OSTEP 40b
             panopto_id: 1692f727-0b90-4e4f-b328-b32901462e98
-
 
 
 

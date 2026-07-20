@@ -369,8 +369,8 @@ class AIHelper(abc.ABC):
 
   def __init__(self) -> None:
     if self._client is None:
-      log.debug("Loading dotenv")  # Load the .env file
-      dotenv.load_dotenv(os.path.expanduser('~/.env'))
+      log.debug("Loading credential env file")
+      dotenv.load_dotenv(os.path.expanduser("~/.tokens/autograder.env"))
 
   @classmethod
   @abc.abstractmethod

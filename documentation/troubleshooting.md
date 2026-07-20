@@ -20,7 +20,7 @@ This guide covers common runtime failures and the fastest way to recover.
 
 ### Checks
 
-- Confirm `.env` values:
+- Confirm values in `~/.tokens/autograder.env`:
   - `CANVAS_API_URL`
   - `CANVAS_API_KEY`
 - Verify token still has course access.

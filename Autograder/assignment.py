@@ -748,7 +748,7 @@ class ExternalToolAssignment(Assignment):
               panopto_client_secret_env="PANOPTO_CLIENT_SECRET",
               panopto_refresh_token=None,
               panopto_refresh_token_env="PANOPTO_REFRESH_TOKEN",
-              panopto_refresh_token_path="~/.tokens/Autograder.panopto.json",
+              panopto_refresh_token_path="~/.tokens/autograder.panopto.json",
               panopto_token_url=None,
               panopto_scope="api",
               session_data_path_template="/Panopto/api/v1/sessions/{session_id}",

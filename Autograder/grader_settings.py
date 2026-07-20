@@ -713,7 +713,7 @@ class ExternalToolGraderSettings:
   panopto_client_secret_env: Optional[str] = "PANOPTO_CLIENT_SECRET"
   panopto_refresh_token: Optional[str] = None
   panopto_refresh_token_env: Optional[str] = "PANOPTO_REFRESH_TOKEN"
-  panopto_refresh_token_path: Optional[str] = "~/.tokens/Autograder.panopto.json"
+  panopto_refresh_token_path: Optional[str] = "~/.tokens/autograder.panopto.json"
   panopto_token_url: Optional[str] = None
   panopto_scope: str = "api"
   watch_data_path_template: str = "/Panopto/api/v1/sessions/{session_id}/viewers"
@@ -844,7 +844,7 @@ class ExternalToolGraderSettings:
         f"{context_label}.panopto_refresh_token_env"),
       panopto_refresh_token_path=_require_optional_str(
         raw.get("panopto_refresh_token_path",
-                "~/.tokens/Autograder.panopto.json"),
+                "~/.tokens/autograder.panopto.json"),
         f"{context_label}.panopto_refresh_token_path"),
       panopto_token_url=_require_optional_str(raw.get("panopto_token_url"),
                                               f"{context_label}.panopto_token_url"),

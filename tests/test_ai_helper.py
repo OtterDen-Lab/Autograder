@@ -10,6 +10,7 @@ Covers:
 """
 
 import json
+import os
 import pytest
 import httpx
 from unittest.mock import MagicMock, patch
@@ -21,6 +22,23 @@ from tests.fixtures.llm_mocks import (
     MockRateLimitError,
     make_grading_result,
 )
+
+
+def test_ai_helper_loads_project_credential_env(monkeypatch):
+  loaded_paths = []
+
+  class TestAIHelper(ai_helper.AIHelper):
+    @classmethod
+    def query_ai(cls, message, attachments, *args, **kwargs):
+      return "", {}
+
+  monkeypatch.setattr(ai_helper.dotenv, "load_dotenv",
+                      lambda path: loaded_paths.append(path))
+  TestAIHelper()
+
+  assert loaded_paths == [
+    os.path.expanduser("~/.tokens/autograder.env")
+  ]
 
 
 class TestGetModelForTier:

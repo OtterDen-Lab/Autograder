@@ -159,6 +159,25 @@ def test_parse_args_accepts_explicit_yaml(monkeypatch, tmp_path):
   assert args.yaml == str(yaml_file)
 
 
+def test_parse_args_accepts_refresh_panopto_token_command(monkeypatch):
+  monkeypatch.setattr(sys, "argv",
+                      ["grade-assignments", "refresh-panopto-token"])
+
+  args = grade_assignments.parse_args()
+
+  assert args.command == "refresh-panopto-token"
+  assert args.env == os.path.expanduser("~/.tokens/autograder.env")
+
+
+def test_main_runs_refresh_panopto_token_command(monkeypatch):
+  args = SimpleNamespace(command="refresh-panopto-token")
+  monkeypatch.setattr(grade_assignments, "parse_args", lambda: args)
+  monkeypatch.setattr(grade_assignments, "refresh_panopto_token",
+                      lambda received_args: 17)
+
+  assert grade_assignments.main() == 17
+
+
 def test_parse_args_accepts_reveal_identity_flag(monkeypatch, tmp_path):
   yaml_file = tmp_path / "config.yaml"
   yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
