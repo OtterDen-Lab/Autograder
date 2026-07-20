@@ -196,7 +196,7 @@ class ScheduleStateManager:
     self.state = state or load_schedule_state(self.path)
     self._planned_counts: Counter[str] = Counter()
     self._seen_counts: Counter[str] = Counter()
-    self._successful_counts: Counter[str] = Counter()
+    self._pushed_counts: Counter[str] = Counter()
     self._failed_types: set[str] = set()
     self._completed_types: set[str] = set()
     self.write_error: Optional[Exception] = None
@@ -210,7 +210,7 @@ class ScheduleStateManager:
     with self._lock:
       self._planned_counts = Counter(a.assignment_type for a in assignments)
       self._seen_counts = Counter()
-      self._successful_counts = Counter()
+      self._pushed_counts = Counter()
       self._failed_types = set()
       self._completed_types = set()
 
@@ -243,8 +243,14 @@ class ScheduleStateManager:
       if assignment_type_name not in self._planned_counts:
         return
       self._seen_counts[assignment_type_name] += 1
-      if result.get("success"):
-        self._successful_counts[assignment_type_name] += 1
+      finalize_summary = result.get("finalize_summary") or {}
+      pushed_new_grades = (
+        result.get("success")
+        and bool(finalize_summary.get("push_enabled"))
+        and int(finalize_summary.get("push_succeeded", 0) or 0) > 0
+        and int(finalize_summary.get("push_failed", 0) or 0) == 0)
+      if pushed_new_grades:
+        self._pushed_counts[assignment_type_name] += 1
       else:
         self._failed_types.add(assignment_type_name)
 
@@ -256,7 +262,7 @@ class ScheduleStateManager:
         return
       if assignment_type_name in self._failed_types:
         return
-      if self._successful_counts[assignment_type_name] != planned:
+      if self._pushed_counts[assignment_type_name] != planned:
         return
 
       self._completed_types.add(assignment_type_name)

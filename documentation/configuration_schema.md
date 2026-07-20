@@ -30,7 +30,8 @@ Each entry:
 The scheduler is run by the CLI when the process wakes up. Use cron or a
 similar external trigger to invoke `grade-assignments` frequently, then the
 tool consults `LOG_DIR/schedule_state.yaml` to decide whether a type is due.
-The state file is written atomically after each completed assignment type.
+The state file is written atomically only after every assignment in the type
+pushes at least one new grade to Canvas without a push failure.
 
 ### template-grader settings
 

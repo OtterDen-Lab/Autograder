@@ -35,10 +35,18 @@ def test_schedule_state_manager_writes_yaml_atomically(tmp_path):
   ]
 
   manager.register_planned_assignments(assignments)
-  manager.record_assignment_result(assignments[0], {"success": True})
+  successful_push = {
+    "success": True,
+    "finalize_summary": {
+      "push_enabled": True,
+      "push_succeeded": 1,
+      "push_failed": 0,
+    },
+  }
+  manager.record_assignment_result(assignments[0], successful_push)
   assert not state_path.exists()
 
-  manager.record_assignment_result(assignments[1], {"success": True})
+  manager.record_assignment_result(assignments[1], successful_push)
   assert state_path.exists()
   assert not list(tmp_path.glob("*.tmp"))
 
@@ -46,3 +54,40 @@ def test_schedule_state_manager_writes_yaml_atomically(tmp_path):
   assert "programming" in loaded.assignment_types
   assert loaded.assignment_types["programming"].last_completed_at is not None
 
+
+def test_schedule_state_manager_requires_successful_canvas_push(tmp_path):
+  state_path = tmp_path / "schedule_state.yaml"
+  manager = ScheduleStateManager(path=str(state_path), state=ScheduleState())
+  assignment = SimpleNamespace(assignment_type="programming")
+
+  manager.register_planned_assignments([assignment])
+  manager.record_assignment_result(assignment, {
+    "success": True,
+    "finalize_summary": {
+      "push_enabled": False,
+      "push_succeeded": 0,
+      "push_failed": 0,
+    },
+  })
+
+  assert not state_path.exists()
+  assert "programming" not in manager.state.assignment_types
+
+
+def test_schedule_state_manager_requires_push_without_failures(tmp_path):
+  state_path = tmp_path / "schedule_state.yaml"
+  manager = ScheduleStateManager(path=str(state_path), state=ScheduleState())
+  assignment = SimpleNamespace(assignment_type="programming")
+
+  manager.register_planned_assignments([assignment])
+  manager.record_assignment_result(assignment, {
+    "success": True,
+    "finalize_summary": {
+      "push_enabled": True,
+      "push_succeeded": 1,
+      "push_failed": 1,
+    },
+  })
+
+  assert not state_path.exists()
+  assert "programming" not in manager.state.assignment_types
