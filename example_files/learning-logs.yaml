@@ -8,6 +8,7 @@ assignment_types:
     settings:
       prefer_anthropic: true
       grade_after_lock_date: true
+      learning_logs_dir: "~/learning-logs"
 
 courses:
   - name: CST334

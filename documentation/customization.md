@@ -41,6 +41,8 @@ Use these settings for text grading:
 - `phase1_tier`, `phase2_tier`, `phase25_tier`: `small|medium|large`
 - `grade_after_lock_date`: delay grading until due/lock threshold
 - `rate_limit_retries`: provider retry count on 429/rate-limit responses (default `0`, fail-fast)
+- `learning_logs_dir`: optional absolute or `~/` directory for per-student YAML
+  learning logs; paths inside this repository are blocked by default
 - `prompts`: optional template overrides for:
   - `aggregate_analysis`
   - `individual_grading`
@@ -119,7 +121,15 @@ assignment_types:
           points: 5
           description: "Depth of engagement with key concepts"
         word_threshold: 300
+      learning_logs_dir: "~/learning-logs"
 ```
+
+Each successful student assessment writes
+`YYYY-MM-DD.[course name].[assignment id].[student name].yaml`. Names are
+sanitized for safe filenames. The YAML has `completed`, `summary`,
+`topics_understood`, `topics_struggling`, and `recommendations`; incomplete
+submissions use `completed: false` with empty lists so the model does not infer
+learning from missing work.
 
 ### Recipe: Code-Level Prompt/Rubric Changes (Advanced)
 

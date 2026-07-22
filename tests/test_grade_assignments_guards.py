@@ -13,6 +13,7 @@ from Autograder import exceptions as autograder_exceptions
 from Autograder.config_models import (AssignmentRunRequest, CourseConfig,
                                       RunConfig, parse_run_config)
 from Autograder.grader_context import GraderContext
+from Autograder.cli.validators import resolve_learning_logs_dir
 from lms_interface.classes import Feedback, Submission, Student
 
 
@@ -933,6 +934,16 @@ def test_resolve_records_dir_allows_repo_subpath_with_override(monkeypatch):
 
   resolved = grade_assignments.resolve_records_dir(records_path)
   assert resolved.endswith(os.path.join("records", "workhorse"))
+
+
+def test_resolve_learning_logs_dir_requires_safe_absolute_path(monkeypatch):
+  with pytest.raises(ValueError, match="absolute path"):
+    resolve_learning_logs_dir("./learning-logs")
+
+  monkeypatch.delenv("AUTOGRADER_ALLOW_IN_REPO_RECORDS", raising=False)
+  repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+  with pytest.raises(ValueError, match="outside the repository root"):
+    resolve_learning_logs_dir(os.path.join(repo_root, "learning-logs"))
 
 
 def test_collect_push_failure_lines_summarizes_results():

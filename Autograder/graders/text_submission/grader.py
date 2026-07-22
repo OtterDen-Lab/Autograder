@@ -16,9 +16,12 @@ To create a custom text grader:
 
 import logging
 import os
+import re
 import requests
 from datetime import datetime
 from typing import Any, Dict, List
+
+import yaml
 
 from Autograder.grader import Grader
 from Autograder import config_models
@@ -103,6 +106,7 @@ class BaseTextSubmissionGrader(Grader):
         # Configuration from kwargs
         self.slack_channel = kwargs.get('slack_channel')
         self.records_dir = None
+        self.learning_logs_dir = None
         self.reveal_identity = False
         self.grader_context: GraderContext | None = kwargs.get('grader_context')
         self.prompt_templates: Dict[str, str] = dict(
@@ -434,6 +438,10 @@ class BaseTextSubmissionGrader(Grader):
         self.records_dir = kwargs.get('records_dir')
         if self.records_dir is None:
             self.records_dir = getattr(runtime_context, "records_dir", None)
+        learning_logs_dir = kwargs.get("learning_logs_dir")
+        if learning_logs_dir:
+            from Autograder.cli.validators import resolve_learning_logs_dir
+            self.learning_logs_dir = resolve_learning_logs_dir(learning_logs_dir)
         self.reveal_identity = kwargs.get(
             'reveal_identity',
             getattr(runtime_context, "reveal_identity", False))
@@ -495,6 +503,8 @@ class BaseTextSubmissionGrader(Grader):
         log.info("Phase 2/3: Individual grading")
         self.individual_results = self.phase_2_individual_grading(
             submission_data, self.core_topics)
+
+        self._write_learning_logs(assignment, self.individual_results)
 
         self._apply_grades_to_submissions(assignment.submissions,
                                           self.individual_results)
@@ -711,24 +721,8 @@ class BaseTextSubmissionGrader(Grader):
                 f"   Grading {i}/{len(submission_data)}: {display_name} ({word_count} words)"
             )
 
-            if not submission_text.strip():
-                result = {
-                    "student_id": student_id,
-                    "engagement_score": 0,
-                    "relevance_score": 0,
-                    "explanation_quality_score": 0,
-                    "topics_covered": [],
-                    "topics_missing": core_topics,
-                    "topics_needing_review": [],
-                    "misconception_notes": "",
-                    "word_count": 0,
-                    "needs_support": True,
-                    "support_reason": "No submission content",
-                    "feedback": "Please submit your study notes for grading."
-                }
-            else:
-                result = self._grade_individual_submission(
-                    submission_text, core_topics, student_id)
+            result = self._grade_individual_submission(
+                submission_text, core_topics, student_id)
 
             if result.get("grading_failed", False):
                 result["student_name"] = student_name
@@ -763,6 +757,65 @@ class BaseTextSubmissionGrader(Grader):
         self.consolidated_questions = self._consolidate_questions(student_questions)
 
         return individual_results
+
+    def _write_learning_logs(self, assignment, individual_results: List[Dict]) -> None:
+        """Write configured per-student learning logs after successful assessment."""
+        if not self.learning_logs_dir:
+            return
+
+        try:
+            os.makedirs(self.learning_logs_dir, mode=0o700, exist_ok=True)
+            try:
+                os.chmod(self.learning_logs_dir, 0o700)
+            except OSError:
+                pass
+        except OSError as e:
+            log.error(
+                f"Unable to create learning logs directory '{self.learning_logs_dir}': {e}")
+            return
+
+        assignment_id = getattr(assignment.lms_assignment, "id", "unknown")
+        date_prefix = datetime.now().strftime("%Y-%m-%d")
+        course_name = self._learning_log_filename_part(self.course_name)
+
+        for result in individual_results:
+            if result.get("grading_failed", False):
+                log.warning(
+                    "Skipping learning log for student_id=%s because LLM assessment failed",
+                    result.get("student_id"))
+                continue
+
+            student_name = self._learning_log_filename_part(
+                result.get("student_name", "Unknown Student"))
+            filename = (
+                f"{date_prefix}.{course_name}.{assignment_id}.{student_name}.yaml")
+            path = os.path.join(self.learning_logs_dir, filename)
+            payload = {
+                "completed": bool(result.get("completed", False)),
+                "summary": result.get("summary", ""),
+                "topics_understood": result.get("topics_understood", []),
+                "topics_struggling": result.get("topics_struggling", []),
+                "recommendations": result.get("recommendations", []),
+            }
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(payload, f, allow_unicode=True,
+                                   sort_keys=False)
+                try:
+                    os.chmod(path, 0o600)
+                except OSError:
+                    pass
+                log.debug("Wrote learning log: %s", path)
+            except OSError as e:
+                log.error(
+                    "Failed to write learning log for student_id=%s to '%s': %s",
+                    result.get("student_id"), path, e)
+
+    @staticmethod
+    def _learning_log_filename_part(value: Any) -> str:
+        """Keep requested display names readable while making filenames safe."""
+        normalized = re.sub(r"[^A-Za-z0-9 _-]", "_", str(value)).strip()
+        return normalized or "unknown"
 
     def _consolidate_questions(self, all_questions: List[str]) -> List[Dict]:
         """
