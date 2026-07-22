@@ -786,7 +786,8 @@ class BaseTextSubmissionGrader(Grader):
                 continue
 
             student_name = self._learning_log_filename_part(
-                result.get("student_name", "Unknown Student"))
+                result.get("student_name", "Unknown Student"),
+                replace_spaces=True)
             filename = (
                 f"{date_prefix}.{course_name}.{assignment_id}.{student_name}.yaml")
             path = os.path.join(self.learning_logs_dir, filename)
@@ -812,9 +813,13 @@ class BaseTextSubmissionGrader(Grader):
                     result.get("student_id"), path, e)
 
     @staticmethod
-    def _learning_log_filename_part(value: Any) -> str:
+    def _learning_log_filename_part(value: Any,
+                                    *,
+                                    replace_spaces: bool = False) -> str:
         """Keep requested display names readable while making filenames safe."""
         normalized = re.sub(r"[^A-Za-z0-9 _-]", "_", str(value)).strip()
+        if replace_spaces:
+            normalized = re.sub(r"\s+", "_", normalized)
         return normalized or "unknown"
 
     def _consolidate_questions(self, all_questions: List[str]) -> List[Dict]:

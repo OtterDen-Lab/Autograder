@@ -46,7 +46,7 @@ def test_learning_logs_are_written_with_stable_schema_and_safe_filename(tmp_path
 
   grader._write_learning_logs(assignment, [{
     "student_id": 1,
-    "student_name": "Ada.Lovelace/Example",
+    "student_name": "Ada Lovelace/Example",
     "completed": False,
     "summary": "There is not enough submitted work to assess.",
     "topics_understood": [],
