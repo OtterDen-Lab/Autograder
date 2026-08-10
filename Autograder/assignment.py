@@ -190,7 +190,10 @@ class Assignment(abc.ABC):
           scaled_score = self.scale_score_for_canvas(
             feedback.percentage_score)
           current_canvas_score = self._get_existing_canvas_score(submission)
-          if (current_canvas_score is not None
+          needs_feedback_clobber = bool(kwargs.get("clobber_feedback", False))
+          needs_late_status_reset = not allow_late_penalty
+          if (not needs_feedback_clobber and not needs_late_status_reset
+              and current_canvas_score is not None
               and self._score_is_noop_update(scaled_score,
                                              current_canvas_score)):
             push_skipped += 1
@@ -205,13 +208,20 @@ class Assignment(abc.ABC):
           if rubric_assessment is None:
             rubric_assessment = kwargs.get("rubric_assessment",
                                            kwargs.get("rubric"))
+          preclobbered_feedback = (
+            self._clobber_canvas_comments_before_push(user_id)
+            if needs_feedback_clobber else False)
           push_kwargs = {
             "score": scaled_score,
             "comments": feedback.comments,
             "attachments": feedback.attachments,
             "user_id": user_id,
             "keep_previous_best": True,
-            "clobber_feedback": bool(kwargs.get("clobber_feedback", False)),
+            # LMSInterface 0.6.2 removes comments after updating the
+            # submission. Delete them first when possible so a submission
+            # with too many comments can still be updated.
+            "clobber_feedback": (needs_feedback_clobber
+                                  and not preclobbered_feedback),
           }
           if not allow_late_penalty:
             push_kwargs["seconds_late"] = 0
@@ -304,6 +314,83 @@ class Assignment(abc.ABC):
           return None
 
     return None
+
+  def _clobber_canvas_comments_before_push(self, user_id: int) -> bool:
+    """Delete Canvas comments before a feedback update when supported.
+
+    LMSInterface currently deletes clobbered comments *after* updating a
+    submission. Canvas can time out while updating submissions with a large
+    comment history, so deleting first is necessary for clobbering to recover
+    those submissions. Return ``False`` when the LMS adapter does not expose
+    the Canvas objects required for the pre-delete; its normal clobber path is
+    then retained.
+    """
+    raw_assignment = getattr(self.lms_assignment, "assignment", None)
+    canvas_course = getattr(self.lms_assignment, "canvas_course", None)
+    canvas_interface = getattr(self.lms_assignment, "canvas_interface", None)
+    canvas = getattr(canvas_interface, "canvas", None)
+    requester = getattr(canvas, "_Canvas__requester", None)
+    course = getattr(canvas_course, "course", canvas_course)
+    course_id = getattr(course, "id", None)
+    assignment_id = getattr(raw_assignment, "id", None)
+    get_submission = getattr(raw_assignment, "get_submission", None)
+
+    if (not callable(get_submission) or requester is None or course_id is None
+        or assignment_id is None):
+      return False
+
+    try:
+      canvas_submission = get_submission(user_id)
+      comments = list(
+        getattr(canvas_submission, "submission_comments", None) or [])
+    except Exception as e:
+      log.warning(
+        "Unable to fetch Canvas comments for pre-clobber on assignment '%s', "
+        "canvas_user_id=%s: %s. Falling back to the LMS clobber operation.",
+        self.lms_assignment.name,
+        user_id,
+        e,
+      )
+      return False
+
+    for comment in comments:
+      comment_id = comment.get("id") if isinstance(comment, dict) else getattr(
+        comment, "id", None)
+      if comment_id is None:
+        log.warning(
+          "Skipping Canvas comment without an id while pre-clobbering "
+          "assignment '%s', canvas_user_id=%s.",
+          self.lms_assignment.name,
+          user_id,
+        )
+        return False
+      api_path = (
+        f"courses/{course_id}/assignments/{assignment_id}/submissions/"
+        f"{user_id}/comments/{comment_id}")
+      try:
+        response = requester.request("DELETE", api_path)
+      except Exception as e:
+        log.warning(
+          "Failed to delete Canvas comment %s while pre-clobbering "
+          "assignment '%s', canvas_user_id=%s: %s",
+          comment_id,
+          self.lms_assignment.name,
+          user_id,
+          e,
+        )
+        return False
+      if getattr(response, "status_code", None) != 200:
+        log.warning(
+          "Canvas returned status %s while deleting comment %s for "
+          "assignment '%s', canvas_user_id=%s.",
+          getattr(response, "status_code", "unknown"),
+          comment_id,
+          self.lms_assignment.name,
+          user_id,
+        )
+        return False
+
+    return True
 
   def _resolve_canvas_points_possible(self) -> tuple[float | None, str | None]:
     if self.canvas_points is not None:
@@ -767,6 +854,8 @@ class ExternalToolAssignment(Assignment):
               skip_stale_watch_buffer_multiplier=0.0,
               schedule_last_completed_at=None,
               schedule_stale_watch_cutoff_at=None,
+              allow_late_penalty=True,
+              clobber_feedback=False,
               **kwargs):
     if provider != "panopto":
       raise ValueError(f"Unsupported external tool provider: {provider}")
@@ -949,7 +1038,8 @@ class ExternalToolAssignment(Assignment):
         )
         continue
 
-      if (skip_non_improvable and max_canvas_score is not None
+      if (skip_non_improvable and allow_late_penalty and not clobber_feedback
+          and max_canvas_score is not None
           and current_canvas_score is not None
           and self._score_is_noop_update(max_canvas_score,
                                          current_canvas_score)):
@@ -1044,7 +1134,14 @@ class ExternalToolAssignment(Assignment):
       submission_history = getattr(submission, "submission_history", None)
       if submission_history:
         latest_submission = submission_history[-1]
-        score = latest_submission.get("score", score)
+        # Canvas can append a late-status history entry without a score. Use
+        # the most recent history score that is present instead of treating a
+        # score-less late-status entry as an ungraded submission.
+        for history_entry in reversed(submission_history):
+          history_score = history_entry.get("score")
+          if history_score is not None:
+            score = history_score
+            break
         workflow_state = latest_submission.get("workflow_state", workflow_state)
       else:
         canvas_submission_data = getattr(submission, "canvas_submission_data", None)

@@ -224,6 +224,20 @@ def test_external_tool_assignment_prepare_skips_non_improvable_scores(
   assert [submission.student.user_id for submission in assignment.submissions] == [202]
   assert assignment.submissions[0].extra_info["percent_watched"] == 80.0
 
+  assignment.prepare(
+    panopto_url="https://videos.example.edu/Panopto/Pages/Viewer.aspx?id=session-123",
+    panopto_access_token="secret-token",
+    record_identifier_paths=["User.Username"],
+    skip_non_improvable=True,
+    allow_late_penalty=False,
+    clobber_feedback=True,
+  )
+
+  assert [submission.student.user_id for submission in assignment.submissions] == [
+    101,
+    202,
+  ]
+
 
 def test_external_tool_assignment_prepare_uses_raw_submission_history_scores(
     monkeypatch):
@@ -289,6 +303,31 @@ def test_external_tool_assignment_prepare_uses_raw_submission_history_scores(
 
   assert [submission.student.user_id for submission in assignment.submissions] == [202]
   assert assignment.submissions[0].extra_info["current_canvas_score"] == 8.0
+
+
+def test_external_tool_statuses_preserve_score_when_latest_history_lacks_one():
+  student = Student(name="Student 101", user_id=101, _inner=None)
+  existing = [SimpleNamespace(
+    student=student,
+    score=None,
+    workflow_state="submitted",
+    submission_history=[
+      {
+        "workflow_state": "submitted",
+        "score": 10.0,
+      },
+      {
+        "workflow_state": "submitted",
+        "score": None,
+      },
+    ],
+  )]
+  lms_assignment = DummyExternalLmsAssignment(existing, [student])
+  assignment = ExternalToolAssignment(lms_assignment=lms_assignment)
+
+  statuses = assignment._load_submission_statuses()
+
+  assert statuses[101]["score"] == 10.0
 
 
 def test_external_tool_assignment_prepare_skips_stale_watch_records(
