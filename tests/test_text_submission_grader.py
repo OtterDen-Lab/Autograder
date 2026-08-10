@@ -1,6 +1,9 @@
 import json
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import yaml
 
 from Autograder.graders.text_submission_grader import (
   BatchProcessor,
@@ -17,6 +20,67 @@ from tests.fixtures.llm_responses import (
   EMPTY_TEXT_RESPONSE,
   PROVIDER_UNAVAILABLE_ERROR,
 )
+
+
+def test_individual_grading_schema_includes_learning_log_fields():
+  from Autograder.ai_helper import validate_response_payload
+
+  result = validate_response_payload({
+    "completed": True,
+    "summary": "You explained process scheduling clearly.",
+    "topics_understood": ["Round-robin scheduling"],
+    "topics_struggling": ["Time quantum selection"],
+    "recommendations": ["Review scheduler tradeoffs"],
+  }, schema_name="individual_grading", strict=True)
+
+  assert result["completed"] is True
+  assert result["topics_understood"] == ["Round-robin scheduling"]
+  assert result["topics_struggling"] == ["Time quantum selection"]
+
+
+def test_learning_logs_are_written_with_stable_schema_and_safe_filename(tmp_path):
+  grader = TextSubmissionGrader()
+  grader.learning_logs_dir = str(tmp_path / "learning logs")
+  grader.course_name = "CST.334 / Summer"
+  assignment = SimpleNamespace(lms_assignment=SimpleNamespace(id=506883))
+
+  grader._write_learning_logs(assignment, [{
+    "student_id": 1,
+    "student_name": "Ada Lovelace/Example",
+    "completed": False,
+    "summary": "There is not enough submitted work to assess.",
+    "topics_understood": [],
+    "topics_struggling": [],
+    "recommendations": [],
+  }])
+
+  expected_name = (
+    f"{datetime.now().strftime('%Y-%m-%d')}.CST_334 _ Summer.506883."
+    "Ada_Lovelace_Example.yaml")
+  path = tmp_path / "learning logs" / expected_name
+  assert path.exists()
+  assert yaml.safe_load(path.read_text(encoding="utf-8")) == {
+    "completed": False,
+    "summary": "There is not enough submitted work to assess.",
+    "topics_understood": [],
+    "topics_struggling": [],
+    "recommendations": [],
+  }
+
+
+def test_learning_logs_skip_failed_model_assessments(tmp_path):
+  grader = TextSubmissionGrader()
+  grader.learning_logs_dir = str(tmp_path / "learning-logs")
+  grader.course_name = "CST334"
+  assignment = SimpleNamespace(lms_assignment=SimpleNamespace(id=506883))
+
+  grader._write_learning_logs(assignment, [{
+    "student_id": 1,
+    "student_name": "Ada Lovelace",
+    "grading_failed": True,
+  }])
+
+  assert list((tmp_path / "learning-logs").glob("*.yaml")) == []
 
 
 def _submission(name: str, user_id: int) -> TextSubmission:

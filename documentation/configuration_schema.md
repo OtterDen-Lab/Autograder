@@ -73,6 +73,8 @@ pushes at least one new grade to Canvas without a push failure.
 - `phase25_tier` (`small|medium|large`, default `small`)
 - `rate_limit_retries` (`int >= 0`, default `0`)
 - `records_dir` (`string|null`)
+- `learning_logs_dir` (`string|null`): optional absolute or `~/` directory for
+  per-student learning-log YAML files
 - `record_retention` (`bool`, default `false`)
 - `report_errors` (`bool`, default `true`)
 - `slack_webhook` (`string|null`)

@@ -34,6 +34,7 @@ assignment_types:
       phase1_tier: medium    # Aggregate analysis
       phase2_tier: medium    # Individual grading
       phase25_tier: medium   # Question consolidation
+      learning_logs_dir: "~/learning-logs"
 
   weekly-study-notes-online:
     kind: TextAssignment
@@ -51,6 +52,7 @@ assignment_types:
       phase1_tier: medium    # Aggregate analysis
       phase2_tier: medium    # Individual grading
       phase25_tier: medium   # Question consolidation
+      learning_logs_dir: "~/learning-logs"
 
   panopto_watch:
     kind: ExternalToolAssignment

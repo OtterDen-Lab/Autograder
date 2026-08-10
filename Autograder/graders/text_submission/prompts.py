@@ -173,6 +173,11 @@ Do NOT flag students who are engaged but have some confusion - that's normal lea
 
 Return JSON:
 {{
+  "completed": "true if the submission provides enough substantive work to assess; otherwise false",
+  "summary": "Brief student-facing summary. If completed is false, state that there is insufficient submitted work to assess.",
+  "topics_understood": ["topics the student appears to understand well"],
+  "topics_struggling": ["topics where the student shows confusion or weak understanding"],
+  "recommendations": ["specific topics or actions for the student to revisit"],
   "engagement_score": "0-4",
   "relevance_score": "0-2",
   "explanation_quality_score": "0-2",
@@ -187,6 +192,10 @@ Return JSON:
 }}
 
 Note: topics_needing_review and misconception_notes are informational for the instructor - they do NOT lower the student's score. A student can have minor misconceptions and still earn 10/10 if they engaged thoroughly.
+
+IMPORTANT COMPLETION GUIDANCE:
+- Set completed to false when the submission is blank, missing, or does not contain enough substantive work to assess. This is an explicit non-hallucination escape hatch.
+- When completed is false, do not infer learning. Set topics_understood, topics_struggling, and recommendations to empty lists and make summary briefly explain that there is insufficient work to assess.
 
 Submission:
 {submission_text}

@@ -15,6 +15,14 @@ def test_parse_run_config_requires_assignment_types():
   assert str(exc.value).startswith("Config error:")
 
 
+def test_text_grader_normalizes_learning_logs_dir_setting():
+  normalized = config_models.normalize_grader_settings(
+    "TextSubmissionGrader", {"learning_logs_dir": "~/learning-logs"},
+    "assignment_types.text.settings")
+
+  assert normalized["learning_logs_dir"] == "~/learning-logs"
+
+
 def test_parse_run_config_rejects_course_without_assignment_groups():
   with pytest.raises(ValueError):
     parse_run_config({

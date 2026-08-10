@@ -159,3 +159,28 @@ def resolve_records_dir(records_dir: str | None) -> str:
             "Set AUTOGRADER_ALLOW_IN_REPO_RECORDS=1 only for local debugging.")
 
     return resolved
+
+
+def resolve_learning_logs_dir(learning_logs_dir: str | None) -> str:
+    """Validate and resolve the directory used for per-student learning logs."""
+    if not isinstance(learning_logs_dir, str) or not learning_logs_dir.strip():
+        raise ValueError(
+            "Config error: learning_logs_dir must be an explicit absolute path "
+            "(or use ~/...).")
+
+    raw = learning_logs_dir.strip()
+    expanded = os.path.expanduser(raw)
+    if not os.path.isabs(expanded):
+        raise ValueError(
+            "Config error: learning_logs_dir must be an absolute path (or use ~/...).")
+
+    resolved = os.path.realpath(os.path.abspath(expanded))
+    repo_root = _repo_root_dir()
+    if os.getenv("AUTOGRADER_ALLOW_IN_REPO_RECORDS") != "1" and _is_subpath(
+            resolved, repo_root):
+        raise ValueError(
+            f"Config error: learning_logs_dir must be outside the repository root ({repo_root}) "
+            "to avoid accidental git history leakage. Set "
+            "AUTOGRADER_ALLOW_IN_REPO_RECORDS=1 only for local debugging.")
+
+    return resolved

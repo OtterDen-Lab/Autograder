@@ -578,6 +578,7 @@ class TextSubmissionGraderSettings:
   phase25_tier: str = "small"
   rate_limit_retries: int = 0
   records_dir: Optional[str] = None
+  learning_logs_dir: Optional[str] = None
   record_retention: bool = False
   report_errors: bool = True
   slack_webhook: Optional[str] = None
@@ -606,6 +607,7 @@ class TextSubmissionGraderSettings:
       "phase25_tier",
       "rate_limit_retries",
       "records_dir",
+      "learning_logs_dir",
       "record_retention",
       "report_errors",
       "slack_webhook",
@@ -660,6 +662,8 @@ class TextSubmissionGraderSettings:
         0),
       records_dir=_require_optional_str(raw.get("records_dir"),
                                         f"{context_label}.records_dir"),
+      learning_logs_dir=_require_optional_str(
+        raw.get("learning_logs_dir"), f"{context_label}.learning_logs_dir"),
       record_retention=_require_bool(raw.get("record_retention", False),
                                      f"{context_label}.record_retention"),
       report_errors=_require_bool(raw.get("report_errors", True),
@@ -685,6 +689,7 @@ class TextSubmissionGraderSettings:
       "phase25_tier": self.phase25_tier,
       "rate_limit_retries": self.rate_limit_retries,
       "records_dir": self.records_dir,
+      "learning_logs_dir": self.learning_logs_dir,
       "record_retention": self.record_retention,
       "report_errors": self.report_errors,
       "slack_webhook": self.slack_webhook,

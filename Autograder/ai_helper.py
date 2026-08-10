@@ -155,6 +155,11 @@ def _default_aggregate_analysis() -> Dict[str, Any]:
 
 def _default_individual_grading() -> Dict[str, Any]:
   return {
+    "completed": False,
+    "summary": "",
+    "topics_understood": [],
+    "topics_struggling": [],
+    "recommendations": [],
     "engagement_score": 0,
     "relevance_score": 0,
     "explanation_quality_score": 0,
@@ -200,6 +205,11 @@ def _validate_individual_grading(payload: Dict[str, Any]) -> Dict[str, Any]:
       f"Expected object for individual_grading, got {type(payload).__name__}.")
 
   return {
+    "completed": _coerce_bool(payload.get("completed", False)),
+    "summary": _coerce_str(payload.get("summary", "")),
+    "topics_understood": _coerce_str_list(payload.get("topics_understood", [])),
+    "topics_struggling": _coerce_str_list(payload.get("topics_struggling", [])),
+    "recommendations": _coerce_str_list(payload.get("recommendations", [])),
     "engagement_score":
     _coerce_int(payload.get("engagement_score", 0), min_value=0, max_value=4),
     "relevance_score":
