@@ -82,6 +82,8 @@ assignment_types:
       panopto_refresh_token_path: "~/.tokens/autograder.panopto.json"
       canvas_user_attribute: "sis_user_id"
       external_user_attribute: "username"
+      # Set true to delete all prior Canvas submission comments before posting.
+      clobber_feedback: false
 
 courses:
   - name: "Course 35631"

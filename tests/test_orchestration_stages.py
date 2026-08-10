@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
-from Autograder.orchestration.stages import run_grade_stage, run_prepare_stage
+from Autograder.orchestration.stages import (
+  run_grade_stage,
+  run_prepare_stage,
+  run_publish_stage,
+)
 
 
 class DummyPrepareAssignment:
@@ -47,3 +51,25 @@ def test_run_grade_stage_forces_regrade_from_settings():
                   do_regrade=False)
 
   assert assignment.calls[0]["do_regrade"] is True
+
+
+def test_run_publish_stage_forwards_clobber_feedback_setting():
+  finalize_calls = []
+  assignment = SimpleNamespace(finalize=lambda **kwargs: finalize_calls.append(kwargs))
+  grader = SimpleNamespace(ready_to_finalize=True)
+  assignment_data = SimpleNamespace(
+    idempotency_key=None,
+    idempotency_state_dir="~/.autograder/idempotency",
+  )
+
+  run_publish_stage(
+    grader,
+    assignment,
+    SimpleNamespace(),
+    push_grades=True,
+    assignment_data=assignment_data,
+    record_retention=False,
+    settings={"clobber_feedback": True},
+  )
+
+  assert finalize_calls[0]["clobber_feedback"] is True

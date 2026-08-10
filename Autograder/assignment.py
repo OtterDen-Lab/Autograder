@@ -211,7 +211,7 @@ class Assignment(abc.ABC):
             "attachments": feedback.attachments,
             "user_id": user_id,
             "keep_previous_best": True,
-            "clobber_feedback": False,
+            "clobber_feedback": bool(kwargs.get("clobber_feedback", False)),
           }
           if not allow_late_penalty:
             push_kwargs["seconds_late"] = 0

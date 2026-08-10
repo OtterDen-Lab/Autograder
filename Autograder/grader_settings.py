@@ -734,6 +734,7 @@ class ExternalToolGraderSettings:
   slack_token: Optional[str] = None
   slack_channel: Optional[str] = None
   allow_late_penalty: bool = True
+  clobber_feedback: bool = False
 
   @classmethod
   def from_raw(cls, value: Any, context_label: str) -> "ExternalToolGraderSettings":
@@ -775,6 +776,7 @@ class ExternalToolGraderSettings:
       "slack_token",
       "slack_channel",
       "allow_late_penalty",
+      "clobber_feedback",
     }
     unknown = sorted(k for k in raw.keys() if k not in allowed)
     if unknown:
@@ -931,6 +933,9 @@ class ExternalToolGraderSettings:
       allow_late_penalty=_require_bool(
         raw.get("allow_late_penalty", True),
         f"{context_label}.allow_late_penalty"),
+      clobber_feedback=_require_bool(
+        raw.get("clobber_feedback", False),
+        f"{context_label}.clobber_feedback"),
     )
 
   def to_kwargs(self) -> Dict[str, Any]:
@@ -970,4 +975,5 @@ class ExternalToolGraderSettings:
       "slack_token": self.slack_token,
       "slack_channel": self.slack_channel,
       "allow_late_penalty": self.allow_late_penalty,
+      "clobber_feedback": self.clobber_feedback,
     }

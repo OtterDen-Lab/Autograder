@@ -123,6 +123,7 @@ pushes at least one new grade to Canvas without a push failure.
 - `slack_token` (`string|null`)
 - `slack_channel` (`string|null`)
 - `allow_late_penalty` (`bool`, default `true`): when `false`, pushes use `seconds_late=0`
+- `clobber_feedback` (`bool`, default `false`): delete **all** existing Canvas submission comments before posting the new feedback. Enable this for recurring watch grading only when no prior comments need to be retained.
 
 Only students with a matching Panopto viewer record are turned into prepared
 submissions. Students with no match are left ungraded.

@@ -171,6 +171,21 @@ class TestScoreScaling:
         assert lms_assignment.pushed_scores[1] == 40.0
         assert lms_assignment.push_call_kwargs[0]["seconds_late"] == 0
 
+    def test_finalize_can_clobber_previous_feedback(self, tmp_path):
+        """The opt-in clobber flag is forwarded to the LMS adapter."""
+        lms_assignment = DummyLmsAssignment(points_possible=50)
+        assignment = DummyAssignment(lms_assignment=lms_assignment)
+        assignment.submissions = [_make_submission(1, score=80.0)]
+
+        assignment.finalize(
+            push=True,
+            clobber_feedback=True,
+            idempotency_key="test",
+            idempotency_state_dir=str(tmp_path),
+        )
+
+        assert lms_assignment.push_call_kwargs[0]["clobber_feedback"] is True
+
     def test_finalize_skips_noop_canvas_updates_when_score_is_unchanged(
         self, tmp_path
     ):

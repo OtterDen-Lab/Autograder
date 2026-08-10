@@ -369,6 +369,7 @@ def test_parse_run_config_accepts_external_tool_assignment_type():
           "skip_non_improvable": True,
           "skip_stale_watch_buffer_multiplier": 0,
           "regrade": True,
+          "clobber_feedback": True,
         }
       }
     },
@@ -393,6 +394,7 @@ def test_parse_run_config_accepts_external_tool_assignment_type():
   assert assignment_type.settings["skip_non_improvable"] is True
   assert assignment_type.settings["skip_stale_watch_buffer_multiplier"] == 0
   assert assignment_type.settings["regrade"] is True
+  assert assignment_type.settings["clobber_feedback"] is True
   assert run_config.courses[0].assignment_groups[0].assignments[0].settings[
     "panopto_id"] == "session-123"
 
