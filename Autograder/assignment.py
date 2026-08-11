@@ -190,9 +190,11 @@ class Assignment(abc.ABC):
           scaled_score = self.scale_score_for_canvas(
             feedback.percentage_score)
           current_canvas_score = self._get_existing_canvas_score(submission)
-          needs_feedback_clobber = bool(kwargs.get("clobber_feedback", False))
-          needs_late_status_reset = not allow_late_penalty
-          if (not needs_feedback_clobber and not needs_late_status_reset
+          requires_late_status_reset = (
+            not allow_late_penalty
+            and bool((getattr(submission, "extra_info", {}) or {}).get(
+              "canvas_late_status_needs_reset", False)))
+          if (not requires_late_status_reset
               and current_canvas_score is not None
               and self._score_is_noop_update(scaled_score,
                                              current_canvas_score)):
@@ -208,9 +210,12 @@ class Assignment(abc.ABC):
           if rubric_assessment is None:
             rubric_assessment = kwargs.get("rubric_assessment",
                                            kwargs.get("rubric"))
+          needs_feedback_clobber = bool(kwargs.get("clobber_feedback", False))
           preclobbered_feedback = (
             self._clobber_canvas_comments_before_push(user_id)
             if needs_feedback_clobber else False)
+          if requires_late_status_reset:
+            self._clear_canvas_late_status_before_push(user_id)
           push_kwargs = {
             "score": scaled_score,
             "comments": feedback.comments,
@@ -337,10 +342,19 @@ class Assignment(abc.ABC):
 
     if (not callable(get_submission) or requester is None or course_id is None
         or assignment_id is None):
+      log.warning(
+        "Canvas pre-clobber is unavailable for assignment '%s', "
+        "canvas_user_id=%s; falling back to the LMS clobber operation.",
+        self.lms_assignment.name,
+        user_id,
+      )
       return False
 
     try:
-      canvas_submission = get_submission(user_id)
+      canvas_submission = get_submission(
+        user_id,
+        include=["submission_comments"],
+      )
       comments = list(
         getattr(canvas_submission, "submission_comments", None) or [])
     except Exception as e:
@@ -353,6 +367,13 @@ class Assignment(abc.ABC):
       )
       return False
 
+    log.info(
+      "Pre-clobbering %d Canvas submission comment(s) for assignment '%s', "
+      "canvas_user_id=%s.",
+      len(comments),
+      self.lms_assignment.name,
+      user_id,
+    )
     for comment in comments:
       comment_id = comment.get("id") if isinstance(comment, dict) else getattr(
         comment, "id", None)
@@ -390,7 +411,40 @@ class Assignment(abc.ABC):
         )
         return False
 
+    log.info(
+      "Pre-clobbered %d Canvas submission comment(s) for assignment '%s', "
+      "canvas_user_id=%s.",
+      len(comments),
+      self.lms_assignment.name,
+      user_id,
+    )
     return True
+
+  def _clear_canvas_late_status_before_push(self, user_id: int) -> None:
+    """Set a Canvas submission's late-policy status to ``none``.
+
+    A zero ``seconds_late_override`` does not clear Canvas's visible "Late"
+    status or its late-policy deduction. Canvas requires an explicit
+    ``late_policy_status=none`` update.
+    """
+    raw_assignment = getattr(self.lms_assignment, "assignment", None)
+    get_submission = getattr(raw_assignment, "get_submission", None)
+    if not callable(get_submission):
+      log.warning(
+        "Canvas late-status reset is unavailable for assignment '%s', "
+        "canvas_user_id=%s.",
+        self.lms_assignment.name,
+        user_id,
+      )
+      return
+
+    log.info(
+      "Clearing Canvas late status for assignment '%s', canvas_user_id=%s.",
+      self.lms_assignment.name,
+      user_id,
+    )
+    canvas_submission = get_submission(user_id)
+    canvas_submission.edit(submission={"late_policy_status": "none"})
 
   def _resolve_canvas_points_possible(self) -> tuple[float | None, str | None]:
     if self.canvas_points is not None:
@@ -854,8 +908,6 @@ class ExternalToolAssignment(Assignment):
               skip_stale_watch_buffer_multiplier=0.0,
               schedule_last_completed_at=None,
               schedule_stale_watch_cutoff_at=None,
-              allow_late_penalty=True,
-              clobber_feedback=False,
               **kwargs):
     if provider != "panopto":
       raise ValueError(f"Unsupported external tool provider: {provider}")
@@ -1038,7 +1090,10 @@ class ExternalToolAssignment(Assignment):
         )
         continue
 
-      if (skip_non_improvable and allow_late_penalty and not clobber_feedback
+      needs_late_status_reset = (
+        not kwargs.get("allow_late_penalty", True)
+        and status_info.get("late_status_needs_reset", False))
+      if (skip_non_improvable and not needs_late_status_reset
           and max_canvas_score is not None
           and current_canvas_score is not None
           and self._score_is_noop_update(max_canvas_score,
@@ -1065,6 +1120,7 @@ class ExternalToolAssignment(Assignment):
         "external_user_attribute": external_user_attribute,
         "missing_user_score": float(missing_user_score),
         "current_canvas_score": current_canvas_score,
+        "canvas_late_status_needs_reset": needs_late_status_reset,
         "percent_watched": record.percent_watched,
         "viewed_seconds": record.viewed_seconds,
         "duration_seconds": record.duration_seconds,
@@ -1131,6 +1187,8 @@ class ExternalToolAssignment(Assignment):
 
       score = getattr(submission, "score", None)
       workflow_state = getattr(submission, "workflow_state", "submitted")
+      late_policy_status = getattr(submission, "late_policy_status", None)
+      late = getattr(submission, "late", None)
       submission_history = getattr(submission, "submission_history", None)
       if submission_history:
         latest_submission = submission_history[-1]
@@ -1143,6 +1201,9 @@ class ExternalToolAssignment(Assignment):
             score = history_score
             break
         workflow_state = latest_submission.get("workflow_state", workflow_state)
+        late_policy_status = latest_submission.get(
+          "late_policy_status", late_policy_status)
+        late = latest_submission.get("late", late)
       else:
         canvas_submission_data = getattr(submission, "canvas_submission_data", None)
         if score is None and canvas_submission_data is not None:
@@ -1159,6 +1220,9 @@ class ExternalToolAssignment(Assignment):
         "status": getattr(submission, "status", None)
         or Submission.Status.from_string(workflow_state, score),
         "score": score,
+        "late_status_needs_reset": (
+          late_policy_status != "none"
+          and (late_policy_status == "late" or bool(late))),
       }
     return statuses
 

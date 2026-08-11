@@ -206,7 +206,7 @@ class TestScoreScaling:
         assert summary["push_attempted"] == 0
         assert summary["push_skipped"] == 1
 
-    def test_finalize_updates_unchanged_score_to_clear_late_status_and_comments(
+    def test_finalize_skips_unchanged_score_with_late_and_clobber_options(
         self, tmp_path
     ):
         lms_assignment = DummyLmsAssignment(points_possible=10)
@@ -223,13 +223,46 @@ class TestScoreScaling:
             idempotency_state_dir=str(tmp_path),
         )
 
+        assert summary["push_attempted"] == 0
+        assert summary["push_skipped"] == 1
+        assert lms_assignment.push_call_kwargs == []
+
+    def test_finalize_resets_late_status_for_unchanged_score(self, tmp_path):
+        lms_assignment = DummyLmsAssignment(points_possible=10)
+        assignment = DummyAssignment(lms_assignment=lms_assignment)
+        submission = _make_submission(1, score=100.0)
+        submission.set_extra({
+            "current_canvas_score": 10.0,
+            "canvas_late_status_needs_reset": True,
+        })
+        assignment.submissions = [submission]
+
+        summary = assignment.finalize(
+            push=True,
+            allow_late_penalty=False,
+            idempotency_key="test",
+            idempotency_state_dir=str(tmp_path),
+        )
+
         assert summary["push_attempted"] == 1
         assert lms_assignment.push_call_kwargs[0]["seconds_late"] == 0
-        assert lms_assignment.push_call_kwargs[0]["clobber_feedback"] is True
+
+    def test_clear_canvas_late_status_sets_status_to_none(self):
+        lms_assignment = DummyLmsAssignment()
+        edits = []
+        lms_assignment.assignment = SimpleNamespace(
+            get_submission=lambda _user_id: SimpleNamespace(
+                edit=lambda **kwargs: edits.append(kwargs)))
+        assignment = DummyAssignment(lms_assignment=lms_assignment)
+
+        assignment._clear_canvas_late_status_before_push(1)
+
+        assert edits == [{"submission": {"late_policy_status": "none"}}]
 
     def test_finalize_preclobbers_canvas_comments_before_pushing(self, tmp_path):
         lms_assignment = DummyLmsAssignment(points_possible=10)
         deleted_paths = []
+        get_submission_kwargs = []
         canvas_submission = SimpleNamespace(
             submission_comments=[{"id": 1}, {"id": 2}])
         requester = SimpleNamespace(
@@ -238,7 +271,8 @@ class TestScoreScaling:
                 or SimpleNamespace(status_code=200)))
         lms_assignment.assignment = SimpleNamespace(
             id=456,
-            get_submission=lambda _user_id: canvas_submission,
+            get_submission=lambda _user_id, **kwargs: (
+                get_submission_kwargs.append(kwargs) or canvas_submission),
         )
         lms_assignment.canvas_course = SimpleNamespace(
             course=SimpleNamespace(id=123))
@@ -258,6 +292,7 @@ class TestScoreScaling:
             ("DELETE", "courses/123/assignments/456/submissions/1/comments/1"),
             ("DELETE", "courses/123/assignments/456/submissions/1/comments/2"),
         ]
+        assert get_submission_kwargs == [{"include": ["submission_comments"]}]
         assert lms_assignment.push_call_kwargs[0]["clobber_feedback"] is False
 
 

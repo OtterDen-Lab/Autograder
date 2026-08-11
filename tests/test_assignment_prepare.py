@@ -219,10 +219,48 @@ def test_external_tool_assignment_prepare_skips_non_improvable_scores(
     panopto_access_token="secret-token",
     record_identifier_paths=["User.Username"],
     skip_non_improvable=True,
+    allow_late_penalty=False,
+    clobber_feedback=True,
   )
 
   assert [submission.student.user_id for submission in assignment.submissions] == [202]
   assert assignment.submissions[0].extra_info["percent_watched"] == 80.0
+
+
+def test_external_tool_assignment_prepares_max_score_when_late_reset_needed(
+    monkeypatch):
+  student = Student(
+    name="Student 101",
+    user_id=101,
+    _inner=SimpleNamespace(email="student101@example.edu"),
+  )
+  existing = [SimpleNamespace(
+    student=student,
+    status=Submission.Status.GRADED,
+    score=10.0,
+    late=True,
+    late_policy_status="late",
+  )]
+  lms_assignment = DummyExternalLmsAssignment(
+    existing, [student], points_possible=10.0)
+
+  class FakeWatchRecord:
+    user_key = "student101@example.edu"
+    percent_watched = 100.0
+    viewed_seconds = 1200.0
+    duration_seconds = 1200.0
+    raw = {"User": {"Username": user_key}}
+
+  class FakePanoptoClient:
+    def __init__(self, **kwargs):
+      pass
+
+    def fetch_watch_records(self, **kwargs):
+      return [FakeWatchRecord()]
+
+  monkeypatch.setattr("Autograder.assignment.PanoptoWatchClient",
+                      FakePanoptoClient)
+  assignment = ExternalToolAssignment(lms_assignment=lms_assignment)
 
   assignment.prepare(
     panopto_url="https://videos.example.edu/Panopto/Pages/Viewer.aspx?id=session-123",
@@ -230,13 +268,13 @@ def test_external_tool_assignment_prepare_skips_non_improvable_scores(
     record_identifier_paths=["User.Username"],
     skip_non_improvable=True,
     allow_late_penalty=False,
-    clobber_feedback=True,
+    do_regrade=True,
   )
 
-  assert [submission.student.user_id for submission in assignment.submissions] == [
-    101,
-    202,
-  ]
+  assert [submission.student.user_id for submission in assignment.submissions] == [101]
+  assert assignment.submissions[0].extra_info[
+    "canvas_late_status_needs_reset"] is True
+
 
 
 def test_external_tool_assignment_prepare_uses_raw_submission_history_scores(

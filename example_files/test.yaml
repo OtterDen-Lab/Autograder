@@ -1,5 +1,5 @@
 prod: true
-push: false
+push: true
 privacy_mode: id_only
 
 reporting:
@@ -8,24 +8,28 @@ reporting:
 
 # Define assignment types with default graders and settings
 assignment_types:
-  weekly-study-notes-online:
-    kind: TextAssignment
-    grader: TextSubmissionGrader
+  panopto_watch:
+    kind: ExternalToolAssignment
+    grader: panopto-watch-grader
     schedule:
       timezone: America/Los_Angeles
-      rrule: "FREQ=WEEKLY;BYDAY=MO;BYHOUR=2;BYMINUTE=0;BYSECOND=0"
+      rrule: "FREQ=MINUTELY;INTERVAL=5"
     settings:
-      # Text grading uses its built-in scoring defaults.
-      # Add an explicit rubric block here only if the Canvas assignment has
-      # an attached rubric and you want rubric assessment pushed back to LMS.
-      grade_after_lock_date: true
-      prefer_anthropic: true
-      # Model tier settings (small, medium, large)
-      phase1_tier: medium    # Aggregate analysis
-      phase2_tier: medium    # Individual grading
-      phase25_tier: medium   # Question consolidation
-      learning_logs_dir: "~/learning-logs"
-
+      panopto_base: "https://csumb.hosted.panopto.com/"
+      panopto_refresh_token_path: "~/.tokens/autograder.panopto.json"
+      canvas_user_attribute: "sis_user_id"
+      external_user_attribute: "username"
+      skip_non_improvable: true
+      skip_stale_watch_buffer_multiplier: 10
+      regrade: true
+      record_identifier_paths:
+        - "User.Username"
+      record_percent_paths:
+        - "PercentCompleted"
+      record_viewed_seconds_paths:
+        - "MostRecentViewPositionInSeconds"
+      allow_late_penalty: false
+      clobber_feedback: true
 
 courses:
 
@@ -34,10 +38,14 @@ courses:
     slack_channel: C09HR2J5EBF
 
     assignment_groups:
-      - name: Learning Logs
-        type: weekly-study-notes-online
+      - name: Lecture Videos
+        type: panopto_watch
         assignments:
-          - 601456 # Week 2
-          - 601457 # Week 3
+          - id: 601505 # How to record your exam
+            panopto_id: e757a032-81d0-489f-aa17-b31e0114377e
+
+
+
+
 
 
