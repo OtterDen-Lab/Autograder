@@ -1348,6 +1348,38 @@ def test_send_slack_run_summary_notifies_on_push_failures(monkeypatch):
   assert "Per-student push failures:" in sent["json"]["text"]
 
 
+def test_main_test_slack_sends_message_and_skips_grading(monkeypatch):
+  args = SimpleNamespace(
+    command=None,
+    list_graders=False,
+    debug=False,
+    yaml="config.yaml",
+    test_slack=True,
+    error_slack_channel=None,
+  )
+  called = {"cleanup": False}
+
+  @contextlib.contextmanager
+  def fake_lock():
+    yield
+
+  monkeypatch.setattr(grade_assignments, "parse_args", lambda: args)
+  monkeypatch.setattr(grade_assignments, "ensure_single_instance", fake_lock)
+  monkeypatch.setattr(grade_assignments, "load_and_validate_config",
+                      lambda _: RunConfig())
+  monkeypatch.setattr(grade_assignments, "send_slack_test_notification",
+                      lambda _args, _config: True)
+  monkeypatch.setattr(
+    grade_assignments, "collect_assignments_to_grade",
+    lambda *_: pytest.fail("Slack test must not collect assignments"))
+  monkeypatch.setattr(
+    grade_assignments.DockerClient, "cleanup",
+    lambda: called.__setitem__("cleanup", True))
+
+  assert grade_assignments.main() == 0
+  assert called["cleanup"] is True
+
+
 def test_write_run_report_includes_stage_and_push_summaries(tmp_path):
   report_path = tmp_path / "run_report.json"
   results = [{

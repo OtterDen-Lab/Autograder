@@ -23,7 +23,7 @@ assignment_types:
     grader: TextSubmissionGrader
     schedule:
       timezone: America/Los_Angeles
-      rrule: "FREQ=WEEKLY;BYDAY=SU;BYHOUR=0;BYMINUTE=0;BYSECOND=0"
+      rrule: "FREQ=WEEKLY;BYDAY=MO;BYHOUR=1;BYMINUTE=0;BYSECOND=0"
     settings:
       # Text grading uses its built-in scoring defaults.
       # Add an explicit rubric block here only if the Canvas assignment has
@@ -41,7 +41,7 @@ assignment_types:
     grader: TextSubmissionGrader
     schedule:
       timezone: America/Los_Angeles
-      rrule: "FREQ=WEEKLY;BYDAY=MO;BYHOUR=2;BYMINUTE=0;BYSECOND=0"
+      rrule: "FREQ=WEEKLY;BYDAY=WE;BYHOUR=2;BYMINUTE=0;BYSECOND=0"
     settings:
       # Text grading uses its built-in scoring defaults.
       # Add an explicit rubric block here only if the Canvas assignment has
@@ -78,61 +78,16 @@ assignment_types:
       clobber_feedback: true
 
 courses:
-  # - name: CST334
-  #   id: 31580
-  #   slack_channel: C09HR2J5EBF
-
-  #   assignment_groups:
-  #     - name: Programming Assignments
-  #       type: programming
-  #       settings:
-  #         base_image_name: "samogden/cst334"
-  #         source_repo: "https://github.com/CSUMB-SCD-instructors/CST334"
-  #         golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
-  #         files_from_golden:
-  #           - "tests/unittests_reserved.c"
-  #         student_code_path: "src"
-  #         num_repeats: 10
-  #       file_paths:
-  #         '.*student_code.*\.c':
-  #           path: "src/student_code.c" # target filename, will force to change into this
-  #         '.*student_code.*\.h':
-  #           path: "include/student_code.h" # target filename, will force to change into this
-  #       assignments:
-  #         - {id: 553736, repo_path: PA1}
-  #         - {id: 553737, repo_path: PA2}
-  #         - {id: 553738, repo_path: PA3}
-  #         - {id: 553739, repo_path: PA4}
-  #         - {id: 553740, repo_path: PA5}
-  #         - {id: 553741, repo_path: PA6}
-
-  #     - name: Learning Logs
-  #       type: weekly-study-notes
-  #       assignments:
-  #         - 553728  # LL2
-  #         - 553729  # LL3
-  #         - 553730  # LL4
-  #         - 553731  # LL5
-  #         - 553732  # LL6
-  #         - 553733  # LL7
-  #         - 553734  # LL8
-  #         - 553735  # LL9
-  #         - 553723  # LL10
-  #         - 553724  # LL11
-  #         - 553725  # LL12
-  #         - 553726  # LL13
-  #         - 553727  # LL14
-
-  - name: CST334online
-    id: 35631
+  - name: CST334
+    id: 34426
     slack_channel: C09HR2J5EBF
 
     assignment_groups:
       - name: Programming Assignments
         type: programming
         settings:
-          base_image_name: "samogden/cst334"
-          source_repo: "https://github.com/CSUMB-SCD-instructors/CST334-online"
+          base_image_name: "samogden/cst334:grading"
+          source_repo: "https://github.com/CSUMB-SCD-assignments/CST334-fall2026-base"
           golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
           files_from_golden:
             - "tests/unittests_reserved.c"
@@ -144,101 +99,170 @@ courses:
           '.*student_code.*\.h':
             path: "include/student_code.h" # target filename, will force to change into this
         assignments:
-          - {id: 601496, repo_path: PA1}
-          - {id: 601497, repo_path: PA2}
-          - {id: 601498, repo_path: PA3}
-          - {id: 601499, repo_path: PA4}
-          - {id: 601500, repo_path: PA5}
+          - {id: 632680, repo_path: PA1}
+          - {id: 632681, repo_path: PA2}
+          - {id: 632682, repo_path: PA3}
+          - {id: 632683, repo_path: PA4}
+          - {id: 632684, repo_path: PA5}
+          - {id: 632685, repo_path: PA6}
 
-      - name: Learning Logs
-        type: weekly-study-notes-online
+      - name: Weekly Study Notes
+        type: weekly-study-notes
         assignments:
-          - 601455 # Week 1
-          - 601456 # Week 2
-          - 601457 # Week 3
-          - 601458 # Week 4
-          - 601459 # Week 5
-          - 601460 # Week 6
-          - 601461 # Week 7
+          - 632695  # LL2
+          - 632696  # LL3
+          - 632697  # LL4
+          - 632698  # LL5
+          - 632699  # LL6
+          - 632700  # LL7
+          - 632701  # LL8
+          - 632702  # LL9
+          - 632690  # LL10
+          - 632691  # LL11
+          - 632692  # LL12
+          - 632693  # LL13
+          - 632694  # LL14
 
-      - name: Lecture Videos
-        type: panopto_watch
+  - name: CST463
+    id: 33852
+    slack_channel: C09HR2J5EBF
+
+    assignment_groups:
+
+      - name: Weekly Study Notes
+        type: weekly-study-notes
         assignments:
-          - id: 601506 # Week 1.1: Introduction to OS
-            panopto_id: 4992fd5c-fb07-4ddd-8fb2-b30400158378
-          - id: 601507 # Week 1.2: Computer Architecture Review
-            panopto_id: cc6b45a7-ef52-4c7e-b576-b304000dd64c
-          - id: 601508 # Week 1.3: Linux and the shell
-            panopto_id: 1dc02a04-9adf-4606-b1b2-b3040133baed
-          - id: 601509 # Week 1.4: Programming in C
-            panopto_id: 70eb4123-db64-4789-b328-b303018a7ec9
-          - id: 601510 # Week 1.5: Command Line Introduction
-            panopto_id: 0a2a0af1-af39-49db-8c27-b30401586907
-          - id: 601511 # Week 1.6: Math Addendum
-            panopto_id: b4531cc4-1678-42fd-bdf8-b305003304e7
+          - 641898  # LL1
+          - 641904  # LL2
+          - 641905  # LL3
+          - 641906  # LL4
+          - 641907  # LL5
+          - 641908  # LL6
+          - 641909  # LL7
+          - 641910  # LL8
+          - 641911  # LL9
+          - 641899  # LL10
+          - 641900  # LL11
+          - 641901  # LL12
+          - 641902  # LL13
+          - 641903  # LL14
 
-          - id: 601468 # OSTEP 04
-            panopto_id: a9cf0a4f-3acb-4bf3-a50d-b1d2012ed3f5
-          - id: 601469 # OSTEP 05
-            panopto_id: f38eb220-a9b8-4951-adc6-b1e7017e4256
-          - id: 601470 # OSTEP 06
-            panopto_id: f7927e17-cc32-418b-a7ae-b1e8000c4d55
-          - id: 601471 # OSTEP 07
-            panopto_id: fad2dfaf-198d-4e29-9881-b1e5018abb1c
-          - id: 601472 # OSTEP 08
-            panopto_id: 128ed73b-bad2-4640-9845-b30d0110a5c7
+  # - name: CST334online
+  #   id: 35631
+  #   slack_channel: C09HR2J5EBF
 
-          - id: 601473 # OSTEP 13
-            panopto_id: f342f2c0-2c66-42cd-b8d9-b30e013544b5
-          - id: 601474 # OSTEP 14
-            panopto_id: fe2af068-f7dd-4cb1-a553-b30f00583ee2
-          - id: 601475 # OSTEP 15
-            panopto_id: d53de09e-810d-4bf7-b36d-b30f0117f402
-          - id: 601476 # OSTEP 16
-            panopto_id: 10c4f716-209c-4563-8ac5-b311018317e1
-          - id: 601477 # OSTEP 17
-            panopto_id: 8258fed7-d5e9-4790-8e86-b312000a8d80
+  #   assignment_groups:
+  #     - name: Programming Assignments
+  #       type: programming
+  #       settings:
+  #         base_image_name: "samogden/cst334"
+  #         source_repo: "https://github.com/CSUMB-SCD-instructors/CST334-online"
+  #         golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
+  #         files_from_golden:
+  #           - "tests/unittests_reserved.c"
+  #         student_code_path: "src"
+  #         num_repeats: 10
+  #       file_paths:
+  #         '.*student_code.*\.c':
+  #           path: "src/student_code.c" # target filename, will force to change into this
+  #         '.*student_code.*\.h':
+  #           path: "include/student_code.h" # target filename, will force to change into this
+  #       assignments:
+  #         - {id: 601496, repo_path: PA1}
+  #         - {id: 601497, repo_path: PA2}
+  #         - {id: 601498, repo_path: PA3}
+  #         - {id: 601499, repo_path: PA4}
+  #         - {id: 601500, repo_path: PA5}
 
-          - id: 601478 # OSTEP 18
-            panopto_id: 2896515f-474c-4240-b708-b313012fa03c
-          - id: 601479 # OSTEP 19
-            panopto_id: 801ea6ec-11e9-410e-9674-b313014086f6
-          - id: 601480 # OSTEP 20
-            panopto_id: 93e02ea7-a1a4-4e7c-bc4e-b314000618d7
-          - id: 601481 # OSTEP 21/22
-            panopto_id: 630b3db2-4bad-46a1-921b-b314013632c1
+  #     - name: Learning Logs
+  #       type: weekly-study-notes-online
+  #       assignments:
+  #         - 601455 # Week 1
+  #         - 601456 # Week 2
+  #         - 601457 # Week 3
+  #         - 601458 # Week 4
+  #         - 601459 # Week 5
+  #         - 601460 # Week 6
+  #         - 601461 # Week 7
 
-          - id: 601505 # How to record your exam
-            panopto_id: e757a032-81d0-489f-aa17-b31e0114377e
+  #     - name: Lecture Videos
+  #       type: panopto_watch
+  #       assignments:
+  #         - id: 601506 # Week 1.1: Introduction to OS
+  #           panopto_id: 4992fd5c-fb07-4ddd-8fb2-b30400158378
+  #         - id: 601507 # Week 1.2: Computer Architecture Review
+  #           panopto_id: cc6b45a7-ef52-4c7e-b576-b304000dd64c
+  #         - id: 601508 # Week 1.3: Linux and the shell
+  #           panopto_id: 1dc02a04-9adf-4606-b1b2-b3040133baed
+  #         - id: 601509 # Week 1.4: Programming in C
+  #           panopto_id: 70eb4123-db64-4789-b328-b303018a7ec9
+  #         - id: 601510 # Week 1.5: Command Line Introduction
+  #           panopto_id: 0a2a0af1-af39-49db-8c27-b30401586907
+  #         - id: 601511 # Week 1.6: Math Addendum
+  #           panopto_id: b4531cc4-1678-42fd-bdf8-b305003304e7
 
-          - id: 601482 # OSTEP 26
-            panopto_id: b3f64ffb-2431-400a-b428-b3140143cff5
-          - id: 601483 # OSTEP 27
-            panopto_id: fd9feb17-786a-4901-9af2-b31a0005574a
-          - id: 601484 # OSTEP 28
-            panopto_id: 68e4b272-eb4f-4e50-8286-b31a012a782f
-          - id: 601485 # OSTEP 29
-            panopto_id: b830fcf9-480c-473e-ae14-b31b016b0369
-          - id: 601486 # OSTEP 30
-            panopto_id: c704a4cc-c6bb-4e71-af21-b31d01191d11
+  #         - id: 601468 # OSTEP 04
+  #           panopto_id: a9cf0a4f-3acb-4bf3-a50d-b1d2012ed3f5
+  #         - id: 601469 # OSTEP 05
+  #           panopto_id: f38eb220-a9b8-4951-adc6-b1e7017e4256
+  #         - id: 601470 # OSTEP 06
+  #           panopto_id: f7927e17-cc32-418b-a7ae-b1e8000c4d55
+  #         - id: 601471 # OSTEP 07
+  #           panopto_id: fad2dfaf-198d-4e29-9881-b1e5018abb1c
+  #         - id: 601472 # OSTEP 08
+  #           panopto_id: 128ed73b-bad2-4640-9845-b30d0110a5c7
 
-          - id: 601487 # OSTEP 30a
-            panopto_id: b3964997-9066-435b-83c0-b31d01289a50
-          - id: 601443 # Anderson/Dahlin
-            panopto_id: 9dd71fe3-575e-4195-9931-b31e01350802
-          - id: 601488 # OSTEP 31
-            panopto_id: cfb41d49-65c2-4745-9a8a-b31e01472fa2
-          - id: 601489 # OSTEP 31a
-            panopto_id: de16e477-9eca-4dc3-b986-b32900fe9da2
+  #         - id: 601473 # OSTEP 13
+  #           panopto_id: f342f2c0-2c66-42cd-b8d9-b30e013544b5
+  #         - id: 601474 # OSTEP 14
+  #           panopto_id: fe2af068-f7dd-4cb1-a553-b30f00583ee2
+  #         - id: 601475 # OSTEP 15
+  #           panopto_id: d53de09e-810d-4bf7-b36d-b30f0117f402
+  #         - id: 601476 # OSTEP 16
+  #           panopto_id: 10c4f716-209c-4563-8ac5-b311018317e1
+  #         - id: 601477 # OSTEP 17
+  #           panopto_id: 8258fed7-d5e9-4790-8e86-b312000a8d80
 
-          - id: 601491 # OSTEP 37
-            panopto_id: 8e09c34c-422c-4222-bf8c-b329011d066a
-          - id: 601492 # OSTEP 39
-            panopto_id: c1bc65e9-af76-4730-afe9-b3290121effe
-          - id: 601493 # OSTEP 40a
-            panopto_id: 724244df-985d-458d-95b5-b3290136154c
-          - id: 601494 # OSTEP 40b
-            panopto_id: 1692f727-0b90-4e4f-b328-b32901462e98
+  #         - id: 601478 # OSTEP 18
+  #           panopto_id: 2896515f-474c-4240-b708-b313012fa03c
+  #         - id: 601479 # OSTEP 19
+  #           panopto_id: 801ea6ec-11e9-410e-9674-b313014086f6
+  #         - id: 601480 # OSTEP 20
+  #           panopto_id: 93e02ea7-a1a4-4e7c-bc4e-b314000618d7
+  #         - id: 601481 # OSTEP 21/22
+  #           panopto_id: 630b3db2-4bad-46a1-921b-b314013632c1
+
+  #         - id: 601505 # How to record your exam
+  #           panopto_id: e757a032-81d0-489f-aa17-b31e0114377e
+
+  #         - id: 601482 # OSTEP 26
+  #           panopto_id: b3f64ffb-2431-400a-b428-b3140143cff5
+  #         - id: 601483 # OSTEP 27
+  #           panopto_id: fd9feb17-786a-4901-9af2-b31a0005574a
+  #         - id: 601484 # OSTEP 28
+  #           panopto_id: 68e4b272-eb4f-4e50-8286-b31a012a782f
+  #         - id: 601485 # OSTEP 29
+  #           panopto_id: b830fcf9-480c-473e-ae14-b31b016b0369
+  #         - id: 601486 # OSTEP 30
+  #           panopto_id: c704a4cc-c6bb-4e71-af21-b31d01191d11
+
+  #         - id: 601487 # OSTEP 30a
+  #           panopto_id: b3964997-9066-435b-83c0-b31d01289a50
+  #         - id: 601443 # Anderson/Dahlin
+  #           panopto_id: 9dd71fe3-575e-4195-9931-b31e01350802
+  #         - id: 601488 # OSTEP 31
+  #           panopto_id: cfb41d49-65c2-4745-9a8a-b31e01472fa2
+  #         - id: 601489 # OSTEP 31a
+  #           panopto_id: de16e477-9eca-4dc3-b986-b32900fe9da2
+
+  #         - id: 601491 # OSTEP 37
+  #           panopto_id: 8e09c34c-422c-4222-bf8c-b329011d066a
+  #         - id: 601492 # OSTEP 39
+  #           panopto_id: c1bc65e9-af76-4730-afe9-b3290121effe
+  #         - id: 601493 # OSTEP 40a
+  #           panopto_id: 724244df-985d-458d-95b5-b3290136154c
+  #         - id: 601494 # OSTEP 40b
+  #           panopto_id: 1692f727-0b90-4e4f-b328-b32901462e98
 
 
 

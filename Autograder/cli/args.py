@@ -100,6 +100,10 @@ def parse_args() -> argparse.Namespace:
         "--error-slack-channel",
         default=None,
         help="Slack channel ID for run-level error notifications")
+    parser.add_argument(
+        "--test-slack",
+        action="store_true",
+        help="Send a Slack test notification, then exit without grading")
     parser.add_argument("--debug",
                         action="store_true",
                         help="Enable debug logging")

@@ -207,6 +207,16 @@ grade-assignments --yaml config.yaml --report ./run-report.json
 grade-assignments --yaml config.yaml --error-slack-channel C0123456789
 ```
 
+### Test Slack notifications
+
+Send a test message using the configured run-summary channel without accessing
+Canvas or grading submissions. `--error-slack-channel` can be used to test a
+different channel.
+
+```bash
+grade-assignments --yaml config.yaml --test-slack
+```
+
 ### Set custom idempotency state directory
 
 ```bash

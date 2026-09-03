@@ -12,7 +12,7 @@ from .reports import (
     summarize_stage_contracts,
     collect_push_failure_lines,
 )
-from .slack import send_slack_run_summary
+from .slack import send_slack_run_summary, send_slack_test_notification
 
 __all__ = [
     # Contracts
@@ -27,4 +27,5 @@ __all__ = [
     "collect_push_failure_lines",
     # Slack
     "send_slack_run_summary",
+    "send_slack_test_notification",
 ]

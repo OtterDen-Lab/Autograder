@@ -15,6 +15,48 @@ from .reports import collect_push_failure_lines, collect_push_skipped_ungraded_l
 log = logging.getLogger(__name__)
 
 
+def send_slack_test_notification(args: argparse.Namespace,
+                                 config: RunConfig) -> bool:
+    """Send a test message using the run-summary Slack configuration.
+
+    Returns ``True`` only when Slack accepts the message.  This intentionally
+    uses the same token and channel precedence as run-summary notifications.
+    """
+    reporting_config = config.reporting
+    slack_token = os.getenv("SLACK_BOT_TOKEN")
+    slack_channel = (args.error_slack_channel
+                     or reporting_config.get("slack_channel")
+                     or config.error_slack_channel
+                     or os.getenv("ERROR_SLACK_CHANNEL"))
+
+    if not slack_token or not slack_channel:
+        log.error(
+            "Slack test not configured (missing SLACK_BOT_TOKEN or channel).")
+        return False
+
+    try:
+        response = requests.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {slack_token}"},
+            json={
+                "channel": slack_channel,
+                "text": ":white_check_mark: Otter Autograder Slack notification test.",
+                "mrkdwn": True,
+                "unfurl_links": False,
+                "unfurl_media": False,
+            },
+            timeout=10)
+        response_data = response.json()
+        if not response_data.get("ok"):
+            log.error(f"Slack test failed: {response_data.get('error')}")
+            return False
+        log.info("Slack test notification sent successfully")
+        return True
+    except Exception as e:
+        log.error(f"Failed to send Slack test notification: {e}")
+        return False
+
+
 def send_slack_run_summary(results: List[Dict], args: argparse.Namespace,
                            config: RunConfig) -> None:
     """

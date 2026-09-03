@@ -52,6 +52,7 @@ from Autograder.reporting import (
     print_stage_timing_summary,
     write_run_report,
     send_slack_run_summary,
+    send_slack_test_notification,
     collect_push_failure_lines,
     summarize_stage_contracts,
     PrepareStageResult,
@@ -375,6 +376,8 @@ def main() -> int:
     with ensure_single_instance():
         try:
             config = load_and_validate_config(args.yaml)
+            if getattr(args, "test_slack", False):
+                return 0 if send_slack_test_notification(args, config) else 1
             schedule_manager = None
             if any(type_config.schedule is not None
                    for type_config in config.assignment_types.values()):
