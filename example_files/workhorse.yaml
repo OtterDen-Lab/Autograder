@@ -86,7 +86,7 @@ courses:
       - name: Programming Assignments
         type: programming
         settings:
-          base_image_name: "samogden/cst334:grading"
+          base_image_name: "samogden/cst334-grading:latest"
           source_repo: "https://github.com/CSUMB-SCD-assignments/CST334-fall2026-base"
           golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
           files_from_golden:
