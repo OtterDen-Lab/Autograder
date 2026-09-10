@@ -68,9 +68,7 @@ def _resolve_schedule_state_path() -> str:
   if explicit:
     return os.path.abspath(os.path.expanduser(explicit))
 
-  log_dir = os.getenv("LOG_DIR", os.path.abspath(os.path.expanduser(
-    "~/.autograder/logs")))
-  return os.path.join(os.path.abspath(os.path.expanduser(log_dir)),
+  return os.path.join(os.path.abspath(os.path.expanduser("~/.autograder")),
                       STATE_FILE_NAME)
 
 
@@ -193,6 +191,7 @@ class ScheduleStateManager:
   def __init__(self, path: Optional[str] = None,
                state: Optional[ScheduleState] = None):
     self.path = path or _resolve_schedule_state_path()
+    log.info(f"Using schedule state file: {self.path}")
     self.state = state or load_schedule_state(self.path)
     self._planned_counts: Counter[str] = Counter()
     self._seen_counts: Counter[str] = Counter()
@@ -243,13 +242,7 @@ class ScheduleStateManager:
       if assignment_type_name not in self._planned_counts:
         return
       self._seen_counts[assignment_type_name] += 1
-      finalize_summary = result.get("finalize_summary") or {}
-      pushed_new_grades = (
-        result.get("success")
-        and bool(finalize_summary.get("push_enabled"))
-        and int(finalize_summary.get("push_succeeded", 0) or 0) > 0
-        and int(finalize_summary.get("push_failed", 0) or 0) == 0)
-      if pushed_new_grades:
+      if self._result_completes_schedule(result):
         self._pushed_counts[assignment_type_name] += 1
       else:
         self._failed_types.add(assignment_type_name)
@@ -273,3 +266,26 @@ class ScheduleStateManager:
         log.error(
           f"Failed to persist schedule state for assignment type '{assignment_type_name}': {e}"
         )
+
+  @staticmethod
+  def _result_completes_schedule(result: Dict[str, Any]) -> bool:
+    """Return whether an assignment completed its scheduled work safely.
+
+    Assignments without ungraded submissions return before the publish stage.
+    They are a successful no-op, not a failed schedule run. Likewise, a
+    publish that has no errors may legitimately make no Canvas changes because
+    existing scores are already equal to or better than the computed score.
+    """
+    if not result.get("success"):
+      return False
+
+    stage_contract = result.get("stage_contract") or {}
+    prepare = stage_contract.get("prepare") or {}
+    if prepare.get("skipped_reason") == "no_submissions":
+      return True
+
+    finalize_summary = result.get("finalize_summary")
+    if not isinstance(finalize_summary, dict):
+      return False
+    return (bool(finalize_summary.get("push_enabled"))
+            and int(finalize_summary.get("push_failed", 0) or 0) == 0)

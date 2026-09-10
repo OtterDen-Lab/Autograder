@@ -69,10 +69,13 @@ assignment_types:
 
 If `timezone` is omitted, Autograder defaults it to `America/Los_Angeles`.
 
-State is persisted in `LOG_DIR/schedule_state.yaml` and updated atomically only
-after every assignment in a scheduled type pushes at least one new grade to
-Canvas without a push failure. The file records `last_completed_at` per
-assignment type.
+State is persisted in `~/.autograder/schedule_state.yaml` by default (the
+directory is created automatically). Set `AUTOGRADER_SCHEDULE_STATE_PATH` to
+override the location. It is updated atomically after every assignment in a
+scheduled type completes successfully without a Canvas push failure. An
+assignment with no ungraded submissions, or one whose computed score does not
+improve an existing Canvas score, is a successful no-op. The file records
+`last_completed_at` per assignment type.
 
 ## Common Recipes
 

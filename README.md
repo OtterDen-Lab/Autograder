@@ -124,7 +124,8 @@ Path safety defaults:
 - `record_retention: true` requires an explicit absolute `records_dir` (or `~/...`).
 - `records_dir` is blocked if it points inside this git repo unless `AUTOGRADER_ALLOW_IN_REPO_RECORDS=1`.
 - Idempotency state defaults to `~/.autograder/idempotency`.
-- Schedule state defaults to `LOG_DIR/schedule_state.yaml`.
+- Schedule state defaults to `~/.autograder/schedule_state.yaml`. The directory
+  is created automatically. Set `AUTOGRADER_SCHEDULE_STATE_PATH` to override it.
 
 ## Features
 

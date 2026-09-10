@@ -13,10 +13,10 @@ assignment_types:
     grader: template-grader
     schedule:
       timezone: America/Los_Angeles
-      rrule: "FREQ=DAILY;BYHOUR=0,12;BYMINUTE=0;BYSECOND=0"
+      rrule: "FREQ=DAILY;BYHOUR=0,6;BYMINUTE=0;BYSECOND=0"
     settings:
       record_retention: true
-      records_dir: "~/autograder-records/workhorse"
+      records_dir: "~/.autograder/programming"
 
   weekly-study-notes:
     kind: TextAssignment
@@ -34,7 +34,7 @@ assignment_types:
       phase1_tier: medium    # Aggregate analysis
       phase2_tier: medium    # Individual grading
       phase25_tier: medium   # Question consolidation
-      learning_logs_dir: "~/learning-logs"
+      learning_logs_dir: "~/.autograder/learning-logs"
 
   weekly-study-notes-online:
     kind: TextAssignment
@@ -52,7 +52,7 @@ assignment_types:
       phase1_tier: medium    # Aggregate analysis
       phase2_tier: medium    # Individual grading
       phase25_tier: medium   # Question consolidation
-      learning_logs_dir: "~/learning-logs"
+      learning_logs_dir: "~/.autograder/learning-logs-online"
 
   panopto_watch:
     kind: ExternalToolAssignment

@@ -18,7 +18,8 @@ This runbook covers how to diagnose and recover from failed or partial grading r
    - `grade-assignments --yaml <config.yaml> --idempotency-key <stable-key>`
    - optional custom state dir: `grade-assignments --yaml <config.yaml> --idempotency-key <stable-key> --idempotency-state-dir <state-dir>`
 4. If using per-assignment-type schedules, keep cron or another external trigger
-   running frequently and inspect `LOG_DIR/schedule_state.yaml` when debugging
+   running frequently and inspect `~/.autograder/schedule_state.yaml` when
+   debugging (or the path configured by `AUTOGRADER_SCHEDULE_STATE_PATH`)
    skip behavior.
 5. For debugging, `--skip-scheduling-check` ignores due-window checks and runs all
    scheduled assignment types in the current invocation.

@@ -29,9 +29,11 @@ Each entry:
 
 The scheduler is run by the CLI when the process wakes up. Use cron or a
 similar external trigger to invoke `grade-assignments` frequently, then the
-tool consults `LOG_DIR/schedule_state.yaml` to decide whether a type is due.
+tool consults `~/.autograder/schedule_state.yaml` by default to decide whether
+a type is due. Set `AUTOGRADER_SCHEDULE_STATE_PATH` to override the location.
 The state file is written atomically only after every assignment in the type
-pushes at least one new grade to Canvas without a push failure.
+completes successfully without a Canvas push failure. Assignments with no
+ungraded submissions and no-op score updates complete successfully.
 
 ### template-grader settings
 
