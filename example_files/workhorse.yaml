@@ -129,6 +129,17 @@ courses:
 
     assignment_groups:
 
+      - name: Programming Assignments
+        type: programming
+        settings:
+          base_image_name: "samogden/cst463:latest"
+          source_repo: "https://github.com/CSUMB-SCD-assignments/CST463-fall2026-sogden"
+        file_paths:
+          '.*student_code.*\.py':
+            path: "student_code.py" # target filename, will force to change into this
+        assignments:
+          - {id: 647971, repo_path: PA1}
+
       - name: Weekly Study Notes
         type: weekly-study-notes
         assignments:

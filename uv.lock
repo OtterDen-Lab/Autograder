@@ -251,8 +251,8 @@ wheels = [
 
 [[package]]
 name = "lms-interface"
-version = "0.6.2"
-source = { url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.6.2/lms_interface-0.6.2-py3-none-any.whl" }
+version = "0.7.1"
+source = { url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.7.1/lms_interface-0.7.1-py3-none-any.whl" }
 dependencies = [
     { name = "canvasapi" },
     { name = "pytest" },
@@ -261,7 +261,7 @@ dependencies = [
     { name = "requests" },
 ]
 wheels = [
-    { url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.6.2/lms_interface-0.6.2-py3-none-any.whl", hash = "sha256:c77f82955e5f80da81f9f349e9d6dafa40ba31251c62549a73a428fb8a54be33" },
+    { url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.7.1/lms_interface-0.7.1-py3-none-any.whl", hash = "sha256:f6e94e9ec1625a1d7971b24938fea0b8e8566f7f0c71ce43d80a0432f3a0fdb7" },
 ]
 
 [package.metadata]
@@ -344,7 +344,7 @@ requires-dist = [
     { name = "docker", specifier = "~=7.1" },
     { name = "httpx", specifier = "~=0.28" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.112.0" },
-    { name = "lms-interface", url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.6.2/lms_interface-0.6.2-py3-none-any.whl" },
+    { name = "lms-interface", url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.7.1/lms_interface-0.7.1-py3-none-any.whl" },
     { name = "ollama", specifier = "~=0.6" },
     { name = "openai", specifier = "~=1.93" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.3" },
