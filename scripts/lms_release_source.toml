@@ -2,4 +2,4 @@
 # Keep this pinned to a stable upstream release tag.
 [lms_interface]
 repository = "OtterDen-Lab/LMSInterface"
-ref = "v0.6.1"
+ref = "v0.7.1"
