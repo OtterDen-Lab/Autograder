@@ -280,8 +280,7 @@ bash scripts/install_git_hooks.sh
 
 This hook runs `scripts/check_repo_hygiene.sh`.
 The installer also adds a repo-local alias so you can run `git bump patch` (or `minor`/`major`) to bump, stage, commit, tag, and push.
-LMSInterface is installed as a pinned package dependency (`lms-interface @ ...`) in `pyproject.toml`.
-`git bump` no longer vendors source into this repo.
+LMSInterface is installed from PyPI as the `otterden-lms-interface` dependency declared in `pyproject.toml`.
 
 ## Documentation
 

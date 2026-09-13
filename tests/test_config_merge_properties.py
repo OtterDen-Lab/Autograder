@@ -312,5 +312,4 @@ def test_merge_with_empty_settings_uses_expected_defaults():
   assert merged["slack_token"] is None
   assert merged["slack_channel"] is None
   assert merged["prompt_templates"] == {}
-  assert merged["rubric"]["word_threshold"] == 250
-  assert merged["rubric"]["total_points"] == 10
+  assert "rubric" not in merged

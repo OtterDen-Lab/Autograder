@@ -250,37 +250,6 @@ wheels = [
 ]
 
 [[package]]
-name = "lms-interface"
-version = "0.7.1"
-source = { url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.7.1/lms_interface-0.7.1-py3-none-any.whl" }
-dependencies = [
-    { name = "canvasapi" },
-    { name = "pytest" },
-    { name = "python-dotenv" },
-    { name = "pyyaml" },
-    { name = "requests" },
-]
-wheels = [
-    { url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.7.1/lms_interface-0.7.1-py3-none-any.whl", hash = "sha256:f6e94e9ec1625a1d7971b24938fea0b8e8566f7f0c71ce43d80a0432f3a0fdb7" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "black", marker = "extra == 'dev'" },
-    { name = "canvasapi", specifier = ">=3.2,<4" },
-    { name = "flake8", marker = "extra == 'dev'" },
-    { name = "jsonschema", marker = "extra == 'dev'" },
-    { name = "mypy", marker = "extra == 'dev'" },
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "python-dotenv", specifier = ">=1,<2" },
-    { name = "pyyaml", specifier = ">=6,<7" },
-    { name = "requests", specifier = ">=2.32.4,<3" },
-    { name = "ruff", marker = "extra == 'dev'" },
-]
-provides-extras = ["dev"]
-
-[[package]]
 name = "ollama"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -321,9 +290,9 @@ dependencies = [
     { name = "canvasapi" },
     { name = "docker" },
     { name = "httpx" },
-    { name = "lms-interface" },
     { name = "ollama" },
     { name = "openai" },
+    { name = "otterden-lms-interface" },
     { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -344,9 +313,9 @@ requires-dist = [
     { name = "docker", specifier = "~=7.1" },
     { name = "httpx", specifier = "~=0.28" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.112.0" },
-    { name = "lms-interface", url = "https://github.com/OtterDen-Lab/LMSInterface/releases/download/v0.7.1/lms_interface-0.7.1-py3-none-any.whl" },
     { name = "ollama", specifier = "~=0.6" },
     { name = "openai", specifier = "~=1.93" },
+    { name = "otterden-lms-interface", specifier = "~=0.7.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.3" },
     { name = "python-dateutil", specifier = "~=2.9" },
     { name = "python-dotenv", specifier = "==1.0.1" },
@@ -355,6 +324,21 @@ requires-dist = [
     { name = "slack-sdk", specifier = "~=3.36" },
 ]
 provides-extras = ["dev"]
+
+[[package]]
+name = "otterden-lms-interface"
+version = "0.7.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "canvasapi" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0c/0b/12d137730e27e1eeadfc21806bfc4bb940e5744a155f47261be7a0485d12/otterden_lms_interface-0.7.3.tar.gz", hash = "sha256:65ea7c60b941553620d9b1f645df6760cffe42061b428932033e4abc4432c08a", size = 278676, upload-time = "2026-09-13T20:34:53.607Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/03/8a/e240a3bf8fef3b24a67617e3db6cd0b6116a03ec6b12aea7370dc35c65be/otterden_lms_interface-0.7.3-py3-none-any.whl", hash = "sha256:df4dee4b5efd60714bd08f7e3a8139804ab1ae654ccc8c4030197fbe6a7e5b83", size = 77886, upload-time = "2026-09-13T20:34:52.594Z" },
+]
 
 [[package]]
 name = "packaging"
