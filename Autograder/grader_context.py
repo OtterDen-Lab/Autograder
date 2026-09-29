@@ -18,3 +18,4 @@ class GraderContext:
   prefer_anthropic: bool = False
   idempotency_key: Optional[str] = None
   idempotency_state_dir: Optional[str] = None
+  debug: bool = False

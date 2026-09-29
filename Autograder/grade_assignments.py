@@ -320,6 +320,7 @@ def build_dump_config_payload(
             (assignments_to_grade[0].idempotency_state_dir if assignments_to_grade
              else config.idempotency_state_dir),
             "student_id": getattr(args, "student_id", None),
+            "debug": bool(getattr(args, "debug", False)),
             "assignment_count": len(assignments_to_grade),
         },
         "assignments": assignments_payload,
@@ -371,6 +372,8 @@ def main() -> int:
         return 0
 
     configure_logging(args.debug)
+    if args.debug:
+        log.info("Debug mode enabled")
 
     exit_code = 0
     with ensure_single_instance():

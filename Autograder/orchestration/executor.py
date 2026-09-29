@@ -134,6 +134,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
         settings["course_name"] = assignment_data.course_name
         settings["slack_channel"] = assignment_data.slack_channel
         settings["assignment_kind"] = assignment_kind
+        settings["debug"] = bool(getattr(args, "debug", False))
 
         do_regrade = args.do_regrade
         record_retention = bool(settings.get('record_retention'))
@@ -174,6 +175,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
             prefer_anthropic=bool(settings.get("prefer_anthropic", False)),
             idempotency_key=assignment_data.idempotency_key,
             idempotency_state_dir=assignment_data.idempotency_state_dir,
+            debug=settings["debug"],
         )
 
         grader = GraderRegistry.create(grader_name,

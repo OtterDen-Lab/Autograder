@@ -135,6 +135,7 @@ def run_publish_stage(grader, grading_assignment, args, push_grades: bool,
 
     finalize_kwargs = {
         "push": push_grades,
+        "debug": bool(settings.get("debug", False)),
         "allow_late_penalty": settings.get("allow_late_penalty", True),
         "clobber_feedback": settings.get("clobber_feedback", False),
         "idempotency_key": assignment_data.idempotency_key,

@@ -57,6 +57,7 @@ class Grader(abc.ABC):
     self.slack_token = kwargs.get('slack_token')
     self.report_errors = kwargs.get('report_errors', True)
     self.grader_context = kwargs.get('grader_context')
+    self.debug = bool(kwargs.get('debug', False))
 
   def grade_assignment(self, assignment: Assignment, *args, **kwargs) -> None:
     """
