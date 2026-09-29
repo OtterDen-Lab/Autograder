@@ -133,7 +133,8 @@ courses:
         type: programming
         settings:
           base_image_name: "samogden/cst463:latest"
-          source_repo: "https://github.com/CSUMB-SCD-assignments/CST463-fall2026-sogden"
+          source_repo: "https://github.com/CSUMB-SCD-assignments/CST463-fall2026-base"
+          branch: base
         file_paths:
           '.*student_code.*\.py':
             path: "student_code.py" # target filename, will force to change into this
