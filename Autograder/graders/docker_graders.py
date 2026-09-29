@@ -512,6 +512,7 @@ class TemplateGrader(DockerGrader):
       base_image_name: str = "python:3.11-slim",  # assume this is based on linux
       source_repo:
     str = "https://github.com/CSUMB-SCD-instructors/course-template",
+      branch: str = "main",
       additional_repos=None,
       container_repo_path: str = "/repo/programming-assignments",
       student_code_path: str = "",
@@ -536,6 +537,7 @@ class TemplateGrader(DockerGrader):
     self.assignment_name = assignment_name
     self.base_image_name = base_image_name
     self.source_repo = source_repo
+    self.branch = branch
     self.additional_repos = self._normalize_additional_repos(additional_repos)
     self.container_repo_path = self._normalize_container_repo_path(
       container_repo_path)
@@ -734,7 +736,11 @@ class TemplateGrader(DockerGrader):
     )
 
   @staticmethod
-  def _get_repo(repo_path: str, dest="repo", depth=None, deploy_key_path=None):
+  def _get_repo(repo_path: str,
+                dest="repo",
+                depth=None,
+                deploy_key_path=None,
+                branch=None):
 
     dest = pathlib.Path(dest).expanduser().resolve()
     if dest.exists():
@@ -757,10 +763,12 @@ class TemplateGrader(DockerGrader):
         ssh_cmd = f"ssh -i {deploy_key_path} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
         env["GIT_SSH_COMMAND"] = ssh_cmd
 
-      cmd = ["git", "clone", repo_path, str(dest)]
+      cmd = ["git", "clone"]
+      if branch:
+        cmd.extend(["--branch", branch])
       if depth:
-        cmd[2:2] = ["--depth", str(depth)
-                    ]  # insert after "clone" (optional shallow clone)
+        cmd.extend(["--depth", str(depth)])
+      cmd.extend([repo_path, str(dest)])
 
       run_kwargs = {"check": True, "env": env}
       if not log.isEnabledFor(logging.DEBUG):
@@ -880,7 +888,8 @@ class TemplateGrader(DockerGrader):
       # Get the main repo
       self._get_repo(self.source_repo,
                      os.path.join(temp_build_dir, "repo"),
-                     depth=1)
+                     depth=1,
+                     branch=self.branch)
       for mount, repo in zip(repo_mounts[1:], self.additional_repos):
         self._get_repo(repo["source_repo"],
                        os.path.join(temp_build_dir, mount["context_dir"]),
@@ -967,7 +976,7 @@ class TemplateGrader(DockerGrader):
       with open(os.path.join(temp_build_dir, "Dockerfile"),
                 "w") as dockerfile_fid:
         dockerfile_fid.write('\n'.join(dockerfile_lines) + "\n")
-        
+      
       # input(f"Waiting at {temp_build_dir}")
 
       image = self.docker_client.build_image_from_context(

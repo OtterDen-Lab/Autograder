@@ -12,6 +12,7 @@ from Autograder.external_tools import (
 DEFAULT_TEMPLATE_BASE_IMAGE = "python:3.11-slim"
 DEFAULT_TEMPLATE_SOURCE_REPO = (
   "https://github.com/CSUMB-SCD-instructors/course-template")
+DEFAULT_TEMPLATE_SOURCE_BRANCH = "main"
 DEFAULT_CONTAINER_REPO_PATH = "/repo/programming-assignments"
 VALID_TIERS = {"small", "medium", "large"}
 VALID_EXTERNAL_USER_ATTRIBUTES = {
@@ -232,6 +233,7 @@ class AdditionalRepoConfig:
 class TemplateGraderSettings:
   base_image_name: str = DEFAULT_TEMPLATE_BASE_IMAGE
   source_repo: str = DEFAULT_TEMPLATE_SOURCE_REPO
+  branch: str = DEFAULT_TEMPLATE_SOURCE_BRANCH
   additional_repos: List[AdditionalRepoConfig] = field(default_factory=list)
   container_repo_path: str = DEFAULT_CONTAINER_REPO_PATH
   student_code_path: str = ""
@@ -259,6 +261,8 @@ class TemplateGraderSettings:
       raise _config_error("template-grader.base_image_name must be a string")
     if not isinstance(self.source_repo, str):
       raise _config_error("template-grader.source_repo must be a string")
+    if not isinstance(self.branch, str) or not self.branch.strip():
+      raise _config_error("template-grader.branch must be a non-empty string")
     if not isinstance(self.student_code_path, str):
       raise _config_error("template-grader.student_code_path must be a string")
     self.container_repo_path = _normalize_container_repo_path(
@@ -290,6 +294,7 @@ class TemplateGraderSettings:
     allowed = {
       "base_image_name",
       "source_repo",
+      "branch",
       "additional_repos",
       "container_repo_path",
       "student_code_path",
@@ -344,6 +349,7 @@ class TemplateGraderSettings:
     settings = cls(
       base_image_name=str(raw.get("base_image_name", DEFAULT_TEMPLATE_BASE_IMAGE)),
       source_repo=str(raw.get("source_repo", DEFAULT_TEMPLATE_SOURCE_REPO)),
+      branch=raw.get("branch", DEFAULT_TEMPLATE_SOURCE_BRANCH),
       additional_repos=additional_repos,
       container_repo_path=_normalize_container_repo_path(
         raw.get("container_repo_path"), f"{context_label}.container_repo_path"),
@@ -404,6 +410,7 @@ class TemplateGraderSettings:
     return {
       "base_image_name": self.base_image_name,
       "source_repo": self.source_repo,
+      "branch": self.branch,
       "additional_repos": additional_repos,
       "container_repo_path": self.container_repo_path,
       "student_code_path": self.student_code_path,
