@@ -21,8 +21,6 @@ import os
 from datetime import timedelta, timezone
 from typing import Dict, List
 
-import yaml
-
 from lms_interface.canvas_interface import CanvasInterface
 from Autograder.docker_utils import DockerClient
 from Autograder.config_models import (
@@ -71,6 +69,7 @@ from Autograder.orchestration import (
 from Autograder.cli.validators import resolve_records_dir
 from Autograder.schedule_state import ScheduleStateManager
 from Autograder.schedule_state import estimate_schedule_interval_seconds
+from Autograder.config_loader import ConfigIncludeError, load_yaml_config
 
 # Re-export for backwards compatibility with tests
 from Autograder.grader import GraderRegistry
@@ -96,16 +95,10 @@ def load_and_validate_config(yaml_path: str) -> RunConfig:
         SystemExit: If the configuration is invalid
     """
     try:
-        with open(yaml_path) as fid:
-            raw_config = yaml.safe_load(fid)
-    except yaml.YAMLError as e:
+        raw_config = load_yaml_config(yaml_path)
+    except ConfigIncludeError as e:
         raise SystemExit(
-            f"Invalid config file '{yaml_path}': YAML parse error: {e}. "
-            "See documentation/instructor_onboarding.md for supported schema/examples."
-        ) from e
-    except OSError as e:
-        raise SystemExit(
-            f"Invalid config file '{yaml_path}': unable to read file: {e}. "
+            f"Invalid config file '{yaml_path}': {e}. "
             "See documentation/instructor_onboarding.md for supported schema/examples."
         ) from e
     try:

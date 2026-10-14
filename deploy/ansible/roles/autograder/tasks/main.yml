@@ -1,0 +1,96 @@
+---
+- name: Ensure the Autograder service group exists
+  ansible.builtin.group:
+    name: "{{ autograder_group }}"
+    system: true
+
+- name: Ensure the Autograder service account exists
+  ansible.builtin.user:
+    name: "{{ autograder_user }}"
+    group: "{{ autograder_group }}"
+    groups: "{{ autograder_docker_group if autograder_manage_docker_group else omit }}"
+    append: true
+    create_home: true
+    system: true
+
+- name: Download the uv installer
+  ansible.builtin.get_url:
+    url: "{{ autograder_uv_installer_url }}"
+    dest: /tmp/autograder-uv-installer.sh
+    mode: '0755'
+  when: autograder_manage_uv
+
+- name: Install uv for the Autograder account
+  become_user: "{{ autograder_user }}"
+  environment:
+    HOME: "{{ autograder_home }}"
+  ansible.builtin.command:
+    cmd: /tmp/autograder-uv-installer.sh
+    creates: "{{ autograder_uv_command }}"
+  when: autograder_manage_uv
+
+- name: Install the pinned Autograder release with uv
+  become_user: "{{ autograder_user }}"
+  environment:
+    HOME: "{{ autograder_home }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ autograder_uv_command }}"
+      - tool
+      - install
+      - --upgrade
+      - "{{ autograder_package }}"
+  when: autograder_manage_uv
+
+- name: Ensure the Autograder configuration directory exists
+  ansible.builtin.file:
+    path: "{{ autograder_config_file | dirname }}"
+    state: directory
+    owner: "{{ autograder_user }}"
+    group: "{{ autograder_group }}"
+    mode: '0700'
+
+- name: Copy the complete Autograder configuration directory
+  ansible.builtin.copy:
+    src: "{{ autograder_config_source_dir }}/"
+    dest: "{{ autograder_config_file | dirname }}/"
+    owner: "{{ autograder_user }}"
+    group: "{{ autograder_group }}"
+    mode: '0600'
+    directory_mode: '0700'
+  when: autograder_config_source_dir | length > 0
+
+- name: Install the Autograder systemd launcher
+  ansible.builtin.template:
+    src: autograder-run.j2
+    dest: "{{ autograder_wrapper_path }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the Autograder systemd service
+  ansible.builtin.template:
+    src: autograder.service.j2
+    dest: /etc/systemd/system/autograder.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd
+
+- name: Install the Autograder systemd timer
+  ansible.builtin.template:
+    src: autograder.timer.j2
+    dest: /etc/systemd/system/autograder.timer
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd
+
+- name: Apply systemd unit changes before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the Autograder timer
+  ansible.builtin.systemd_service:
+    name: autograder.timer
+    enabled: true
+    state: started

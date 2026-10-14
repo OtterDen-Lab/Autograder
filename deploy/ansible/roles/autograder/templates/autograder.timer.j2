@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Autograder every 15 minutes
+
+[Timer]
+OnCalendar={{ autograder_timer_on_calendar }}
+Persistent=true
+AccuracySec={{ autograder_timer_accuracy_sec }}
+Unit=autograder.service
+
+[Install]
+WantedBy=timers.target

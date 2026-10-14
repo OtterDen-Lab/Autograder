@@ -1,0 +1,36 @@
+courses:
+  - name: CST463
+    id: 33852
+    slack_channel: C09HR2J5EBF
+    assignment_groups:
+      - name: Programming Assignments
+        type: programming
+        settings:
+          base_image_name: "samogden/cst463:latest"
+          source_repo: "https://github.com/CSUMB-SCD-assignments/CST463-fall2026-base"
+          branch: base
+        file_paths:
+          '.*student_code.*\.py':
+            path: "student_code.py"
+        assignments:
+          - {id: 647971, repo_path: PA1}
+          - {id: 651093, repo_path: PA2}
+          - {id: 654988, repo_path: PA3}
+
+      - name: Weekly Study Notes
+        type: weekly-study-notes
+        assignments:
+          - 641898
+          - 641904
+          - 641905
+          - 641906
+          - 641907
+          - 641908
+          - 641909
+          - 641910
+          - 641911
+          - 641899
+          - 641900
+          - 641901
+          - 641902
+          - 641903

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# The existing credentials format uses `export KEY=value`, which systemd's
+# EnvironmentFile parser does not accept. Source it in a tightly scoped shell
+# instead, then replace the shell with the grader process.
+source {{ autograder_env_file | quote }}
+exec {{ autograder_command | quote }} \
+  --yaml {{ autograder_config_file | quote }} \
+  --env {{ autograder_env_file | quote }} \
+  --max_workers {{ autograder_max_workers | quote }}

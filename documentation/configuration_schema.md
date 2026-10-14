@@ -2,6 +2,27 @@
 
 This document describes the supported YAML schema consumed by `grade-assignments`.
 
+## Composing course files
+
+Use a top-level `includes` list to split a production configuration into course
+fragments. Paths are relative to the file that declares them; nested includes
+are supported. Included files are evaluated in order. Mappings merge
+recursively, later files override earlier values, and the root file overrides
+all included values. The top-level `courses` lists are concatenated.
+
+```yaml
+# workhorse.yaml
+prod: true
+push: true
+includes:
+  - cst334.yaml
+  - cst334-online.yaml
+```
+
+Usually put shared `assignment_types` in `workhorse.yaml` and one or more
+complete entries under `courses` in each fragment. A cycle of includes or a
+missing fragment is a configuration error.
+
 ## Top-Level Keys
 
 - `prod` (`bool`, default `false`): use production Canvas credentials.

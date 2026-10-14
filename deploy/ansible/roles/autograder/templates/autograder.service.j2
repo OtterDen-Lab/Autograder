@@ -1,0 +1,15 @@
+[Unit]
+Description=Autograder run
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User={{ autograder_user }}
+Group={{ autograder_group }}
+WorkingDirectory={{ autograder_home }}
+Environment=HOME={{ autograder_home }}
+ExecStart={{ autograder_wrapper_path }}
+Nice=10
+TimeoutStartSec={{ autograder_timeout_start_sec }}

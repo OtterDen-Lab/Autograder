@@ -1,0 +1,44 @@
+courses:
+  - name: CST334
+    id: 34426
+    slack_channel: C09HR2J5EBF
+    assignment_groups:
+      - name: Programming Assignments
+        type: programming
+        settings:
+          base_image_name: "samogden/cst334-grading:latest"
+          source_repo: "https://github.com/CSUMB-SCD-assignments/CST334-fall2026-base"
+          golden_repo: "https://github.com/CSUMB-SCD-instructors/CST334-golden"
+          files_from_golden:
+            - "tests/unittests_reserved.c"
+          student_code_path: "src"
+          num_repeats: 10
+        file_paths:
+          '.*student_code.*\.c':
+            path: "src/student_code.c"
+          '.*student_code.*\.h':
+            path: "include/student_code.h"
+        assignments:
+          - {id: 632680, repo_path: PA1}
+          - {id: 632681, repo_path: PA2}
+          - {id: 632682, repo_path: PA3}
+          - {id: 632683, repo_path: PA4}
+          - {id: 632684, repo_path: PA5}
+          - {id: 632685, repo_path: PA6}
+
+      - name: Weekly Study Notes
+        type: weekly-study-notes
+        assignments:
+          - 632695
+          - 632696
+          - 632697
+          - 632698
+          - 632699
+          - 632700
+          - 632701
+          - 632702
+          - 632690
+          - 632691
+          - 632692
+          - 632693
+          - 632694

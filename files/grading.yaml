@@ -1,0 +1,75 @@
+prod: true
+push: true
+privacy_mode: id_only
+
+reporting:
+  slack_channel: C0AAD94FX5K
+  notify_on: failures
+
+# Each included file owns one course. Add or remove an entry here as courses
+# start or end without changing the shared grader settings below.
+includes:
+  - cst334.yaml
+  - cst463.yaml
+
+assignment_types:
+  programming:
+    kind: ProgrammingAssignment
+    grader: template-grader
+    schedule:
+      timezone: America/Los_Angeles
+      rrule: "FREQ=DAILY;BYHOUR=0,6;BYMINUTE=0;BYSECOND=0"
+    settings:
+      record_retention: true
+      records_dir: "~/.autograder/programming"
+
+  weekly-study-notes:
+    kind: TextAssignment
+    grader: TextSubmissionGrader
+    schedule:
+      timezone: America/Los_Angeles
+      rrule: "FREQ=WEEKLY;BYDAY=MO;BYHOUR=1;BYMINUTE=0;BYSECOND=0"
+    settings:
+      grade_after_lock_date: true
+      prefer_anthropic: true
+      phase1_tier: medium
+      phase2_tier: medium
+      phase25_tier: medium
+      learning_logs_dir: "~/.autograder/learning-logs"
+
+  weekly-study-notes-online:
+    kind: TextAssignment
+    grader: TextSubmissionGrader
+    schedule:
+      timezone: America/Los_Angeles
+      rrule: "FREQ=WEEKLY;BYDAY=WE;BYHOUR=2;BYMINUTE=0;BYSECOND=0"
+    settings:
+      grade_after_lock_date: true
+      prefer_anthropic: true
+      phase1_tier: medium
+      phase2_tier: medium
+      phase25_tier: medium
+      learning_logs_dir: "~/.autograder/learning-logs-online"
+
+  panopto_watch:
+    kind: ExternalToolAssignment
+    grader: panopto-watch-grader
+    schedule:
+      timezone: America/Los_Angeles
+      rrule: "FREQ=MINUTELY;INTERVAL=5"
+    settings:
+      panopto_base: "https://csumb.hosted.panopto.com/"
+      panopto_refresh_token_path: "~/.tokens/autograder.panopto.json"
+      canvas_user_attribute: "sis_user_id"
+      external_user_attribute: "username"
+      skip_non_improvable: true
+      skip_stale_watch_buffer_multiplier: 10
+      regrade: true
+      record_identifier_paths:
+        - "User.Username"
+      record_percent_paths:
+        - "PercentCompleted"
+      record_viewed_seconds_paths:
+        - "MostRecentViewPositionInSeconds"
+      allow_late_penalty: false
+      clobber_feedback: true

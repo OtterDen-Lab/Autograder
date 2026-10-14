@@ -140,6 +140,7 @@ courses:
             path: "student_code.py" # target filename, will force to change into this
         assignments:
           - {id: 647971, repo_path: PA1}
+          - {id: 651093, repo_path: PA2}
 
       - name: Weekly Study Notes
         type: weekly-study-notes

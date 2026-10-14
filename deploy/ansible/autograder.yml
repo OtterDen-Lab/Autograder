@@ -1,0 +1,9 @@
+---
+# Example inventory group: [autograders]
+# The application checkout and Python environment are intentionally managed
+# outside this role, so it can be added to an existing provisioning playbook.
+- name: Schedule Autograder runs
+  hosts: autograders
+  become: true
+  roles:
+    - autograder
