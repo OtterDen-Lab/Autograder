@@ -283,7 +283,7 @@ wheels = [
 
 [[package]]
 name = "otter-autograder"
-version = "0.15.9"
+version = "0.16.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
