@@ -10,6 +10,7 @@ User={{ autograder_user }}
 Group={{ autograder_group }}
 WorkingDirectory={{ autograder_home }}
 Environment=HOME={{ autograder_home }}
+Environment=LOG_DIR={{ autograder_log_dir }}
 ExecStart={{ autograder_wrapper_path }}
 Nice=10
 TimeoutStartSec={{ autograder_timeout_start_sec }}

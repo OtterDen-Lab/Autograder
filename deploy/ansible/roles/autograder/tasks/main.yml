@@ -60,6 +60,14 @@
     directory_mode: '0700'
   when: autograder_config_source_dir | length > 0
 
+- name: Ensure the Autograder log directory exists
+  ansible.builtin.file:
+    path: "{{ autograder_log_dir }}"
+    state: directory
+    owner: "{{ autograder_user }}"
+    group: "{{ autograder_group }}"
+    mode: '0750'
+
 - name: Install the Autograder systemd launcher
   ansible.builtin.template:
     src: autograder-run.j2

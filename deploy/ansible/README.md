@@ -19,6 +19,7 @@ autograder_user: grader
 autograder_package: Otter-Autograder==0.15.9
 autograder_config_file: /home/grader/.config/otter-autograder/grading.yaml
 autograder_env_file: /home/grader/.tokens/autograder.env
+autograder_log_dir: /var/log/grading
 autograder_max_workers: 2
 autograder_timer_on_calendar: '*:0/15'
 # Directory containing grading.yaml and every included YAML fragment.
@@ -56,4 +57,10 @@ Useful host-side checks:
 systemctl list-timers autograder.timer
 systemctl status autograder.timer
 journalctl -u autograder.service -f
+tail -f /var/log/grading/teachingtools.log
 ```
+
+The systemd journal contains the service's stdout/stderr. Application logs are
+also written to `autograder_log_dir` as rotating `teachingtools.log` and
+`teachingtools_errors.log` files. The legacy cron-only `last_run.log` is not
+created by the systemd service.

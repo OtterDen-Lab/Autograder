@@ -8,6 +8,7 @@ autograder_package: Otter-Autograder==0.15.9
 autograder_config_file: "{{ autograder_home }}/.config/otter-autograder/grading.yaml"
 autograder_env_file: "{{ autograder_home }}/.tokens/autograder.env"
 autograder_wrapper_path: /usr/local/libexec/autograder-run
+autograder_log_dir: /var/log/grading
 
 # Set this to a directory in the calling playbook, for example
 # "{{ playbook_dir }}/files". All YAML fragments in that directory are copied
