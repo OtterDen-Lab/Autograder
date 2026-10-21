@@ -358,7 +358,10 @@ class DockerContainer:
                nano_cpus: int | None = DEFAULT_DOCKER_NANO_CPUS,
                pids_limit: int | None = DEFAULT_DOCKER_PIDS_LIMIT,
                read_only_root_fs: bool = DEFAULT_DOCKER_READ_ONLY_ROOT_FS,
-               seccomp_profile: str | None = DEFAULT_DOCKER_SECCOMP_PROFILE):
+               seccomp_profile: str | None = DEFAULT_DOCKER_SECCOMP_PROFILE,
+               mounts: Optional[List[dict]] = None,
+               gpu_count: int = 0,
+               network_disabled: bool = False):
     self.client = client
     self.image = image
     self.container = None
@@ -368,6 +371,9 @@ class DockerContainer:
     self.pids_limit = pids_limit
     self.read_only_root_fs = read_only_root_fs
     self.seccomp_profile = seccomp_profile
+    self.mounts = mounts or []
+    self.gpu_count = gpu_count
+    self.network_disabled = network_disabled
 
     # Generate unique container name for thread safety
     thread_id = threading.current_thread().ident
@@ -400,6 +406,19 @@ class DockerContainer:
       # Some base images default to commands that exit immediately.
       "command": ["sh", "-lc", "trap : TERM INT; while :; do sleep 3600; done"],
     }
+    if self.network_disabled:
+      run_kwargs["network_disabled"] = True
+    if self.mounts:
+      run_kwargs["volumes"] = {
+        mount["host_path"]: {
+          "bind": mount["container_path"],
+          "mode": "ro" if mount.get("read_only", True) else "rw",
+        }
+        for mount in self.mounts
+      }
+    if self.gpu_count:
+      run_kwargs["device_requests"] = [docker.types.DeviceRequest(
+        count=self.gpu_count, capabilities=[["gpu"]])]
     if self.memory_limit:
       run_kwargs["mem_limit"] = self.memory_limit
       run_kwargs["memswap_limit"] = self.memory_limit

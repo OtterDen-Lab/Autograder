@@ -132,6 +132,7 @@ Path safety defaults:
 ### Supported Assignment Types
 
 - **Programming Assignments**: Docker-based grading with template matching and test execution
+- **GPU Model Trials**: CUDA-backed, dataset-mounted ImageNet-style training trials with CSV feedback artifacts
 - **Text Submissions**: AI-powered grading with rubric generation and clustering analysis
 - **External Tool Assignments**: synthesize grades from external systems such as Panopto watch progress
 

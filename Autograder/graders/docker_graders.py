@@ -47,7 +47,19 @@ class DockerGrader(FileBasedGrader):
   file copying, and command execution using docker_utils.
   """
 
-  def __init__(self, image=None, *args, **kwargs):
+  def __init__(self,
+               image=None,
+               memory_limit=None,
+               nano_cpus=None,
+               pids_limit=None,
+               read_only_root_fs=None,
+               seccomp_profile=None,
+               mounts=None,
+               gpu_count=0,
+               network_disabled=False,
+               command_timeout_seconds=60,
+               *args,
+               **kwargs):
     super().__init__(*args, **kwargs)
 
     env_upload_artifacts = os.getenv("AUTOGRADER_UPLOAD_ERROR_ARTIFACTS")
@@ -68,6 +80,19 @@ class DockerGrader(FileBasedGrader):
     self.base_name_name = image if image is not None else "ubuntu"
     self.image = None  # Only set this when we actually run grading to reduce how often we build
     self.container: Optional[DockerContainer] = None
+    self.container_options = {
+      key: value for key, value in {
+        "memory_limit": memory_limit,
+        "nano_cpus": nano_cpus,
+        "pids_limit": pids_limit,
+        "read_only_root_fs": read_only_root_fs,
+        "seccomp_profile": seccomp_profile,
+      }.items() if value is not None
+    }
+    self.mounts = mounts or []
+    self.gpu_count = gpu_count
+    self.network_disabled = network_disabled
+    self.command_timeout_seconds = command_timeout_seconds
 
   # Helper functions below here
   def build_docker_image(self, dockerfile_str: str):
@@ -88,7 +113,11 @@ class DockerGrader(FileBasedGrader):
     image_to_use = image if image is not None else self.image
     self.container = DockerContainer(self.docker_client,
                                      image_to_use,
-                                     name_prefix="grader")
+                                     name_prefix="grader",
+                                     mounts=self.mounts,
+                                     gpu_count=self.gpu_count,
+                                     network_disabled=self.network_disabled,
+                                     **self.container_options)
     self.container.start()
 
   def stop_container(self) -> None:
@@ -128,7 +157,8 @@ class DockerGrader(FileBasedGrader):
         "No container available for command execution. "
         "Call start_container() before execute_command_in_container().")
 
-    return target_container.execute_command(command, workdir)
+    return target_container.execute_command(
+      command, workdir, timeout_seconds=self.command_timeout_seconds)
 
   def read_file_from_container(self, path_to_file: str) -> Optional[str]:
     """

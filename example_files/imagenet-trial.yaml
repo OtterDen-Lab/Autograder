@@ -1,0 +1,33 @@
+prod: false
+push: false
+
+assignment_types:
+  imagenet_trial:
+    kind: ProgrammingAssignment
+    grader: imagenet-trial-grader
+    settings:
+      # Use a CUDA-enabled image that already contains the PA3 dependencies.
+      base_image_name: "your-registry/cst463-pa3-cuda:latest"
+      source_repo: "/srv/course-development"
+      container_repo_path: "/repo/programming-assignments"
+      student_code_path: "student_code.py"
+      dataset_cache_host_path: "/srv/datasets/imagenet100-hf-cache"
+      dataset_cache_container_path: "/data/huggingface"
+      epochs: 15
+      trial_batch_size: 64
+      max_batch_size: 128
+      seed: 0
+      gpu_count: 1
+      command_timeout_seconds: 7200
+      network_disabled: true
+      memory_limit: "24g"
+      pids_limit: 1024
+
+courses:
+  - id: 12345
+    name: "CST463"
+    assignment_groups:
+      - type: imagenet_trial
+        assignments:
+          - id: 67890
+            repo_path: "PA3"
