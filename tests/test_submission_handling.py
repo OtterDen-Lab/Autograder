@@ -12,8 +12,6 @@ Covers:
 import io
 import pytest
 from unittest.mock import MagicMock, patch
-import urllib.request
-import urllib.error
 
 from lms_interface.classes import (
     Feedback,
@@ -24,6 +22,14 @@ from lms_interface.classes import (
     TextSubmission,
     TextSubmission__Canvas,
 )
+
+
+def make_download_response(content: bytes) -> MagicMock:
+    """Create the small subset of a streamed requests response used here."""
+    response = MagicMock()
+    response.headers = {}
+    response.iter_content.return_value = [content]
+    return response
 
 
 class TestSubmissionStatus:
@@ -257,13 +263,9 @@ class TestFileSubmissionCanvas:
             attachments=attachments
         )
 
-        mock_response = MagicMock()
-        mock_response.read.side_effect = [b"print('hello')", b""]
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.info.return_value = None
+        mock_response = make_download_response(b"print('hello')")
 
-        with patch.object(urllib.request, 'urlopen', return_value=mock_response):
+        with patch("lms_interface.classes.requests.get", return_value=mock_response):
             files = submission.files
 
         assert len(files) == 1
@@ -284,19 +286,15 @@ class TestFileSubmissionCanvas:
             attachments=attachments
         )
 
-        mock_response = MagicMock()
-        mock_response.read.side_effect = [b"content", b""]
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.info.return_value = None
+        mock_response = make_download_response(b"content")
 
-        with patch.object(urllib.request, 'urlopen', return_value=mock_response) as mock_urlopen:
+        with patch("lms_interface.classes.requests.get", return_value=mock_response) as mock_get:
             # Access files twice
             _ = submission.files
             _ = submission.files
 
             # Should only download once
-            assert mock_urlopen.call_count == 1
+            assert mock_get.call_count == 1
 
     def test_canvas_file_submission_handles_multiple_files(self):
         """Test downloading multiple attachments."""
@@ -314,16 +312,11 @@ class TestFileSubmissionCanvas:
 
         call_count = [0]
 
-        def mock_urlopen(url, timeout=None):
+        def mock_get(url, **kwargs):
             call_count[0] += 1
-            mock_response = MagicMock()
-            mock_response.read.side_effect = [f"content{call_count[0]}".encode(), b""]
-            mock_response.__enter__ = MagicMock(return_value=mock_response)
-            mock_response.__exit__ = MagicMock(return_value=False)
-            mock_response.info.return_value = None
-            return mock_response
+            return make_download_response(f"content{call_count[0]}".encode())
 
-        with patch.object(urllib.request, 'urlopen', side_effect=mock_urlopen):
+        with patch("lms_interface.classes.requests.get", side_effect=mock_get):
             files = submission.files
 
         assert len(files) == 2
@@ -358,13 +351,9 @@ class TestFileSubmissionCanvas:
         }]
         submission = FileSubmission__Canvas(student=student, attachments=attachments)
 
-        mock_response = MagicMock()
-        mock_response.read.side_effect = [b"print('ok')", b""]
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.info.return_value = None
+        mock_response = make_download_response(b"print('ok')")
 
-        with patch.object(urllib.request, 'urlopen', return_value=mock_response):
+        with patch("lms_interface.classes.requests.get", return_value=mock_response):
             files = submission.files
 
         assert files[0].name == "evil.py"
@@ -377,16 +366,12 @@ class TestFileSubmissionCanvas:
         }]
         submission = FileSubmission__Canvas(student=student, attachments=attachments)
 
-        mock_response = MagicMock()
-        mock_response.read.side_effect = [b"print('ok')", b""]
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.info.return_value = None
+        mock_response = make_download_response(b"print('ok')")
 
-        with patch.object(urllib.request, 'urlopen', return_value=mock_response) as mock_urlopen:
+        with patch("lms_interface.classes.requests.get", return_value=mock_response) as mock_get:
             _ = submission.files
 
-        assert mock_urlopen.call_args.kwargs["timeout"] == 30
+        assert mock_get.call_args.kwargs["timeout"] == 30
 
     def test_canvas_file_submission_rejects_oversized_file(self):
         student = Student(name="Test", user_id=1, _inner=None)
@@ -396,14 +381,10 @@ class TestFileSubmissionCanvas:
         }]
         submission = FileSubmission__Canvas(student=student, attachments=attachments)
 
-        mock_response = MagicMock()
-        mock_response.read.side_effect = [b"x" * 6, b""]
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.info.return_value = None
+        mock_response = make_download_response(b"x" * 6)
 
         with patch("lms_interface.classes.MAX_DOWNLOAD_BYTES", 5):
-            with patch.object(urllib.request, 'urlopen', return_value=mock_response):
+            with patch("lms_interface.classes.requests.get", return_value=mock_response):
                 with pytest.raises(ValueError, match="exceeds max size"):
                     _ = submission.files
 
@@ -416,13 +397,9 @@ class TestFileSubmissionCanvas:
         }]
         submission = FileSubmission__Canvas(student=student, attachments=attachments)
 
-        mock_response = MagicMock()
-        mock_response.read.side_effect = [b"print('ok')", b""]
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.info.return_value = None
+        mock_response = make_download_response(b"print('ok')")
 
-        with patch.object(urllib.request, 'urlopen', return_value=mock_response):
+        with patch("lms_interface.classes.requests.get", return_value=mock_response):
             with pytest.raises(ValueError, match="content-type"):
                 _ = submission.files
 
