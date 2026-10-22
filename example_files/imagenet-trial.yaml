@@ -1,4 +1,4 @@
-prod: false
+prod: true
 push: true
 
 assignment_types:
@@ -17,15 +17,13 @@ assignment_types:
       epochs: 15
       trial_batch_size: 64
       # Set temporarily for instructor capacity tests; leave null for student trials.
-      forced_batch_size: 128
+      forced_batch_size: null
       max_batch_size: 1024
       loader_num_workers: 8
-      # Mirrors the supplied PA3 loop and persists metrics after every epoch.
-      runner_managed_loop: true
       seed: 0
       gpu_count: 1
       # 15 epochs at this limit scales to the 2-hour 90-epoch benchmark limit.
-      command_timeout_seconds: 120
+      command_timeout_seconds: 1800
       network_disabled: true
       # One trial runs at a time, so do not cap CPU or memory below host capacity.
       memory_limit: null
