@@ -1,33 +1,45 @@
 prod: false
-push: false
+push: true
 
 assignment_types:
   imagenet_trial:
     kind: ProgrammingAssignment
     grader: imagenet-trial-grader
     settings:
-      # Use a CUDA-enabled image that already contains the PA3 dependencies.
-      base_image_name: "your-registry/cst463-pa3-cuda:latest"
-      source_repo: "/srv/course-development"
+      # The grader copies the course repo and runs `uv sync` over this CUDA base.
+      base_image_name: "quay.io/jupyter/pytorch-notebook:cuda12-latest"
+      source_repo: "https://github.com/CSUMB-SCD-assignments/CST463-fall2026-base"
+      branch: "base"
       container_repo_path: "/repo/programming-assignments"
       student_code_path: "student_code.py"
-      dataset_cache_host_path: "/srv/datasets/imagenet100-hf-cache"
+      dataset_cache_host_path: "/home/ssogden/datasets/CST463-PA3"
       dataset_cache_container_path: "/data/huggingface"
       epochs: 15
       trial_batch_size: 64
-      max_batch_size: 128
+      # Set temporarily for instructor capacity tests; leave null for student trials.
+      forced_batch_size: 128
+      max_batch_size: 1024
+      loader_num_workers: 8
       seed: 0
       gpu_count: 1
-      command_timeout_seconds: 7200
+      # 15 epochs at this limit scales to the 2-hour 90-epoch benchmark limit.
+      command_timeout_seconds: 120
       network_disabled: true
-      memory_limit: "24g"
+      # One trial runs at a time, so do not cap CPU or memory below host capacity.
+      memory_limit: null
+      nano_cpus: null
       pids_limit: 1024
+      shm_size: "16g"
 
 courses:
-  - id: 12345
+  - id: 33852
     name: "CST463"
     assignment_groups:
       - type: imagenet_trial
+        settings:
+          file_paths:
+            '.*student_code.*\.py':
+              path: "student_code.py" # target filename, will force to change into this
         assignments:
-          - id: 67890
+          - id: 654990
             repo_path: "PA3"

@@ -19,29 +19,54 @@ def _write_json(path: Path, payload: dict) -> None:
                   encoding="utf-8")
 
 
+def _writable_cache_overlay(source_cache: Path, overlay_cache: Path) -> Path:
+  """Expose a read-only datasets cache through a writable lock-file overlay."""
+  overlay_cache.mkdir(parents=True, exist_ok=True)
+  for entry in source_cache.iterdir():
+    # datasets creates top-level advisory locks beside its cached dataset
+    # directories.  Keep those paths local and writable; data remains mounted
+    # read-only through symlinks.
+    if entry.name.endswith(".lock"):
+      continue
+    target = overlay_cache / entry.name
+    if not target.exists() and not target.is_symlink():
+      target.symlink_to(entry)
+  return overlay_cache
+
+
 def main() -> int:
   output_dir = Path(os.environ.get("AUTOGRADER_TRIAL_OUTPUT", "/tmp/trial-output"))
   output_dir.mkdir(parents=True, exist_ok=True)
   epochs = int(os.environ["AUTOGRADER_TRIAL_EPOCHS"])
   default_batch_size = int(os.environ["AUTOGRADER_TRIAL_BATCH_SIZE"])
   max_batch_size = int(os.environ["AUTOGRADER_TRIAL_MAX_BATCH_SIZE"])
+  forced_batch_size = os.environ.get("AUTOGRADER_TRIAL_FORCED_BATCH_SIZE", "").strip()
+  loader_num_workers = int(os.environ["AUTOGRADER_TRIAL_LOADER_NUM_WORKERS"])
   seed = int(os.environ["AUTOGRADER_TRIAL_SEED"])
-  cache_dir = os.environ["AUTOGRADER_DATASET_CACHE"]
+  source_cache_dir = Path(os.environ["AUTOGRADER_DATASET_CACHE"])
+  cache_dir = _writable_cache_overlay(source_cache_dir,
+                                      Path("/tmp/huggingface-cache"))
   started = time.perf_counter()
   result = {
     "epochs_requested": epochs,
+    "loader_num_workers": loader_num_workers,
     "seed": seed,
-    "dataset_cache": cache_dir,
+    "dataset_cache_source": str(source_cache_dir),
+    "dataset_cache": str(cache_dir),
     "status": "failed",
   }
   try:
+    # Python puts the directory of this course-owned runner (/opt/autograder)
+    # first on sys.path.  Add the assignment working directory so this import
+    # resolves the student file copied there by the grader.
+    sys.path.insert(0, os.getcwd())
     student_code = importlib.import_module("student_code")
-    batch_size = getattr(student_code, "TRIAL_BATCH_SIZE", default_batch_size)
-    if not isinstance(batch_size, int) or isinstance(batch_size, bool):
+    requested_batch_size = getattr(student_code, "TRIAL_BATCH_SIZE", default_batch_size)
+    if not isinstance(requested_batch_size, int) or isinstance(requested_batch_size, bool):
       raise ValueError("TRIAL_BATCH_SIZE must be an integer")
+    batch_size = int(forced_batch_size) if forced_batch_size else requested_batch_size
     if not 1 <= batch_size <= max_batch_size:
-      raise ValueError(
-        f"TRIAL_BATCH_SIZE must be between 1 and {max_batch_size}; got {batch_size}")
+      raise ValueError(f"effective batch size must be between 1 and {max_batch_size}; got {batch_size}")
     if not hasattr(student_code, "CNNClassifier"):
       raise AttributeError("student_code must define CNNClassifier")
     if not hasattr(student_code, "make_imagenet100_loaders"):
@@ -55,7 +80,8 @@ def main() -> int:
     if hasattr(student_code, "set_seed"):
       student_code.set_seed(seed)
     train_loader, validation_loader = student_code.make_imagenet100_loaders(
-      batch_size=batch_size, seed=seed, cache_dir=cache_dir)
+      batch_size=batch_size, seed=seed, num_workers=loader_num_workers,
+      cache_dir=str(cache_dir))
     model = student_code.CNNClassifier()
     history = student_code.train_model(
       model, train_loader, validation_loader, n_epochs=epochs, device="cuda")
@@ -74,6 +100,8 @@ def main() -> int:
     result.update({
       "status": "completed",
       "batch_size": batch_size,
+      "requested_batch_size": requested_batch_size,
+      "forced_batch_size": int(forced_batch_size) if forced_batch_size else None,
       "parameter_count": sum(p.numel() for p in model.parameters() if p.requires_grad),
       "device": torch.cuda.get_device_name(0),
       "final_validation_loss": history["validation_loss"][-1],

@@ -20,9 +20,9 @@ class ImageNetTrialGrader(TemplateGrader):
     raw = dict(settings)
     trial_keys = {
       "dataset_cache_host_path", "dataset_cache_container_path", "epochs",
-      "trial_batch_size", "max_batch_size", "seed", "gpu_count",
+      "trial_batch_size", "max_batch_size", "forced_batch_size", "seed", "gpu_count",
       "command_timeout_seconds", "network_disabled", "memory_limit",
-      "nano_cpus", "pids_limit",
+      "nano_cpus", "pids_limit", "loader_num_workers", "shm_size",
     }
     trial = {key: raw.pop(key) for key in list(raw) if key in trial_keys}
     normalized = super().normalize_settings(raw, context_label)
@@ -35,12 +35,16 @@ class ImageNetTrialGrader(TemplateGrader):
     defaults = {"epochs": 15, "trial_batch_size": 64, "max_batch_size": 128,
                 "seed": 0, "gpu_count": 1, "command_timeout_seconds": 7200,
                 "network_disabled": True, "memory_limit": "24g", "nano_cpus": None,
-                "pids_limit": 1024}
+                "pids_limit": 1024, "loader_num_workers": 8, "shm_size": "2g",
+                "forced_batch_size": None}
     for key, default in defaults.items():
       value = trial.get(key, default)
       if key == "memory_limit":
         if value is not None and not isinstance(value, str):
           raise ValueError(f"Config error: {context_label}.{key} must be a string or null")
+      elif key == "shm_size":
+        if value is not None and not isinstance(value, (str, int)):
+          raise ValueError(f"Config error: {context_label}.{key} must be a string, integer, or null")
       elif key == "network_disabled":
         if not isinstance(value, bool):
           raise ValueError(f"Config error: {context_label}.{key} must be a boolean")
@@ -51,19 +55,30 @@ class ImageNetTrialGrader(TemplateGrader):
       normalized[key] = value
     if normalized["trial_batch_size"] > normalized["max_batch_size"]:
       raise ValueError(f"Config error: {context_label}.trial_batch_size cannot exceed max_batch_size")
+    if (normalized["forced_batch_size"] is not None
+        and normalized["forced_batch_size"] > normalized["max_batch_size"]):
+      raise ValueError(f"Config error: {context_label}.forced_batch_size cannot exceed max_batch_size")
     normalized["mounts"] = [{"host_path": host_path, "container_path": container_path,
                              "read_only": True}]
     normalized["dataset_cache_container_path"] = container_path
     return normalized
 
   def __init__(self, dataset_cache_container_path="/data/huggingface", epochs=15,
-               trial_batch_size=64, max_batch_size=128, seed=0, **kwargs):
+               trial_batch_size=64, max_batch_size=128, seed=0,
+               loader_num_workers=8, nano_cpus=None, memory_limit=None,
+               forced_batch_size=None,
+               **kwargs):
     self.dataset_cache_container_path = dataset_cache_container_path
     self.epochs = epochs
     self.trial_batch_size = trial_batch_size
     self.max_batch_size = max_batch_size
     self.seed = seed
-    super().__init__(**kwargs)
+    self.loader_num_workers = loader_num_workers
+    self.forced_batch_size = forced_batch_size
+    super().__init__(nano_cpus=nano_cpus, memory_limit=memory_limit, **kwargs)
+    # Explicit None disables DockerContainer's global default CPU/memory caps.
+    self.container_options["nano_cpus"] = nano_cpus
+    self.container_options["memory_limit"] = memory_limit
 
   def add_files_to_docker(self, files_to_copy=None) -> None:
     runner = io.BytesIO(Path(__file__).with_name("imagenet_trial_runner.py").read_bytes())
@@ -72,17 +87,21 @@ class ImageNetTrialGrader(TemplateGrader):
 
   def execute_grading(self, *args, **kwargs):
     command = (
-      f"AUTOGRADER_TRIAL_EPOCHS={self.epochs} "
+      f"export AUTOGRADER_TRIAL_EPOCHS={self.epochs} "
       f"AUTOGRADER_TRIAL_BATCH_SIZE={self.trial_batch_size} "
       f"AUTOGRADER_TRIAL_MAX_BATCH_SIZE={self.max_batch_size} "
+      f"AUTOGRADER_TRIAL_FORCED_BATCH_SIZE={self.forced_batch_size or ''} "
       f"AUTOGRADER_TRIAL_SEED={self.seed} "
+      f"AUTOGRADER_TRIAL_LOADER_NUM_WORKERS={self.loader_num_workers} "
       f"AUTOGRADER_DATASET_CACHE={shlex.quote(self.dataset_cache_container_path)} "
       "AUTOGRADER_TRIAL_OUTPUT=/tmp/trial-output "
+      "HF_HUB_OFFLINE=1 DATASETS_OFFLINE=1; "
       "if [ -x /repo/.venv/bin/python ]; then "
       "/repo/.venv/bin/python /opt/autograder/imagenet_trial_runner.py; "
       "else python /opt/autograder/imagenet_trial_runner.py; fi")
-    return self.execute_command_in_container(
+    rc, stdout, stderr = self.execute_command_in_container(
       command=command, workdir=self._container_assignment_root())
+    return rc, stdout.decode(errors="replace"), stderr.decode(errors="replace")
 
   @staticmethod
   def _attachment(name: str, content: str) -> io.BytesIO:
@@ -93,18 +112,19 @@ class ImageNetTrialGrader(TemplateGrader):
   def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
     rc, stdout, stderr = execution_results
     run_json = self.read_file_from_container("/tmp/trial-output/run.json")
-    metrics_csv = self.read_file_from_container("/tmp/trial-output/metrics.csv")
-    attachments = []
-    if metrics_csv:
-      attachments.append(self._attachment("metrics.csv", metrics_csv))
-    if run_json:
-      attachments.append(self._attachment("run.json", run_json))
-    if rc != 0:
-      attachments.append(self._attachment("trial.log", f"STDOUT\n{stdout}\n\nSTDERR\n{stderr}\n"))
     try:
       result = json.loads(run_json or "{}")
     except json.JSONDecodeError:
       result = {}
+    attachments = []
+    if run_json:
+      attachments.append(self._attachment("run.json", run_json))
+    if rc == 0 and result.get("status") == "completed":
+      metrics_csv = self.read_file_from_container("/tmp/trial-output/metrics.csv")
+      if metrics_csv:
+        attachments.insert(0, self._attachment("metrics.csv", metrics_csv))
+    elif rc != 0:
+      attachments.append(self._attachment("trial.log", f"STDOUT\n{stdout}\n\nSTDERR\n{stderr}\n"))
     if rc == 0 and result.get("status") == "completed":
       comment = ("ImageNet-100 trial completed. "
                  f"Final validation accuracy: {result['final_validation_accuracy']:.4f}; "

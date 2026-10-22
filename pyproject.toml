@@ -23,18 +23,18 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "python-dotenv==1.0.1",
+    "python-dotenv==1.2.4",
     "PyYAML==6.0.3",
     "requests>=2.32.4,<3",
     "canvasapi~=3.2",
-    "python-dateutil~=2.9",
+    "python-dateutil~=3.0",
     "httpx~=0.28",
     "docker~=7.1",
     "slack-sdk~=3.36",
-    "openai~=1.93",
-    "anthropic~=0.57",
+    "openai~=3.36",
+    "anthropic~=2.1",
     "ollama~=0.6",
-    "otterden-lms-interface~=0.7.3",
+    "otterden-lms-interface~=0.8.1",
 ]
 
 [project.optional-dependencies]

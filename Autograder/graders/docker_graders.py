@@ -57,6 +57,7 @@ class DockerGrader(FileBasedGrader):
                mounts=None,
                gpu_count=0,
                network_disabled=False,
+               shm_size=None,
                command_timeout_seconds=60,
                *args,
                **kwargs):
@@ -92,6 +93,7 @@ class DockerGrader(FileBasedGrader):
     self.mounts = mounts or []
     self.gpu_count = gpu_count
     self.network_disabled = network_disabled
+    self.shm_size = shm_size
     self.command_timeout_seconds = command_timeout_seconds
 
   # Helper functions below here
@@ -117,6 +119,7 @@ class DockerGrader(FileBasedGrader):
                                      mounts=self.mounts,
                                      gpu_count=self.gpu_count,
                                      network_disabled=self.network_disabled,
+                                     shm_size=self.shm_size,
                                      **self.container_options)
     self.container.start()
 

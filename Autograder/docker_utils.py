@@ -361,7 +361,8 @@ class DockerContainer:
                seccomp_profile: str | None = DEFAULT_DOCKER_SECCOMP_PROFILE,
                mounts: Optional[List[dict]] = None,
                gpu_count: int = 0,
-               network_disabled: bool = False):
+               network_disabled: bool = False,
+               shm_size: str | int | None = None):
     self.client = client
     self.image = image
     self.container = None
@@ -374,6 +375,7 @@ class DockerContainer:
     self.mounts = mounts or []
     self.gpu_count = gpu_count
     self.network_disabled = network_disabled
+    self.shm_size = shm_size
 
     # Generate unique container name for thread safety
     thread_id = threading.current_thread().ident
@@ -408,6 +410,8 @@ class DockerContainer:
     }
     if self.network_disabled:
       run_kwargs["network_disabled"] = True
+    if self.shm_size:
+      run_kwargs["shm_size"] = self.shm_size
     if self.mounts:
       run_kwargs["volumes"] = {
         mount["host_path"]: {
