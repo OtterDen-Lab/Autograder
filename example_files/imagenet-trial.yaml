@@ -20,6 +20,8 @@ assignment_types:
       forced_batch_size: 128
       max_batch_size: 1024
       loader_num_workers: 8
+      # Mirrors the supplied PA3 loop and persists metrics after every epoch.
+      runner_managed_loop: true
       seed: 0
       gpu_count: 1
       # 15 epochs at this limit scales to the 2-hour 90-epoch benchmark limit.
