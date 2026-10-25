@@ -1,7 +1,8 @@
 # Autograder systemd timer
 
-This role installs a pinned release from PyPI into uv's isolated tool
-environment, then installs a `systemd` service and timer for periodic runs.
+This role installs the newest PyPI release into uv's isolated tool environment
+on every Ansible apply, then installs a `systemd` service and timer for
+periodic runs.
 It does not create the course YAML or secrets: manage those in the surrounding
 provisioning role and keep secrets in Ansible Vault or another secret store.
 
@@ -16,7 +17,8 @@ them in inventory or `group_vars`:
 
 ```yaml
 autograder_user: grader
-autograder_package: Otter-Autograder==0.15.9
+# Defaults to the newest PyPI release. Pin only for a deliberate rollback.
+autograder_package: Otter-Autograder
 autograder_config_file: /home/grader/.config/otter-autograder/grading.yaml
 autograder_env_file: /home/grader/.tokens/autograder.env
 autograder_log_dir: /var/log/grading
@@ -31,11 +33,12 @@ contents into the target configuration directory. This keeps `grading.yaml`
 and files such as `cst334.yaml` together, so their relative include paths work.
 Leave it empty (the default) when another task manages configuration files.
 
-Set `autograder_package` to the precise release approved for deployment; a
-subsequent play applies that version. `uv tool install` uses an isolated tool
-environment, so this deployment never runs application code from a repository
-checkout. To follow the newest compatible release instead, use an unpinned
-package value, though pinning is recommended for grading infrastructure.
+The default `autograder_package: Otter-Autograder` follows the newest release
+whenever the playbook is applied: the role runs `uv tool install --upgrade`.
+To hold or roll back a deployment, explicitly set an exact version, for
+example `Otter-Autograder==0.17.0`, in inventory or `group_vars`. `uv tool
+install` uses an isolated tool environment, so this deployment never runs
+application code from a repository checkout.
 
 The launcher sources `autograder_env_file` before invoking the grader, so it
 is compatible with the existing `export KEY=value` credential file. Use it for

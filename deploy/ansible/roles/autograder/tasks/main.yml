@@ -29,7 +29,7 @@
     creates: "{{ autograder_uv_command }}"
   when: autograder_manage_uv
 
-- name: Install the pinned Autograder release with uv
+- name: Install or upgrade the Autograder release with uv
   become_user: "{{ autograder_user }}"
   environment:
     HOME: "{{ autograder_home }}"

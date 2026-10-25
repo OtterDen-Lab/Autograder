@@ -4,7 +4,10 @@ autograder_group: "{{ autograder_user }}"
 autograder_home: "/home/{{ autograder_user }}"
 autograder_command: "{{ autograder_home }}/.local/bin/grade-assignments"
 autograder_uv_command: "{{ autograder_home }}/.local/bin/uv"
-autograder_package: Otter-Autograder==0.15.9
+# Leave this unpinned so each Ansible apply upgrades to the newest PyPI release.
+# Set an exact version in inventory/group_vars when a temporary rollback or
+# deliberately pinned deployment is needed.
+autograder_package: Otter-Autograder
 autograder_config_file: "{{ autograder_home }}/.config/otter-autograder/grading.yaml"
 autograder_env_file: "{{ autograder_home }}/.tokens/autograder.env"
 autograder_wrapper_path: /usr/local/libexec/autograder-run
@@ -15,8 +18,9 @@ autograder_log_dir: /var/log/grading
 # together, keeping relative `includes` paths valid on the target host.
 autograder_config_source_dir: ""
 
-# Install the released package into uv's isolated tool environment. Change the
-# version here (or in inventory) to deploy an update deliberately.
+# Install the newest released package into uv's isolated tool environment on
+# every Ansible apply. Override autograder_package with an exact version to
+# pin or roll back deliberately.
 autograder_manage_uv: true
 autograder_uv_installer_url: https://astral.sh/uv/install.sh
 
