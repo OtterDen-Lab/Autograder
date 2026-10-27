@@ -769,6 +769,13 @@ class TemplateGrader(DockerGrader):
     )
 
   @staticmethod
+  def _is_remote_git_source(repo_path: str) -> bool:
+    """Return whether *repo_path* is a Git remote rather than a local path."""
+    repo_path = str(repo_path)
+    return bool(re.match(
+      r"^(?:(?:https?|ssh|git)://|[^/\s:@]+@[^/\s:]+:.+)", repo_path))
+
+  @staticmethod
   def _get_repo(repo_path: str,
                 dest="repo",
                 depth=None,
@@ -782,46 +789,50 @@ class TemplateGrader(DockerGrader):
         f"source '{repo_path}'. Remove the existing path or choose a different target."
       )
 
-    # If it's local, copy it from local
-    if pathlib.Path(repo_path).expanduser().exists():
-      shutil.copytree(pathlib.Path(repo_path).expanduser(), dest)
-      return
+    # Only inspect filesystem paths.  Calling Path.exists() for an HTTPS URL
+    # turns it into a relative path (for example, ``https:/github.com/...``),
+    # which can fail with PermissionError before git has a chance to clone it.
+    if not TemplateGrader._is_remote_git_source(repo_path):
+      local_repo_path = pathlib.Path(repo_path).expanduser()
+      if local_repo_path.exists():
+        shutil.copytree(local_repo_path, dest)
+        return
 
-    else:  # Get it from the remote location
-      env = os.environ.copy()
+    # Get it from the remote location.
+    env = os.environ.copy()
 
-      # If you need to use an SSH deploy key just for this command:
-      # (works for git@host:org/repo.git or ssh://host/...)
-      if deploy_key_path:
-        ssh_cmd = f"ssh -i {deploy_key_path} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-        env["GIT_SSH_COMMAND"] = ssh_cmd
+    # If you need to use an SSH deploy key just for this command:
+    # (works for git@host:org/repo.git or ssh://host/...)
+    if deploy_key_path:
+      ssh_cmd = f"ssh -i {deploy_key_path} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+      env["GIT_SSH_COMMAND"] = ssh_cmd
 
-      cmd = ["git", "clone"]
-      if branch:
-        cmd.extend(["--branch", branch])
-      if depth:
-        cmd.extend(["--depth", str(depth)])
-      cmd.extend([repo_path, str(dest)])
+    cmd = ["git", "clone"]
+    if branch:
+      cmd.extend(["--branch", branch])
+    if depth:
+      cmd.extend(["--depth", str(depth)])
+    cmd.extend([repo_path, str(dest)])
 
-      run_kwargs = {"check": True, "env": env}
-      if not log.isEnabledFor(logging.DEBUG):
-        run_kwargs.update({
-          "stdout": subprocess.DEVNULL,
-          "stderr": subprocess.PIPE,
-          "text": True,
-        })
+    run_kwargs = {"check": True, "env": env}
+    if not log.isEnabledFor(logging.DEBUG):
+      run_kwargs.update({
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.PIPE,
+        "text": True,
+      })
 
-      try:
-        subprocess.run(cmd, **run_kwargs)
-      except subprocess.CalledProcessError as e:
-        stderr = (getattr(e, "stderr", None) or "").strip()
-        if stderr:
-          raise RuntimeError(
-            f"git clone failed for '{repo_path}': {stderr}. "
-            "Check repository URL/access permissions and network connectivity.") from e
+    try:
+      subprocess.run(cmd, **run_kwargs)
+    except subprocess.CalledProcessError as e:
+      stderr = (getattr(e, "stderr", None) or "").strip()
+      if stderr:
         raise RuntimeError(
-          f"git clone failed for '{repo_path}'. "
+          f"git clone failed for '{repo_path}': {stderr}. "
           "Check repository URL/access permissions and network connectivity.") from e
+      raise RuntimeError(
+        f"git clone failed for '{repo_path}'. "
+        "Check repository URL/access permissions and network connectivity.") from e
 
   def _match_files_to_paths(self,
                             submission) -> Tuple[List[Tuple], Optional[str]]:
