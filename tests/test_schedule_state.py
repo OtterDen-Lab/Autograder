@@ -67,6 +67,31 @@ def test_schedule_state_manager_writes_yaml_atomically(tmp_path):
     assignment_state_key(101, 501), assignment_state_key(102, 501)}
 
 
+def test_schedule_state_file_has_human_readable_course_group_and_assignment_labels(
+    tmp_path):
+  state_path = tmp_path / "schedule_state.yaml"
+  key = assignment_state_key(101, 501)
+  manager = ScheduleStateManager(path=str(state_path), state=ScheduleState(
+    assignments={key: ScheduleStateEntry(
+      last_completed_at=datetime.now(timezone.utc),
+      course_name="CST334",
+      assignment_group_name="Lecture Videos",
+      assignment_name="Week 1.1: Introduction to OS",
+    )}))
+
+  manager.reconcile_configured_assignments({key: {
+    "course_name": "CST334",
+    "assignment_group_name": "Lecture Videos",
+    "assignment_name": "Week 1.1: Introduction to OS",
+  }})
+  manager._mark_completed(key)
+  save_schedule_state = state_path.read_text(encoding="utf-8")
+
+  assert "# Course: CST334" in save_schedule_state
+  assert "# Assignment group: Lecture Videos" in save_schedule_state
+  assert "# Week 1.1: Introduction to OS" in save_schedule_state
+
+
 def test_schedule_state_manager_does_not_complete_failed_push(tmp_path):
   manager = ScheduleStateManager(
     path=str(tmp_path / "schedule_state.yaml"), state=ScheduleState())

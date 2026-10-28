@@ -145,7 +145,11 @@ def collect_assignments_to_grade(config: RunConfig,
     force_schedule = bool(getattr(args, "skip_scheduling_check", False))
     if schedule_manager is not None:
         configured_keys = {
-            assignment_state_key(course.id, assignment.id)
+            assignment_state_key(course.id, assignment.id): {
+                "course_name": course.name or f"Canvas course {course.id}",
+                "assignment_group_name": group.name or group.type_name,
+                "assignment_name": assignment.assignment_name,
+            }
             for course in config.courses
             for group in course.assignment_groups
             for assignment in group.assignments
@@ -286,6 +290,7 @@ def collect_assignments_to_grade(config: RunConfig,
                         idempotency_key=idempotency_key,
                         idempotency_state_dir=idempotency_state_dir,
                         course_id=course_config.id,
+                        assignment_group_name=group.name or group.type_name,
                     ))
 
     return assignments_to_grade

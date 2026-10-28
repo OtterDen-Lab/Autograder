@@ -24,6 +24,9 @@ STATE_FILE_NAME = "schedule_state.yaml"
 @dataclass
 class ScheduleStateEntry:
   last_completed_at: Optional[datetime] = None
+  course_name: Optional[str] = None
+  assignment_group_name: Optional[str] = None
+  assignment_name: Optional[str] = None
 
 
 @dataclass
@@ -128,17 +131,38 @@ def save_schedule_state(path: str, state: ScheduleState) -> None:
   if directory:
     os.makedirs(directory, exist_ok=True)
 
-  payload: Dict[str, Any] = {
-    "version": STATE_VERSION,
-    "assignments": {},
-  }
-  for assignment_key in sorted(state.assignments):
-    entry = state.assignments[assignment_key]
-    if entry.last_completed_at is None:
-      continue
-    payload["assignments"][assignment_key] = {
-      "last_completed_at": _format_iso_datetime(entry.last_completed_at)
-    }
+  lines = [f"version: {STATE_VERSION}", "assignments:"]
+  entries = [
+    (assignment_key, entry)
+    for assignment_key, entry in state.assignments.items()
+    if entry.last_completed_at is not None
+  ]
+  entries.sort(key=lambda item: (
+    item[1].course_name or "",
+    item[1].assignment_group_name or "",
+    item[1].assignment_name or "",
+    item[0],
+  ))
+  previous_section = (None, None)
+  for assignment_key, entry in entries:
+    section = (entry.course_name, entry.assignment_group_name)
+    if section != previous_section:
+      if entry.course_name:
+        lines.append(f"  # Course: {_comment_text(entry.course_name)}")
+      if entry.assignment_group_name:
+        lines.append(
+          f"  # Assignment group: {_comment_text(entry.assignment_group_name)}")
+      previous_section = section
+    assignment_line = f"  {assignment_key}:"
+    if entry.assignment_name:
+      assignment_line += f"  # {_comment_text(entry.assignment_name)}"
+    lines.extend([
+      assignment_line,
+      f"    last_completed_at: {_format_iso_datetime(entry.last_completed_at)}",
+    ])
+  if not entries:
+    lines[-1] = "assignments: {}"
+  serialized = "\n".join(lines) + "\n"
 
   tmp_path = None
   try:
@@ -151,7 +175,7 @@ def save_schedule_state(path: str, state: ScheduleState) -> None:
         delete=False,
     ) as f:
       tmp_path = f.name
-      yaml.safe_dump(payload, f, sort_keys=True, default_flow_style=False)
+      f.write(serialized)
     os.replace(tmp_path, path)
   except Exception as e:
     raise autograder_exceptions.FileProcessingError(
@@ -162,6 +186,11 @@ def save_schedule_state(path: str, state: ScheduleState) -> None:
         os.unlink(tmp_path)
       except Exception:
         pass
+
+
+def _comment_text(value: Any) -> str:
+  """Keep human-readable labels safely on one YAML comment line."""
+  return " ".join(str(value).replace("\r", " ").replace("\n", " ").split())
 
 
 def _compile_rule(schedule: ScheduleConfig):
@@ -211,14 +240,34 @@ class ScheduleStateManager:
   def load_default(cls) -> "ScheduleStateManager":
     return cls()
 
-  def reconcile_configured_assignments(self, assignment_keys: set[str]) -> None:
+  def reconcile_configured_assignments(self,
+                                       configured_assignments: Any) -> None:
     """Prune entries for assignments no longer present in the loaded YAML."""
+    if isinstance(configured_assignments, dict):
+      assignment_keys = set(configured_assignments)
+      labels_by_key = configured_assignments
+    else:
+      assignment_keys = set(configured_assignments)
+      labels_by_key = {}
     with self._lock:
       stale_keys = set(self.state.assignments) - assignment_keys
-      if not stale_keys:
-        return
       for key in stale_keys:
         del self.state.assignments[key]
+      labels_changed = False
+      for key, labels in labels_by_key.items():
+        entry = self.state.assignments.get(key)
+        if entry is None:
+          entry = ScheduleStateEntry()
+          self.state.assignments[key] = entry
+          labels_changed = True
+        for field_name in ("course_name", "assignment_group_name",
+                           "assignment_name"):
+          value = labels.get(field_name)
+          if value is not None and getattr(entry, field_name) != value:
+            setattr(entry, field_name, value)
+            labels_changed = True
+      if not stale_keys and not labels_changed:
+        return
       try:
         save_schedule_state(self.path, self.state)
       except autograder_exceptions.FileProcessingError as e:
@@ -249,8 +298,9 @@ class ScheduleStateManager:
                       completed_at: Optional[datetime] = None) -> None:
     completed_at = (completed_at or datetime.now(timezone.utc)).astimezone(
       timezone.utc)
-    self.state.assignments[assignment_key] = ScheduleStateEntry(
-      last_completed_at=completed_at)
+    entry = self.state.assignments.get(assignment_key, ScheduleStateEntry())
+    entry.last_completed_at = completed_at
+    self.state.assignments[assignment_key] = entry
     save_schedule_state(self.path, self.state)
 
   def record_assignment_result(self, assignment_data: Any,
@@ -262,6 +312,10 @@ class ScheduleStateManager:
       if not self._result_completes_schedule(result):
         return
       try:
+        entry = self.state.assignments.get(assignment_key)
+        assignment_name = result.get("assignment_name")
+        if entry is not None and assignment_name:
+          entry.assignment_name = str(assignment_name)
         self._mark_completed(assignment_key)
       except autograder_exceptions.FileProcessingError as e:
         self.write_error = e

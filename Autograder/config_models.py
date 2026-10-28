@@ -177,6 +177,7 @@ class AssignmentRunRequest:
   idempotency_key: Optional[str] = None
   idempotency_state_dir: str = "~/.autograder/idempotency"
   course_id: Optional[int] = None
+  assignment_group_name: Optional[str] = None
 
 
 def _config_error(message: str) -> ValueError:
