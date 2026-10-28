@@ -14,7 +14,7 @@ assignment_types:
       student_code_path: "student_code.py"
       dataset_cache_host_path: "/home/ssogden/datasets/CST463-PA3"
       dataset_cache_container_path: "/data/huggingface"
-      epochs: 15
+      epochs: 90
       trial_batch_size: 64
       # Set temporarily for instructor capacity tests; leave null for student trials.
       forced_batch_size: null
@@ -23,7 +23,7 @@ assignment_types:
       seed: 0
       gpu_count: 1
       # 15 epochs at this limit scales to the 2-hour 90-epoch benchmark limit.
-      command_timeout_seconds: 1800
+      command_timeout_seconds: 10800
       network_disabled: true
       # One trial runs at a time, so do not cap CPU or memory below host capacity.
       memory_limit: null
@@ -41,5 +41,5 @@ courses:
             '.*student_code.*\.py':
               path: "student_code.py" # target filename, will force to change into this
         assignments:
-          - id: 654990
+          - id: 654992
             repo_path: "PA3"
