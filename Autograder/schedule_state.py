@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
@@ -18,7 +17,7 @@ from Autograder.config_models import ScheduleConfig
 
 log = logging.getLogger(__name__)
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 STATE_FILE_NAME = "schedule_state.yaml"
 
 
@@ -30,7 +29,12 @@ class ScheduleStateEntry:
 @dataclass
 class ScheduleState:
   version: int = STATE_VERSION
-  assignment_types: Dict[str, ScheduleStateEntry] = field(default_factory=dict)
+  assignments: Dict[str, ScheduleStateEntry] = field(default_factory=dict)
+
+
+def assignment_state_key(course_id: Any, assignment_id: Any) -> str:
+  """Return a stable state key for one Canvas assignment in one course."""
+  return f"course:{course_id}/assignment:{assignment_id}"
 
 
 def _parse_iso_datetime(value: Any, context_label: str) -> Optional[datetime]:
@@ -87,29 +91,36 @@ def load_schedule_state(path: str) -> ScheduleState:
     raise autograder_exceptions.ConfigurationError(
       f"Schedule state file '{path}' must contain a mapping")
 
-  version = raw.get("version", STATE_VERSION)
-  if version != STATE_VERSION:
+  version = raw.get("version", 1)
+  if version not in (1, STATE_VERSION):
     raise autograder_exceptions.ConfigurationError(
       f"Unsupported schedule state version in '{path}': {version!r}")
 
-  raw_assignment_types = raw.get("assignment_types", {})
-  if not isinstance(raw_assignment_types, dict):
-    raise autograder_exceptions.ConfigurationError(
-      f"Schedule state file '{path}' has invalid assignment_types section")
+  # Version 1 keyed state by assignment type.  Do not transfer those times to
+  # individual assignments: that would incorrectly treat a newly configured
+  # assignment as already processed.  Saving after the first successful run
+  # upgrades the file to the per-assignment format.
+  if version == 1:
+    return ScheduleState()
 
-  assignment_types: Dict[str, ScheduleStateEntry] = {}
-  for type_name, raw_entry in raw_assignment_types.items():
+  raw_assignments = raw.get("assignments", {})
+  if not isinstance(raw_assignments, dict):
+    raise autograder_exceptions.ConfigurationError(
+      f"Schedule state file '{path}' has invalid assignments section")
+
+  assignments: Dict[str, ScheduleStateEntry] = {}
+  for assignment_key, raw_entry in raw_assignments.items():
     if not isinstance(raw_entry, dict):
       raise autograder_exceptions.ConfigurationError(
-        f"Schedule state entry for '{type_name}' must be a mapping")
+        f"Schedule state entry for '{assignment_key}' must be a mapping")
     last_completed_at = _parse_iso_datetime(
       raw_entry.get("last_completed_at"),
-      f"schedule_state.assignment_types.{type_name}.last_completed_at",
+      f"schedule_state.assignments.{assignment_key}.last_completed_at",
     )
-    assignment_types[type_name] = ScheduleStateEntry(
+    assignments[str(assignment_key)] = ScheduleStateEntry(
       last_completed_at=last_completed_at)
 
-  return ScheduleState(version=version, assignment_types=assignment_types)
+  return ScheduleState(version=STATE_VERSION, assignments=assignments)
 
 
 def save_schedule_state(path: str, state: ScheduleState) -> None:
@@ -118,14 +129,14 @@ def save_schedule_state(path: str, state: ScheduleState) -> None:
     os.makedirs(directory, exist_ok=True)
 
   payload: Dict[str, Any] = {
-    "version": state.version,
-    "assignment_types": {},
+    "version": STATE_VERSION,
+    "assignments": {},
   }
-  for type_name in sorted(state.assignment_types):
-    entry = state.assignment_types[type_name]
+  for assignment_key in sorted(state.assignments):
+    entry = state.assignments[assignment_key]
     if entry.last_completed_at is None:
       continue
-    payload["assignment_types"][type_name] = {
+    payload["assignments"][assignment_key] = {
       "last_completed_at": _format_iso_datetime(entry.last_completed_at)
     }
 
@@ -193,11 +204,6 @@ class ScheduleStateManager:
     self.path = path or _resolve_schedule_state_path()
     log.info(f"Using schedule state file: {self.path}")
     self.state = state or load_schedule_state(self.path)
-    self._planned_counts: Counter[str] = Counter()
-    self._seen_counts: Counter[str] = Counter()
-    self._pushed_counts: Counter[str] = Counter()
-    self._failed_types: set[str] = set()
-    self._completed_types: set[str] = set()
     self.write_error: Optional[Exception] = None
     self._lock = threading.Lock()
 
@@ -205,15 +211,21 @@ class ScheduleStateManager:
   def load_default(cls) -> "ScheduleStateManager":
     return cls()
 
-  def register_planned_assignments(self, assignments: list[Any]) -> None:
+  def reconcile_configured_assignments(self, assignment_keys: set[str]) -> None:
+    """Prune entries for assignments no longer present in the loaded YAML."""
     with self._lock:
-      self._planned_counts = Counter(a.assignment_type for a in assignments)
-      self._seen_counts = Counter()
-      self._pushed_counts = Counter()
-      self._failed_types = set()
-      self._completed_types = set()
+      stale_keys = set(self.state.assignments) - assignment_keys
+      if not stale_keys:
+        return
+      for key in stale_keys:
+        del self.state.assignments[key]
+      try:
+        save_schedule_state(self.path, self.state)
+      except autograder_exceptions.FileProcessingError as e:
+        self.write_error = e
+        log.error("Failed to prune schedule state: %s", e)
 
-  def is_assignment_type_due(self, assignment_type_name: str,
+  def is_assignment_due(self, course_id: Any, assignment_id: Any,
                              schedule: Optional[ScheduleConfig],
                              now_utc: Optional[datetime] = None) -> bool:
     if schedule is None:
@@ -221,50 +233,40 @@ class ScheduleStateManager:
     latest_due = latest_due_occurrence(schedule, now_utc=now_utc)
     if latest_due is None:
       return False
-    last_completed_at = self.state.assignment_types.get(
-      assignment_type_name, ScheduleStateEntry()).last_completed_at
+    key = assignment_state_key(course_id, assignment_id)
+    last_completed_at = self.state.assignments.get(
+      key, ScheduleStateEntry()).last_completed_at
     if last_completed_at is None:
       return True
     return last_completed_at < latest_due
 
-  def _mark_completed(self, assignment_type_name: str,
+  def get_assignment_entry(self, course_id: Any,
+                           assignment_id: Any) -> ScheduleStateEntry:
+    return self.state.assignments.get(
+      assignment_state_key(course_id, assignment_id), ScheduleStateEntry())
+
+  def _mark_completed(self, assignment_key: str,
                       completed_at: Optional[datetime] = None) -> None:
     completed_at = (completed_at or datetime.now(timezone.utc)).astimezone(
       timezone.utc)
-    self.state.assignment_types[assignment_type_name] = ScheduleStateEntry(
+    self.state.assignments[assignment_key] = ScheduleStateEntry(
       last_completed_at=completed_at)
     save_schedule_state(self.path, self.state)
 
   def record_assignment_result(self, assignment_data: Any,
                                result: Dict[str, Any]) -> None:
-    assignment_type_name = assignment_data.assignment_type
+    assignment_key = assignment_state_key(
+      getattr(assignment_data, "course_id", None),
+      getattr(assignment_data, "assignment_id", None))
     with self._lock:
-      if assignment_type_name not in self._planned_counts:
+      if not self._result_completes_schedule(result):
         return
-      self._seen_counts[assignment_type_name] += 1
-      if self._result_completes_schedule(result):
-        self._pushed_counts[assignment_type_name] += 1
-      else:
-        self._failed_types.add(assignment_type_name)
-
-      if assignment_type_name in self._completed_types:
-        return
-
-      planned = self._planned_counts[assignment_type_name]
-      if self._seen_counts[assignment_type_name] < planned:
-        return
-      if assignment_type_name in self._failed_types:
-        return
-      if self._pushed_counts[assignment_type_name] != planned:
-        return
-
-      self._completed_types.add(assignment_type_name)
       try:
-        self._mark_completed(assignment_type_name)
+        self._mark_completed(assignment_key)
       except autograder_exceptions.FileProcessingError as e:
         self.write_error = e
         log.error(
-          f"Failed to persist schedule state for assignment type '{assignment_type_name}': {e}"
+          f"Failed to persist schedule state for assignment '{assignment_key}': {e}"
         )
 
   @staticmethod

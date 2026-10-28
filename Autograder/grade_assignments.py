@@ -67,7 +67,7 @@ from Autograder.orchestration import (
     error_hint_for_exception,
 )
 from Autograder.cli.validators import resolve_records_dir
-from Autograder.schedule_state import ScheduleStateManager
+from Autograder.schedule_state import ScheduleStateManager, assignment_state_key
 from Autograder.schedule_state import estimate_schedule_interval_seconds
 from Autograder.config_loader import ConfigIncludeError, load_yaml_config
 
@@ -141,30 +141,49 @@ def collect_assignments_to_grade(config: RunConfig,
             f"Idempotency enabled with key '{idempotency_key}' (state dir: {idempotency_state_dir})"
         )
 
-    due_assignment_types = None
     schedule_manager = getattr(args, "schedule_state_manager", None)
     force_schedule = bool(getattr(args, "skip_scheduling_check", False))
     if schedule_manager is not None:
+        configured_keys = {
+            assignment_state_key(course.id, assignment.id)
+            for course in config.courses
+            for group in course.assignment_groups
+            for assignment in group.assignments
+            if not assignment.disabled and config.assignment_types[
+                group.type_name].schedule is not None
+        }
+        reconcile = getattr(schedule_manager, "reconcile_configured_assignments", None)
+        if callable(reconcile):
+            reconcile(configured_keys)
         if force_schedule:
-            due_assignment_types = {
-                type_name
-                for type_name, type_config in config.assignment_types.items()
-                if type_config.schedule is not None
-            }
-            log.info(
-                "Schedule-check override enabled; ignoring due-window checks for scheduled assignment types."
-            )
+            log.info("Schedule-check override enabled; ignoring due-window checks.")
         else:
-            due_assignment_types = {
-                type_name
-                for type_name, type_config in config.assignment_types.items()
-                if schedule_manager.is_assignment_type_due(type_name,
-                                                           type_config.schedule)
-            }
-            if not due_assignment_types:
-                log.info(
-                    "No assignment types are due based on schedule state; skipping Canvas access."
-                )
+            has_due_assignment = False
+            for course in config.courses:
+                for group in course.assignment_groups:
+                    type_config = config.assignment_types[group.type_name]
+                    for assignment in group.assignments:
+                        if assignment.disabled:
+                            continue
+                        if type_config.schedule is None:
+                            has_due_assignment = True
+                            break
+                        is_due = getattr(schedule_manager, "is_assignment_due", None)
+                        if callable(is_due):
+                            due = is_due(course.id, assignment.id,
+                                         type_config.schedule)
+                        else:
+                            due = schedule_manager.is_assignment_type_due(
+                                group.type_name, type_config.schedule)
+                        if due:
+                            has_due_assignment = True
+                            break
+                    if has_due_assignment:
+                        break
+                if has_due_assignment:
+                    break
+            if not has_due_assignment:
+                log.info("No assignments are due based on schedule state; skipping Canvas access.")
                 return []
 
     # Create the LMS interface
@@ -196,15 +215,24 @@ def collect_assignments_to_grade(config: RunConfig,
 
         for group in course_config.assignment_groups:
             type_config = config.assignment_types[group.type_name]
-            if due_assignment_types is not None and group.type_name not in due_assignment_types:
-                log.info(
-                    f"Skipping assignment type '{group.type_name}' for course {course_config.id}: not due yet."
-                )
-                continue
-
             for assignment in group.assignments:
                 if assignment.disabled:
                     continue
+
+                if (schedule_manager is not None and not force_schedule
+                    and type_config.schedule is not None):
+                    is_due = getattr(schedule_manager, "is_assignment_due", None)
+                    if callable(is_due):
+                        due = is_due(course_config.id, assignment.id,
+                                     type_config.schedule)
+                    else:
+                        due = schedule_manager.is_assignment_type_due(
+                            group.type_name, type_config.schedule)
+                    if not due:
+                        log.info(
+                            "Skipping assignment %s in course %s: not due yet.",
+                            assignment.id, course_config.id)
+                        continue
 
                 settings = type_config.settings.copy()
                 settings.update(course_config.settings)
@@ -217,8 +245,9 @@ def collect_assignments_to_grade(config: RunConfig,
                      f"assignment[{assignment.id}]"))
                 if (schedule_manager is not None and type_config.schedule is not None
                     and type_config.kind == "ExternalToolAssignment"):
-                    last_completed_entry = schedule_manager.state.assignment_types.get(
-                        group.type_name)
+                    get_entry = getattr(schedule_manager, "get_assignment_entry", None)
+                    last_completed_entry = (get_entry(course_config.id, assignment.id)
+                                            if callable(get_entry) else None)
                     if (last_completed_entry is not None
                         and last_completed_entry.last_completed_at is not None):
                         interval_seconds = estimate_schedule_interval_seconds(
@@ -256,6 +285,7 @@ def collect_assignments_to_grade(config: RunConfig,
                         privacy_mode=config.privacy_mode,
                         idempotency_key=idempotency_key,
                         idempotency_state_dir=idempotency_state_dir,
+                        course_id=course_config.id,
                     ))
 
     return assignments_to_grade
@@ -381,8 +411,6 @@ def main() -> int:
             args.schedule_state_manager = schedule_manager
 
             assignments_to_grade = collect_assignments_to_grade(config, args)
-            if schedule_manager is not None:
-                schedule_manager.register_planned_assignments(assignments_to_grade)
             if args.dump_config:
                 dump_effective_config(config, assignments_to_grade, args)
             if args.dry_run:

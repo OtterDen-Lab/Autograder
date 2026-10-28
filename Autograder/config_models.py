@@ -176,6 +176,7 @@ class AssignmentRunRequest:
   privacy_mode: str = "id_only"
   idempotency_key: Optional[str] = None
   idempotency_state_dir: str = "~/.autograder/idempotency"
+  course_id: Optional[int] = None
 
 
 def _config_error(message: str) -> ValueError:
