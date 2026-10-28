@@ -129,6 +129,18 @@ def test_parse_args_requires_yaml(monkeypatch):
   assert exc.value.code == 2
 
 
+def test_parse_args_prints_installed_version_without_yaml(monkeypatch, capsys):
+  monkeypatch.setattr("Autograder.cli.args.get_package_version",
+                      lambda: "9.8.7")
+  monkeypatch.setattr(sys, "argv", ["grade-assignments", "--version"])
+
+  with pytest.raises(SystemExit) as exc:
+    grade_assignments.parse_args()
+
+  assert exc.value.code == 0
+  assert capsys.readouterr().out.strip() == "grade-assignments 9.8.7"
+
+
 def test_parse_args_rejects_legacy_test_subcommand(monkeypatch):
   monkeypatch.setattr(sys, "argv", ["grade-assignments", "TEST"])
   with pytest.raises(SystemExit) as exc:

@@ -8,6 +8,7 @@ import os
 
 from Autograder.registry import GraderRegistry, AssignmentRegistry
 from Autograder.helpers.panopto import add_refresh_panopto_token_arguments
+from Autograder.version import get_package_version
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +68,11 @@ def parse_args() -> argparse.Namespace:
         Parsed argument namespace
     """
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {get_package_version()}",
+        help="Show the installed Autograder version and exit")
 
     parser.add_argument(
         "--yaml",
