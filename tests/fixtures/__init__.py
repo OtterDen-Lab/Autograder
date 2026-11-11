@@ -73,7 +73,6 @@ from .llm_responses import (
     # Usage info
     USAGE_INFO_ANTHROPIC,
     USAGE_INFO_OPENAI,
-    USAGE_INFO_OLLAMA,
     # Factory functions
     wrap_in_json_text,
     make_individual_grading,
@@ -131,7 +130,6 @@ __all__ = [
     "EDGE_CASE_UNICODE",
     "USAGE_INFO_ANTHROPIC",
     "USAGE_INFO_OPENAI",
-    "USAGE_INFO_OLLAMA",
     "wrap_in_json_text",
     "make_individual_grading",
     "make_aggregate_analysis",

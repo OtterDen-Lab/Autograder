@@ -566,19 +566,6 @@ wheels = [
 ]
 
 [[package]]
-name = "ollama"
-version = "0.6.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpx" },
-    { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b8/97/eeafe65594e4f4b25e443e068ef7d83aa3105b023e12e1c408c38669fc07/ollama-0.6.3.tar.gz", hash = "sha256:41fc49a8095c4a75939c4c1f8582e4d0671692fb6eac2a5a7ede8c9872b67096", size = 56868, upload-time = "2026-09-29T01:26:51.906Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4d/64/87505d9e006461233c21c8e66dc1ecee49c996090584b216abd0dd4a8322/ollama-0.6.3-py3-none-any.whl", hash = "sha256:6a20bc42c1a5f889295d7ec490d35e5132fc31f339561530f43a8abd4dbfe508", size = 16603, upload-time = "2026-09-29T01:26:50.451Z" },
-]
-
-[[package]]
 name = "openai"
 version = "3.40.0"
 source = { registry = "https://pypi.org/simple" }
@@ -616,7 +603,6 @@ dependencies = [
     { name = "canvasapi" },
     { name = "docker" },
     { name = "httpx" },
-    { name = "ollama" },
     { name = "openai" },
     { name = "otterden-lms-interface" },
     { name = "python-dateutil" },
@@ -639,7 +625,6 @@ requires-dist = [
     { name = "docker", specifier = "~=7.1" },
     { name = "httpx", specifier = "~=0.28" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.112.0" },
-    { name = "ollama", specifier = "~=0.6" },
     { name = "openai", specifier = "~=3.36" },
     { name = "otterden-lms-interface", specifier = "~=0.8.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.3" },

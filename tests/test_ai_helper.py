@@ -108,10 +108,6 @@ class TestGetModelPricing:
         assert input_cost == expected["input_cost"]
         assert output_cost == expected["output_cost"]
 
-    def test_ollama_pricing_is_free(self):
-        input_cost, output_cost = ai_helper.get_model_pricing("ollama", "qwen3:4b")
-        assert input_cost == 0.0
-        assert output_cost == 0.0
 
 
 class TestAnthropicHelper:

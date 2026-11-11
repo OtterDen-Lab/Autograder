@@ -363,14 +363,6 @@ USAGE_INFO_OPENAI = {
     "model": "gpt-4.1-mini"
 }
 
-USAGE_INFO_OLLAMA = {
-    "prompt_tokens": 1000,
-    "completion_tokens": 300,
-    "total_tokens": 1300,
-    "provider": "ollama",
-    "model": "qwen3:14b"
-}
-
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
