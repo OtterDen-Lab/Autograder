@@ -26,13 +26,8 @@ import yaml
 from Autograder.grader import Grader
 from Autograder import config_models
 from Autograder.grader_context import GraderContext
-from Autograder.ai_orchestrator import (
-    ProviderFallbackOrchestrator,
-    parse_anthropic_json_payload,
-    query_anthropic_text,
-    query_anthropic_structured,
-    query_openai_structured,
-)
+from Autograder.bifrost_ai import query_ai
+from Autograder.exceptions import AIProviderError
 from lms_interface.classes import Feedback, Submission, TextSubmission
 
 from .pii import SubmissionPIIRedactor
@@ -588,103 +583,12 @@ class BaseTextSubmissionGrader(Grader):
         prompt = self._build_aggregate_analysis_prompt(submission_texts,
                                                        assignment_name,
                                                        course_name)
-        orchestrator = ProviderFallbackOrchestrator(self.prefer_anthropic)
-
-        def _run_anthropic() -> Dict:
-            operation = "Phase 1 - Aggregate Analysis (Anthropic)"
-            if not self.prefer_anthropic:
-                operation = "Phase 1 - Aggregate Analysis (Anthropic fallback)"
-            analysis_text, usage = query_anthropic_text(
-                prompt,
-                tier=self.phase1_tier,
-                max_response_tokens=2000,
-                max_rate_limit_retries=self.rate_limit_retries)
-            self._track_token_usage(usage, operation)
-
-            result = parse_anthropic_json_payload(analysis_text,
-                                                  schema_name="aggregate_analysis")
-            if result is None:
-                result = {
-                    "common_themes": analysis_text,
-                    "commonly_misunderstood_topics": [],
-                    "misconception_details": "",
-                    "key_insights": "",
-                    "teaching_feedback": "",
-                    "core_topics": [],
-                    "related_topics": [],
-                    "off_topic_indicators": [],
-                    "student_questions": []
-                }
-
-            self._store_topics_from_result(result)
-            provider_label = "Anthropic" if self.prefer_anthropic else "Anthropic fallback"
-            log.info(
-                f"Aggregate analysis completed ({provider_label}). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
-            )
-            return result
-
-        def _run_openai() -> Dict:
-            log.debug(
-                f"Attempting aggregate analysis with OpenAI (tier={self.phase1_tier})..."
-            )
-            result, usage = query_openai_structured(
-                prompt,
-                schema_name="aggregate_analysis",
-                tier=self.phase1_tier,
-                max_response_tokens=2000,
-                max_rate_limit_retries=self.rate_limit_retries)
-            self._track_token_usage(usage,
-                                    "Phase 1 - Aggregate Analysis (OpenAI)")
-            self._store_topics_from_result(result)
-            log.info(
-                f"Aggregate analysis completed (OpenAI). Identified {len(self.core_topics)} core topics, {len(self.related_topics)} related topics"
-            )
-            return result
-
-        def _on_openai_error(error: Exception, is_fallback: bool) -> None:
-            log.error(f"OpenAI aggregate analysis failed: {error}")
-            if not is_fallback:
-                log.info("Falling back to Anthropic...")
-
-        def _on_anthropic_error(error: Exception, is_fallback: bool) -> None:
-            if not is_fallback:
-                log.error(f"Anthropic aggregate analysis failed: {error}")
-                log.info("Falling back to OpenAI...")
-            else:
-                log.error(f"Anthropic fallback also failed: {error}")
-
-        def _on_both_fail(primary_error: Exception,
-                          _secondary_error: Exception) -> Dict:
-            if self.prefer_anthropic:
-                return {
-                    "common_themes": "Error performing analysis",
-                    "key_insights": "",
-                    "misconception_details": "",
-                    "teaching_feedback": "",
-                    "core_topics": [],
-                    "related_topics": [],
-                    "off_topic_indicators": [],
-                    "commonly_misunderstood_topics": [],
-                    "student_questions": []
-                }
-
-            return {
-                "common_themes": f"Error performing analysis: {primary_error}",
-                "key_insights": "",
-                "misconception_details": "",
-                "teaching_feedback": "",
-                "core_topics": [],
-                "related_topics": [],
-                "off_topic_indicators": [],
-                "commonly_misunderstood_topics": [],
-                "student_questions": []
-            }
-
-        return orchestrator.run(run_openai=_run_openai,
-                                run_anthropic=_run_anthropic,
-                                on_openai_error=_on_openai_error,
-                                on_anthropic_error=_on_anthropic_error,
-                                on_both_fail=_on_both_fail)
+        result, usage = query_ai(
+            prompt, schema_name="aggregate_analysis", tier=self.phase1_tier,
+            max_response_tokens=2000)
+        self._track_token_usage(usage, "Phase 1 - Aggregate Analysis")
+        self._store_topics_from_result(result)
+        return result
 
     def phase_2_individual_grading(self, submission_data: List[Dict],
                                    core_topics: List[str]) -> List[Dict]:
@@ -839,67 +743,11 @@ class BaseTextSubmissionGrader(Grader):
         log.info(f"Consolidating {len(all_questions)} questions from students...")
 
         prompt = self._build_question_consolidation_prompt(all_questions)
-        orchestrator = ProviderFallbackOrchestrator(self.prefer_anthropic)
-
-        def _run_anthropic() -> List[Dict]:
-            operation = "Phase 2.5 - Question Consolidation (Anthropic)"
-            if not self.prefer_anthropic:
-                operation = "Phase 2.5 - Question Consolidation (Anthropic fallback)"
-
-            result, usage = query_anthropic_structured(
-                prompt,
-                schema_name="question_consolidation",
-                tier=self.phase25_tier,
-                max_response_tokens=2000,
-                max_rate_limit_retries=self.rate_limit_retries)
-            self._track_token_usage(usage, operation)
-
-            consolidated = result.get("consolidated_questions", [])
-            log.info(
-                f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
-            )
-            return consolidated
-
-        def _run_openai() -> List[Dict]:
-            result, usage = query_openai_structured(
-                prompt,
-                schema_name="question_consolidation",
-                tier=self.phase25_tier,
-                max_response_tokens=2000,
-                max_rate_limit_retries=self.rate_limit_retries)
-            self._track_token_usage(
-                usage, "Phase 2.5 - Question Consolidation (OpenAI)")
-            consolidated = result.get("consolidated_questions", [])
-            log.info(
-                f"Consolidated {len(all_questions)} questions into {len(consolidated)} canonical questions"
-            )
-            return consolidated
-
-        def _on_openai_error(error: Exception, is_fallback: bool) -> None:
-            log.debug(f"OpenAI question consolidation failed: {error}")
-            if not is_fallback:
-                log.debug("Trying Anthropic as fallback...")
-
-        def _on_anthropic_error(error: Exception, is_fallback: bool) -> None:
-            if not is_fallback:
-                log.debug(
-                    f"Anthropic question consolidation failed: {error}. Trying OpenAI..."
-                )
-            else:
-                log.debug(f"Anthropic question consolidation failed: {error}")
-
-        def _on_both_fail(_primary_error: Exception,
-                          secondary_error: Exception) -> List[Dict]:
-            log.error(
-                f"Both AI providers failed for question consolidation: {secondary_error}"
-            )
-            return []
-
-        return orchestrator.run(run_openai=_run_openai,
-                                run_anthropic=_run_anthropic,
-                                on_openai_error=_on_openai_error,
-                                on_anthropic_error=_on_anthropic_error,
-                                on_both_fail=_on_both_fail)
+        result, usage = query_ai(
+            prompt, schema_name="question_consolidation", tier=self.phase25_tier,
+            max_response_tokens=2000)
+        self._track_token_usage(usage, "Phase 2.5 - Question Consolidation")
+        return result.get("consolidated_questions", [])
 
     def _grade_individual_submission(self, submission_text: str,
                                      core_topics: List[str],
@@ -916,71 +764,23 @@ class BaseTextSubmissionGrader(Grader):
             Dictionary with grading results
         """
         prompt = self._build_individual_grading_prompt(submission_text, core_topics)
-        orchestrator = ProviderFallbackOrchestrator(self.prefer_anthropic)
-
-        def _run_anthropic() -> Dict:
-            operation = f"Phase 2 - Individual Grading ({student_id}) - Anthropic"
-            if not self.prefer_anthropic:
-                operation = f"Phase 2 - Individual Grading ({student_id}) - Anthropic fallback"
-            result, usage = query_anthropic_structured(
-                prompt,
-                schema_name="individual_grading",
-                tier=self.phase2_tier,
-                max_response_tokens=1000,
-                max_retries=3,
-                max_rate_limit_retries=self.rate_limit_retries)
-            self._track_token_usage(usage, operation)
-            result["student_id"] = student_id
-            return result
-
-        def _run_openai() -> Dict:
-            result, usage = query_openai_structured(
-                prompt,
-                schema_name="individual_grading",
-                tier=self.phase2_tier,
-                max_response_tokens=1000,
-                max_attempts=3,
-                max_rate_limit_retries=self.rate_limit_retries)
-            self._track_token_usage(
-                usage, f"Phase 2 - Individual Grading ({student_id}) - OpenAI")
-            result["student_id"] = student_id
-            return result
-
-        def _on_openai_error(error: Exception, is_fallback: bool) -> None:
-            if is_fallback and self.prefer_anthropic:
-                log.debug(f"OpenAI failed for {student_id}: {error}")
-            else:
-                log.debug(f"OpenAI failed for {student_id}: {error}")
-                if not is_fallback:
-                    log.debug("Trying Anthropic...")
-
-        def _on_anthropic_error(error: Exception, is_fallback: bool) -> None:
-            if is_fallback and not self.prefer_anthropic:
-                log.error(f"Both AI providers failed for {student_id}: {error}")
-            elif not is_fallback:
-                log.debug(
-                    f"Anthropic failed for {student_id}: {error}. Trying OpenAI...")
-            else:
-                log.debug(f"Anthropic failed for {student_id}: {error}")
-
-        def _on_both_fail(primary_error: Exception,
-                          _secondary_error: Exception) -> Dict:
-            self._report_individual_grading_failure(
-                student_id, f"{type(primary_error).__name__}: {primary_error}")
+        try:
+            result, usage = query_ai(
+                prompt, schema_name="individual_grading", tier=self.phase2_tier,
+                max_response_tokens=1000)
+        except AIProviderError as error:
+            log.error("AI grading failed for %s: %s", student_id, error)
+            self._report_individual_grading_failure(student_id, str(error))
             return {
                 "student_id": student_id,
                 "grading_failed": True,
                 "needs_support": True,
-                "support_reason": "LLM grading failed after retries",
-                "feedback":
-                "Automatic grading was unavailable for this submission. Instructor review is required."
+                "support_reason": "AI grading failed; instructor review required",
+                "feedback": "Automatic grading was unavailable for this submission. Instructor review is required.",
             }
-
-        return orchestrator.run(run_openai=_run_openai,
-                                run_anthropic=_run_anthropic,
-                                on_openai_error=_on_openai_error,
-                                on_anthropic_error=_on_anthropic_error,
-                                on_both_fail=_on_both_fail)
+        self._track_token_usage(usage, f"Phase 2 - Individual Grading ({student_id})")
+        result["student_id"] = student_id
+        return result
 
     def phase_3_generate_report(self, aggregate_results: Dict,
                                 individual_results: List[Dict]) -> None:

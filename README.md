@@ -312,3 +312,16 @@ Images are removed locally after grading. Changes to build settings, additional
 repositories, or uncommitted local files do not change the tag; update a source
 or golden repository commit to refresh the image. Assignments sharing a course
 and commits must use the same image build settings and golden-file list.
+
+### AI gateway configuration
+
+Text grading sends structured requests through Bifrost. Set `BIFROST_API_KEY`
+to the project's virtual key and set `BIFROST_MODEL_SMALL`,
+`BIFROST_MODEL_MEDIUM`, and `BIFROST_MODEL_LARGE` to model names or aliases
+configured in Bifrost for the tiers used by the grader. These variables can be
+placed in `~/.tokens/autograder.env`. `BIFROST_BASE_URL` optionally overrides
+the default `https://bifrost.p.zxqw.dev/v1`. Configure model fallback in
+Bifrost; the grader does not retry another provider. Bifrost records request
+costs under the virtual key, while the grader records token counts. A failed
+individual request leaves that submission ungraded. A failed aggregate or
+question-consolidation request stops the grading run.
