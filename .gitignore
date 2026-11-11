@@ -21,3 +21,6 @@ scratch.yaml
 todo.md
 .pytest_cache/
 
+.stfolder/
+.stignore
+
