@@ -487,7 +487,7 @@ class DockerGrader(FileBasedGrader):
     except Exception as e:
       log.warning(f"Failed to stop container during cleanup: {e}")
 
-    if self.image is not None and hasattr(self.image, "remove"):
+    if self.image is not None and not isinstance(self.image, str):
       try:
         self.docker_client.remove_image(self.image, force=True)
       except Exception as e:
@@ -567,6 +567,7 @@ class TemplateGrader(DockerGrader):
       file_paths = {}
 
     self.course_name = course_name
+    self.course_id = kwargs.get("course_id")
     self.assignment_name = assignment_name
     self.base_image_name = base_image_name
     self.source_repo = source_repo
@@ -939,32 +940,47 @@ class TemplateGrader(DockerGrader):
                        os.path.join(temp_build_dir, mount["context_dir"]),
                        depth=repo.get("depth"))
 
-      # If we have a golden repo, let's use it to set the extra files
+      # Prepare the golden repository before resolving the immutable image tag.
       if self.golden_repo:
-        # Download the golden repo, and we'll delete it later
-        self._get_repo(self.golden_repo, os.path.join(temp_build_dir,
-                                                      "golden"))
+        self._get_repo(self.golden_repo, os.path.join(temp_build_dir, "golden"))
 
-        logging.debug(temp_build_dir)
-        golden_mounts = [{
-          "container_path": "/repo",
-          "context_dir": "golden",
-        }]
-        source_assignment_root = self._resolve_local_path_for_container_path(
-          temp_build_dir, self._container_assignment_root(), golden_mounts)
-        target_assignment_root = self._resolve_local_path_for_container_path(
-          temp_build_dir, self._container_assignment_root(), repo_mounts)
+      def commit(path):
+        return subprocess.check_output(
+          ["git", "-C", path, "rev-parse", "--short=12", "HEAD"],
+          text=True, stderr=subprocess.PIPE).strip()
 
-        for f in self.files_from_golden:
-          log.debug(f"Copying over golden file: {f}")
-          target_file = os.path.join(target_assignment_root, f)
-          os.makedirs(os.path.dirname(target_file), exist_ok=True)
-          shutil.copy(
-            os.path.join(source_assignment_root, f),
-            target_file,
-          )
+      source_commit = commit(os.path.join(temp_build_dir, "repo"))
+      golden_commit = (commit(os.path.join(temp_build_dir, "golden"))
+                       if self.golden_repo else None)
+      if self.course_id is None:
+        raise Autograder.exceptions.ConfigurationError(
+          "A course ID is required for registry image caching")
+      course = self._sanitize_image_tag_component(self.course_name)
+      course_id = self._sanitize_image_tag_component(self.course_id)
+      tag = f"docker-registry.p.zxqw.dev/{course}-{course_id}:{source_commit}"
+      if golden_commit:
+        tag += f"-{golden_commit}"
 
-        # Remove the golden for now
+      image = self.docker_client.pull_cached_image(tag)
+      if image is not None:
+        return image
+
+      # Copy the configured files for every assignment into the shared image.
+      if self.golden_repo and self.files_from_golden:
+        golden_mounts = [{"container_path": "/repo", "context_dir": "golden"}]
+        golden_root = self._resolve_local_path_for_container_path(
+          temp_build_dir, self.container_repo_path, golden_mounts)
+        target_root = self._resolve_local_path_for_container_path(
+          temp_build_dir, self.container_repo_path, repo_mounts)
+        for assignment in os.listdir(golden_root):
+          for filename in self.files_from_golden:
+            source = os.path.join(golden_root, assignment, filename)
+            if not os.path.isfile(source):
+              continue
+            target = os.path.join(target_root, assignment, filename)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copy(source, target)
+      if self.golden_repo:
         shutil.rmtree(os.path.join(temp_build_dir, "golden"))
 
       # Set up dockerfile
@@ -1025,8 +1041,9 @@ class TemplateGrader(DockerGrader):
 
       image = self.docker_client.build_image_from_context(
         context_path=temp_build_dir,
-        tag=self._build_context_image_tag(),
+        tag=tag,
         use_cached=True)
+      self.docker_client.push_cached_image(tag)
     return image
 
   def grade_submission(self, submission, *args, **kwargs) -> Feedback:

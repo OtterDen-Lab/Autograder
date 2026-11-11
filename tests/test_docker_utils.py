@@ -673,3 +673,12 @@ class TestDockerContainerReadFile:
         content = container.read_file("/nonexistent/file.txt")
 
         assert content is None
+
+
+def test_registry_push_reports_streamed_errors(mock_docker_client):
+    from Autograder.exceptions import DockerError
+    mock_docker_client.client.images.push.return_value = iter([
+        {"error": "denied"},
+    ])
+    with pytest.raises(DockerError, match="denied"):
+        mock_docker_client.push_cached_image("registry/course:abc")

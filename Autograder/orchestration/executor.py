@@ -132,6 +132,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
         # Add runtime context to settings
         settings = settings.copy()
         settings["course_name"] = assignment_data.course_name
+        settings["course_id"] = assignment_data.course_id
         settings["slack_channel"] = assignment_data.slack_channel
         settings["assignment_kind"] = assignment_kind
         settings["debug"] = bool(getattr(args, "debug", False))

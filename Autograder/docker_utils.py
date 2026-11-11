@@ -226,7 +226,10 @@ class DockerClient:
   def remove_image(image, force: bool = True) -> None:
     """Remove a Docker image with error handling."""
     try:
-      image.remove(force=force)
+      if callable(getattr(image, "remove", None)):
+        image.remove(force=force)
+      else:
+        image.client.images.remove(image.id, force=force)
       log.debug(
         f"Successfully removed image: {getattr(image, 'tags', 'unknown')}")
       DockerClient._images.discard(image)
@@ -249,6 +252,29 @@ class DockerClient:
     container = self.client.containers.run(*args, **kwargs)
     self._containers.add(container)
     return container
+
+  def pull_cached_image(self, tag):
+    """Pull a registry image, returning None only when it is absent."""
+    try:
+      image = self.client.images.pull(tag)
+      self.__class__._images.add(image)
+      return image
+    except docker.errors.ImageNotFound:
+      return None
+    except docker.errors.APIError as e:
+      raise Autograder.exceptions.DockerError(
+        f"Unable to pull registry image {tag}: {e}") from e
+
+  def push_cached_image(self, tag):
+    """Push an image and check the streamed registry response for errors."""
+    try:
+      for event in self.client.images.push(tag, stream=True, decode=True):
+        if event.get("error"):
+          raise Autograder.exceptions.DockerError(
+            f"Unable to push registry image {tag}: {event['error']}")
+    except docker.errors.APIError as e:
+      raise Autograder.exceptions.DockerError(
+        f"Unable to push registry image {tag}: {e}") from e
 
   def build_image_from_context(
       self,

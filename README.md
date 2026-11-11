@@ -304,3 +304,11 @@ This project is licensed under the GPL-3.0-or-later license. See the LICENSE fil
 ## Contributing
 
 Contributions are welcome! Please open an issue or pull request on [GitHub](https://github.com/OtterDen-Lab/Autograder).
+
+Template graders cache course images in `docker-registry.p.zxqw.dev`, tagged
+with the source and golden repository commits. The registry must be reachable by
+Docker, and any required registry credentials must be configured with Docker.
+Images are removed locally after grading. Changes to build settings, additional
+repositories, or uncommitted local files do not change the tag; update a source
+or golden repository commit to refresh the image. Assignments sharing a course
+and commits must use the same image build settings and golden-file list.
