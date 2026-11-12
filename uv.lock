@@ -596,7 +596,7 @@ wheels = [
 
 [[package]]
 name = "otter-autograder"
-version = "0.17.6"
+version = "0.18.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
