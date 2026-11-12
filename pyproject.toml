@@ -37,6 +37,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2,<4"]
 dev = [
     "pytest>=7.4.3",
     "hypothesis>=6.112.0",
@@ -57,6 +58,7 @@ packages = ["Autograder"]
 artifacts = [
   "Autograder/seccomp/*.json",
   "Autograder/logging.yaml",
+  "Autograder/migrations/*.sql",
 ]
 
 [tool.hatch.build.targets.sdist]

@@ -15,6 +15,7 @@ from dataclasses import asdict
 from typing import Dict, List
 
 from Autograder import exceptions as autograder_exceptions
+from Autograder.coordination import coordinator_from_environment, cooldown_seconds
 from Autograder.assignment import AssignmentRegistry
 from Autograder.config_models import AssignmentRunRequest, get_active_grader_compatibility
 from Autograder.grader_context import GraderContext
@@ -70,6 +71,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
     assignment_id = None
     assignment_name = None
     course_name = assignment_data.course_name
+    lease = None
     try:
         course = assignment_data.course
         args = assignment_data.args
@@ -101,6 +103,20 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
                 f"Grader '{grader_name}' is not supported for kind '{assignment_kind}'. "
                 f"Allowed graders: {allowed}")
 
+        coordinator = coordinator_from_environment()
+        cooldown = cooldown_seconds(assignment_data.settings.get("grading_cooldown"))
+        if cooldown is not None and coordinator is None:
+            raise ValueError("grading_cooldown requires AUTOGRADER_DATABASE_URL")
+        if coordinator is not None:
+            lease = coordinator.claim(assignment_data.course_id, assignment_id)
+            if lease is None:
+                log.info("Skipping assignment %s in course %s: claimed by another worker",
+                         assignment_id, assignment_data.course_id)
+                return {'success': True, 'assignment_id': assignment_id,
+                        'course_name': course_name, 'assignment_name': None,
+                        'skipped_reason': 'assignment_claimed'}
+            lease.start()
+
         # Load Canvas assignment
         try:
             lms_assignment = course.get_assignment(assignment_id)
@@ -131,6 +147,7 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
 
         # Add runtime context to settings
         settings = settings.copy()
+        settings.pop("grading_cooldown", None)
         settings["course_name"] = assignment_data.course_name
         settings["course_id"] = assignment_data.course_id
         settings["slack_channel"] = assignment_data.slack_channel
@@ -189,6 +206,9 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
                 assignment_kind,
                 lms_assignment=lms_assignment,
                 grading_root_dir=None) as grading_assignment:
+
+            grading_assignment.coordination_lease = lease
+            grading_assignment.grading_cooldown = cooldown
 
             # Run prepare stage
             prepare_started = time.perf_counter()
@@ -262,6 +282,11 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
             'thread_id': thread_id
         }
     finally:
+        if lease is not None:
+            try:
+                lease.close()
+            except Exception:
+                log.error("Could not release assignment lease; it will expire automatically")
         try:
             if 'grader' in locals():
                 grader.cleanup()

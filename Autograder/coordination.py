@@ -1,0 +1,172 @@
+"""PostgreSQL assignment leases and per-student grading cooldowns.
+
+Apply the schema explicitly with: python -m Autograder.coordination migrate
+"""
+from __future__ import annotations
+
+import argparse
+import logging
+import math
+import os
+import threading
+import uuid
+from importlib.resources import files
+
+
+log = logging.getLogger(__name__)
+
+
+class CoordinationError(RuntimeError):
+  pass
+
+
+def cooldown_seconds(value):
+  """Cooldowns are expressed in seconds; omission disables success tracking."""
+  if value is None:
+    return None
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
+    raise ValueError("grading_cooldown must be a nonnegative number of seconds")
+  if not math.isfinite(value) or value < 0:
+    raise ValueError("grading_cooldown must be a nonnegative number of seconds")
+  return float(value)
+
+
+class PostgresCoordinator:
+  def __init__(self, dsn, lease_seconds=300):
+    self.dsn = dsn
+    self.lease_seconds = lease_seconds
+
+  def _query(self, sql, params=()):
+    # Keep transactions short, and use independent connections for the heartbeat.
+    # Never include connection errors in logs: they can contain credentials.
+    try:
+      import psycopg
+      with psycopg.connect(self.dsn, connect_timeout=5,
+                          options='-c statement_timeout=10000 -c lock_timeout=5000') as conn:
+        with conn.cursor() as cursor:
+          cursor.execute(sql, params)
+          return cursor.fetchall() if cursor.description else []
+    except Exception:
+      raise CoordinationError("PostgreSQL coordination failed; check connectivity, credentials, and schema migration") from None
+
+  def migrate(self):
+    self._query(files('Autograder').joinpath('migrations/001_coordination.sql').read_text())
+
+  def claim(self, course_id, assignment_id):
+    token = str(uuid.uuid4())
+    rows = self._query("""
+      INSERT INTO autograder_assignment_leases
+        (course_id, assignment_id, token, expires_at)
+      VALUES (%s, %s, %s, clock_timestamp() + %s * interval '1 second')
+      ON CONFLICT (course_id, assignment_id) DO UPDATE
+      SET token = EXCLUDED.token, expires_at = EXCLUDED.expires_at
+      WHERE autograder_assignment_leases.expires_at <= clock_timestamp()
+      RETURNING token
+    """, (str(course_id), str(assignment_id), token, self.lease_seconds))
+    if not rows:
+      return None
+    return AssignmentLease(self, str(course_id), str(assignment_id), token)
+
+
+class AssignmentLease:
+  def __init__(self, store, course_id, assignment_id, token):
+    self.store = store
+    self.key = (course_id, assignment_id, token)
+    self._stop = threading.Event()
+    self._lost = threading.Event()
+    self._thread = None
+
+  def start(self):
+    self._thread = threading.Thread(target=self._heartbeat, daemon=True)
+    self._thread.start()
+
+  def _heartbeat(self):
+    while not self._stop.wait(self.store.lease_seconds / 3):
+      try:
+        self.check()
+      except CoordinationError:
+        self._lost.set()
+        return
+
+  def check(self):
+    if self._lost.is_set():
+      raise CoordinationError("Assignment lease was lost; refusing to publish")
+    try:
+      rows = self.store._query("""
+        UPDATE autograder_assignment_leases
+        SET expires_at = clock_timestamp() + %s * interval '1 second'
+        WHERE course_id = %s AND assignment_id = %s AND token = %s
+          AND expires_at > clock_timestamp()
+        RETURNING token
+      """, (self.store.lease_seconds, *self.key))
+      if not rows:
+        raise CoordinationError("Assignment lease expired or changed ownership")
+    except CoordinationError:
+      self._lost.set()
+      raise
+
+  def filter_submissions(self, assignment, cooldown):
+    self.check()
+    if cooldown is None:
+      return
+    rows = self.store._query("""
+      SELECT student_id FROM autograder_student_successes
+      WHERE course_id = %s AND assignment_id = %s
+        AND last_succeeded_at > clock_timestamp() - %s * interval '1 second'
+    """, (*self.key[:2], cooldown))
+    cooling = {row[0] for row in rows}
+    before = len(assignment.submissions)
+    assignment.submissions = [s for s in assignment.submissions
+                              if str(s.student.user_id) not in cooling]
+    log.info("Cooldown filtering: kept %d submissions; skipped %d students",
+             len(assignment.submissions), before - len(assignment.submissions))
+    # Text graders consume this parallel batch representation.
+    if hasattr(assignment, 'submission_data'):
+      eligible = {id(s) for s in assignment.submissions}
+      assignment.submission_data = [row for row in assignment.submission_data
+                                   if id(row['submission_obj']) in eligible]
+
+  def succeeded(self, student_id):
+    self.check()
+    rows = self.store._query("""
+      INSERT INTO autograder_student_successes
+        (course_id, assignment_id, student_id, last_succeeded_at)
+      SELECT course_id, assignment_id, %s, clock_timestamp()
+      FROM autograder_assignment_leases
+      WHERE course_id = %s AND assignment_id = %s AND token = %s
+        AND expires_at > clock_timestamp()
+      ON CONFLICT (course_id, assignment_id, student_id) DO UPDATE
+      SET last_succeeded_at = EXCLUDED.last_succeeded_at
+      RETURNING student_id
+    """, (str(student_id), *self.key))
+    if not rows:
+      self._lost.set()
+      raise CoordinationError("Lease lost while recording successful Canvas update")
+
+  def close(self):
+    self._stop.set()
+    if self._thread is not None:
+      self._thread.join(timeout=16)
+    self.store._query("""
+      DELETE FROM autograder_assignment_leases
+      WHERE course_id = %s AND assignment_id = %s AND token = %s
+    """, self.key)
+
+
+def coordinator_from_environment():
+  dsn = os.getenv('AUTOGRADER_DATABASE_URL')
+  return PostgresCoordinator(dsn) if dsn else None
+
+
+def main():
+  parser = argparse.ArgumentParser(description=__doc__)
+  parser.add_argument('command', choices=['migrate'])
+  parser.parse_args()
+  coordinator = coordinator_from_environment()
+  if coordinator is None:
+    parser.error('AUTOGRADER_DATABASE_URL is required')
+  coordinator.migrate()
+
+
+if __name__ == '__main__':
+  main()

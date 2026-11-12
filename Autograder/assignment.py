@@ -108,6 +108,7 @@ class Assignment(abc.ABC):
     :return:
     """
 
+    lease = getattr(self, "coordination_lease", None)
     push_enabled = bool(kwargs.get("push", False))
     allow_late_penalty = bool(kwargs.get("allow_late_penalty", True))
     idempotency_key = kwargs.get("idempotency_key")
@@ -184,6 +185,8 @@ class Assignment(abc.ABC):
             "because grading did not produce valid feedback.")
           continue
 
+        if lease is not None:
+          lease.check()
         log.debug(f"Pushing feedback for: {submission}")
         try:
           # Scale the score for Canvas submission
@@ -236,6 +239,8 @@ class Assignment(abc.ABC):
             log.info(
               f"Skipping rubric push for assignment '{self.lms_assignment.name}' because Canvas has no attached rubric."
             )
+          if lease is not None:
+            lease.check()
           push_attempted += 1
           pushed = self.lms_assignment.push_feedback(
             **push_kwargs)
@@ -250,6 +255,8 @@ class Assignment(abc.ABC):
           continue
 
         if pushed:
+          if lease is not None and self.grading_cooldown is not None:
+            lease.succeeded(user_id)
           push_succeeded += 1
         else:
           push_failed += 1

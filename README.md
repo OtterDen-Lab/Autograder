@@ -325,3 +325,7 @@ Bifrost; the grader does not retry another provider. Bifrost records request
 costs under the virtual key, while the grader records token counts. A failed
 individual request leaves that submission ungraded. A failed aggregate or
 question-consolidation request stops the grading run.
+
+Optional [PostgreSQL coordination](documentation/postgresql_coordination.md)
+provides shared assignment leases and per-student grading cooldowns for multiple
+grading machines.

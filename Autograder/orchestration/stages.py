@@ -64,6 +64,10 @@ def run_prepare_stage(grader, grading_assignment, args, settings,
                 ) from e
             raise
 
+    lease = getattr(grading_assignment, "coordination_lease", None)
+    if lease is not None:
+        lease.filter_submissions(grading_assignment, grading_assignment.grading_cooldown)
+
     submission_count = len(grading_assignment.submissions)
     has_submissions = submission_count > 0
     return PrepareStageResult(
@@ -91,6 +95,9 @@ def run_grade_stage(grader, grading_assignment, settings, assignment_data,
     Returns:
         GradeStageResult with graded counts
     """
+    lease = getattr(grading_assignment, "coordination_lease", None)
+    if lease is not None:
+        lease.check()
     effective_do_regrade = bool(do_regrade or settings.get("regrade", False))
     grader.grade_assignment(grading_assignment,
                             **settings,
@@ -128,6 +135,9 @@ def run_publish_stage(grader, grading_assignment, args, push_grades: bool,
     Returns:
         PublishStageResult with finalization status
     """
+    lease = getattr(grading_assignment, "coordination_lease", None)
+    if lease is not None:
+        lease.check()
     if not grader.ready_to_finalize:
         return PublishStageResult(finalized=False,
                                   finalize_summary=None,

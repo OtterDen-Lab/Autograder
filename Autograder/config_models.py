@@ -227,7 +227,18 @@ def _normalize_known_grader_settings_without_registry(
   return None
 
 
-def normalize_grader_settings(grader_name: str,
+def normalize_grader_settings(grader_name: str, settings: Dict[str, Any],
+                              context_label: str) -> Dict[str, Any]:
+  from Autograder.coordination import cooldown_seconds
+  settings = dict(settings)
+  cooldown = cooldown_seconds(settings.pop("grading_cooldown", None))
+  normalized = _normalize_grader_settings(grader_name, settings, context_label)
+  if cooldown is not None:
+    normalized["grading_cooldown"] = cooldown
+  return normalized
+
+
+def _normalize_grader_settings(grader_name: str,
                               settings: Dict[str, Any],
                               context_label: str) -> Dict[str, Any]:
   """
