@@ -45,3 +45,35 @@ def test_invalid_response_is_a_grading_error(monkeypatch):
   monkeypatch.setattr(bifrost_ai, "OpenAI", lambda **kwargs: client)
   with pytest.raises(AIProviderError, match="Bifrost request failed"):
     bifrost_ai.query_ai("test", schema_name="aggregate_analysis", tier="small", max_response_tokens=10)
+
+
+@pytest.mark.parametrize('finish_reason,refusal', [('length', None), ('stop', None), ('stop', 'private refusal')])
+def test_empty_completion_reports_metadata_without_response_content(monkeypatch, finish_reason, refusal):
+  monkeypatch.setenv('BIFROST_API_KEY', 'test-key')
+  monkeypatch.setenv('BIFROST_MODEL_MEDIUM', 'medium')
+  client = MagicMock()
+  client.chat.completions.create.return_value = SimpleNamespace(
+    choices=[SimpleNamespace(finish_reason=finish_reason,
+      message=SimpleNamespace(content=None, refusal=refusal))],
+    usage=SimpleNamespace(completion_tokens=2000,
+      completion_tokens_details=SimpleNamespace(reasoning_tokens=2000)))
+  monkeypatch.setattr(bifrost_ai, 'OpenAI', lambda **kwargs: client)
+  with pytest.raises(AIProviderError) as exc:
+    bifrost_ai.query_ai('private student submission', schema_name='aggregate_analysis',
+                        tier='medium', max_response_tokens=2000)
+  error = str(exc.value)
+  assert f'finish_reason={finish_reason}' in error
+  assert 'completion_tokens=2000' in error
+  assert 'reasoning_tokens=2000' in error
+  assert f'refused={bool(refusal)}' in error
+  assert 'private' not in error
+
+
+def test_missing_choices_reports_empty_response(monkeypatch):
+  monkeypatch.setenv('BIFROST_API_KEY', 'test-key')
+  monkeypatch.setenv('BIFROST_MODEL_SMALL', 'small')
+  client = MagicMock()
+  client.chat.completions.create.return_value = SimpleNamespace(choices=[], usage=None)
+  monkeypatch.setattr(bifrost_ai, 'OpenAI', lambda **kwargs: client)
+  with pytest.raises(AIProviderError, match='no JSON content'):
+    bifrost_ai.query_ai('test', schema_name='aggregate_analysis', tier='small', max_response_tokens=10)

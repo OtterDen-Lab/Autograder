@@ -262,6 +262,13 @@ class DockerClient:
     except docker.errors.ImageNotFound:
       return None
     except docker.errors.APIError as e:
+      # Pulling an absent manifest can raise NotFound rather than ImageNotFound.
+      # Do not turn proxy 404s, authorization errors, or outages into cache misses.
+      explanation = str(getattr(e, "explanation", "")).lower()
+      if (getattr(e, "status_code", None) == 404
+          and ("manifest unknown" in explanation or "name unknown" in explanation)):
+        log.info("Registry cache miss for %s; building image", tag)
+        return None
       raise Autograder.exceptions.DockerError(
         f"Unable to pull registry image {tag}: {e}") from e
 

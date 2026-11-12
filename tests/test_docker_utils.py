@@ -682,3 +682,32 @@ def test_registry_push_reports_streamed_errors(mock_docker_client):
     ])
     with pytest.raises(DockerError, match="denied"):
         mock_docker_client.push_cached_image("registry/course:abc")
+
+
+@pytest.mark.parametrize('status,explanation,missing', [
+    (404, 'manifest unknown: manifest unknown', True),
+    (404, 'name unknown: repository name not known', True),
+    (404, 'upstream route not found', False),
+    (401, 'unauthorized', False),
+    (403, 'denied', False),
+    (500, 'registry unavailable', False),
+])
+def test_registry_pull_distinguishes_missing_manifest_from_service_failure(monkeypatch, status, explanation, missing):
+    import docker
+    import requests
+    client = DockerClient.__new__(DockerClient)
+    client.client = MagicMock()
+    monkeypatch.setattr(docker_utils, 'docker', docker)
+    response = requests.Response()
+    response.status_code = status
+    response._content = json.dumps({"message": explanation}).encode()
+    try:
+        docker.errors.create_api_error_from_http_exception(
+            requests.HTTPError(response=response))
+    except docker.errors.APIError as error:
+        client.client.images.pull.side_effect = error
+    if missing:
+        assert client.pull_cached_image('registry/course:abc') is None
+    else:
+        with pytest.raises(DockerError, match='Unable to pull registry image'):
+            client.pull_cached_image('registry/course:abc')
