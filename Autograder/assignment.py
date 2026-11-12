@@ -122,7 +122,12 @@ class Assignment(abc.ABC):
         f"Idempotency tracking enabled for assignment {self.lms_assignment.name}: {len(processed_user_ids)} previously pushed submission(s)"
       )
 
-    log.debug("Pushing")
+    if push_enabled:
+      log.debug("Publishing feedback to Canvas")
+    else:
+      log.info("Canvas publishing is disabled for assignment '%s'; "
+               "feedback will only be retained locally when record retention is enabled",
+               self.lms_assignment.name)
     push_attempted = 0
     push_succeeded = 0
     push_failed = 0

@@ -458,7 +458,7 @@ class DockerGrader(FileBasedGrader):
   def __enter__(self):
     """Context manager entry - ensure image is available."""
     if self.image is None:
-      log.debug("Building docker image")
+      log.debug("Resolving grading image (registry cache lookup or build)")
       self.image = self._get_image()
     log.debug(f"Prepared docker image {self.image} context")
     return self
@@ -963,6 +963,7 @@ class TemplateGrader(DockerGrader):
 
       image = self.docker_client.pull_cached_image(tag)
       if image is not None:
+        log.info("Using cached grading image %s", tag)
         return image
 
       # Copy the configured files for every assignment into the shared image.
