@@ -31,6 +31,12 @@ def cooldown_seconds(value):
   return float(value)
 
 
+def _student_key(value):
+  # SQL_ASCII connections return text as bytes. Existing schemas may use
+  # numeric IDs; normalize both sides before testing membership.
+  return value.decode("ascii") if isinstance(value, bytes) else str(value)
+
+
 class PostgresCoordinator:
   def __init__(self, dsn, lease_seconds=300):
     self.dsn = dsn
@@ -114,12 +120,14 @@ class AssignmentLease:
       WHERE course_id = %s AND assignment_id = %s
         AND last_succeeded_at > clock_timestamp() - %s * interval '1 second'
     """, (*self.key[:2], cooldown))
-    cooling = {row[0] for row in rows}
+    cooling = {_student_key(row[0]) for row in rows}
     before = len(assignment.submissions)
     assignment.submissions = [s for s in assignment.submissions
-                              if str(s.student.user_id) not in cooling]
-    log.info("Cooldown filtering: kept %d submissions; skipped %d students",
-             len(assignment.submissions), before - len(assignment.submissions))
+                              if _student_key(s.student.user_id) not in cooling]
+    log.info("Cooldown filtering (course %s, assignment %s, %s seconds): "
+             "%d recent success records; kept %d submissions; skipped %d students",
+             *self.key[:2], cooldown, len(rows), len(assignment.submissions),
+             before - len(assignment.submissions))
     # Text graders consume this parallel batch representation.
     if hasattr(assignment, 'submission_data'):
       eligible = {id(s) for s in assignment.submissions}
@@ -142,6 +150,8 @@ class AssignmentLease:
     if not rows:
       self._lost.set()
       raise CoordinationError("Lease lost while recording successful Canvas update")
+    log.debug("Recorded successful Canvas update for cooldown tracking "
+              "(course %s, assignment %s)", *self.key[:2])
 
   def close(self):
     self._stop.set()

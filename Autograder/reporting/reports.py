@@ -175,10 +175,11 @@ def print_results_summary(results: List[Dict]) -> None:
     Args:
         results: List of grading result dictionaries
     """
-    successful = sum(1 for r in results if r['success'])
-    failed = len(results) - successful
+    skipped = sum(1 for r in results if r.get('success') and r.get('skipped_reason'))
+    successful = sum(1 for r in results if r['success'] and not r.get('skipped_reason'))
+    failed = sum(1 for r in results if not r['success'])
 
-    log.info(f"Grading completed: {successful} successful, {failed} failed")
+    log.info(f"Grading completed: {successful} successful, {failed} failed, {skipped} skipped")
 
     if failed > 0:
         log.error("The following assignments failed:")

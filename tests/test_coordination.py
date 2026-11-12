@@ -18,9 +18,10 @@ def test_reject_invalid_cooldown(value):
     cooldown_seconds(value)
 
 
-def test_filter_keeps_text_batch_consistent():
+@pytest.mark.parametrize("database_student_id", ["1", b"1", 1])
+def test_filter_keeps_text_batch_consistent(database_student_id):
   store = Mock(lease_seconds=300)
-  store._query.side_effect = [[('token',)], [('1',)]]
+  store._query.side_effect = [[('token',)], [(database_student_id,)]]
   lease = AssignmentLease(store, '10', '20', 'token')
   submissions = [_make_submission(1), _make_submission(2)]
   assignment = SimpleNamespace(submissions=submissions, submission_data=[
@@ -133,7 +134,9 @@ def test_postgres_expired_owner_cannot_renew_record_or_release_successor(postgre
   new.close()
 
 
-def test_postgres_student_cooldown_and_assignment_isolation(postgres):
+@pytest.mark.parametrize("client_encoding", ["UTF8", "SQL_ASCII"])
+def test_postgres_student_cooldown_and_assignment_isolation(postgres, monkeypatch, client_encoding):
+  monkeypatch.setenv("PGCLIENTENCODING", client_encoding)
   store, course = postgres
   lease = store.claim(course, '1')
   lease.succeeded(1)
@@ -268,3 +271,12 @@ def test_executor_holds_lease_across_pipeline_and_releases_on_error(monkeypatch,
   result = executor.grade_single_assignment(request)
   assert result['success'] is (not fail_prepare)
   lease.close.assert_called_once()
+
+
+def test_claimed_assignments_are_reported_as_skipped(caplog):
+  from Autograder.reporting.reports import print_results_summary
+  import logging
+  with caplog.at_level(logging.INFO):
+    print_results_summary([{'success': True, 'assignment_id': 20,
+                            'skipped_reason': 'assignment_claimed'}])
+  assert '0 successful, 0 failed, 1 skipped' in caplog.text

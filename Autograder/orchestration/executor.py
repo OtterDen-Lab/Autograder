@@ -116,6 +116,14 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
                         'course_name': course_name, 'assignment_name': None,
                         'skipped_reason': 'assignment_claimed'}
             lease.start()
+            log.info("PostgreSQL assignment lease acquired for course %s, assignment %s",
+                     assignment_data.course_id, assignment_id)
+            if cooldown is None:
+                log.info("Student cooldown tracking disabled: grading_cooldown is not configured")
+            else:
+                log.info("Student grading cooldown: %s seconds", cooldown)
+        else:
+            log.info("PostgreSQL coordination disabled: AUTOGRADER_DATABASE_URL is not set")
 
         # Load Canvas assignment
         try:
@@ -344,7 +352,10 @@ def execute_grading(assignments_to_grade: List[AssignmentRunRequest],
                     schedule_manager.record_assignment_result(assignment_data,
                                                               result)
 
-                if result['success']:
+                if result.get('skipped_reason'):
+                    log.info("Skipped assignment %s: %s", result['assignment_id'],
+                             result['skipped_reason'])
+                elif result['success']:
                     log.info(
                         f"Successfully graded assignment {result['assignment_name']} (ID: {result['assignment_id']})"
                     )
