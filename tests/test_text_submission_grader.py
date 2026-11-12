@@ -3,6 +3,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 import yaml
 
 from Autograder.graders.text_submission_grader import (
@@ -494,7 +495,7 @@ def test_grading_phases_use_unified_ai_interface(monkeypatch):
       {"consolidated_questions": []} if kwargs["schema_name"] == "question_consolidation" else {"feedback": "Good"})
     return payload, {"total_tokens": 1}
   monkeypatch.setattr(grader_module, "query_ai", fake_query)
-  grader = TextSubmissionGrader(phase1_tier="small", phase2_tier="medium", phase25_tier="large")
+  grader = TextSubmissionGrader(phase1_tier="small", phase2_tier="medium", phase25_tier="large", max_response_tokens=12345)
   grader.total_tokens = 0
   grader.total_cost = 0
   grader.usage_details = []
@@ -504,6 +505,7 @@ def test_grading_phases_use_unified_ai_interface(monkeypatch):
   assert [(x["schema_name"], x["tier"]) for x in calls] == [
     ("aggregate_analysis", "small"), ("individual_grading", "medium"),
     ("question_consolidation", "large")]
+  assert all(x["max_response_tokens"] == 12345 for x in calls)
 
 
 def test_ai_failure_leaves_submission_ungraded(monkeypatch):
@@ -597,3 +599,16 @@ def test_text_submission_grader_prefers_typed_grader_context_for_runtime_metadat
   assert grader.prefer_anthropic is True
   assert grader.records_dir == "/tmp/context-records"
   assert grader.slack_channel == "C-CONTEXT"
+
+
+@pytest.mark.parametrize("budget", [0, -1, True, "16384", 1.5, None])
+def test_text_grader_rejects_invalid_completion_budget(budget):
+  from Autograder.grader_settings import TextSubmissionGraderSettings
+  with pytest.raises(ValueError, match="max_response_tokens"):
+    TextSubmissionGraderSettings.from_raw({"max_response_tokens": budget}, "test")
+
+
+def test_text_grader_default_completion_budget():
+  from Autograder.grader_settings import TextSubmissionGraderSettings
+  assert TextSubmissionGraderSettings.from_raw({}, "test").to_kwargs()["max_response_tokens"] == 16384
+  assert TextSubmissionGrader().max_response_tokens == 16384

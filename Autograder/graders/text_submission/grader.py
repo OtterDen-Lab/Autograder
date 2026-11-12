@@ -180,6 +180,7 @@ class BaseTextSubmissionGrader(Grader):
 
         # Model tier settings for each phase (small, medium, large)
         # Can be configured via grader settings in YAML
+        self.max_response_tokens = kwargs.get('max_response_tokens', 16384)
         self.phase1_tier = kwargs.get('phase1_tier', 'small')   # Aggregate analysis
         self.phase2_tier = kwargs.get('phase2_tier', 'small')   # Individual grading
         self.phase25_tier = kwargs.get('phase25_tier', 'small')  # Question consolidation
@@ -585,7 +586,7 @@ class BaseTextSubmissionGrader(Grader):
                                                        course_name)
         result, usage = query_ai(
             prompt, schema_name="aggregate_analysis", tier=self.phase1_tier,
-            max_response_tokens=2000)
+            max_response_tokens=self.max_response_tokens)
         self._track_token_usage(usage, "Phase 1 - Aggregate Analysis")
         self._store_topics_from_result(result)
         return result
@@ -745,7 +746,7 @@ class BaseTextSubmissionGrader(Grader):
         prompt = self._build_question_consolidation_prompt(all_questions)
         result, usage = query_ai(
             prompt, schema_name="question_consolidation", tier=self.phase25_tier,
-            max_response_tokens=2000)
+            max_response_tokens=self.max_response_tokens)
         self._track_token_usage(usage, "Phase 2.5 - Question Consolidation")
         return result.get("consolidated_questions", [])
 
@@ -767,7 +768,7 @@ class BaseTextSubmissionGrader(Grader):
         try:
             result, usage = query_ai(
                 prompt, schema_name="individual_grading", tier=self.phase2_tier,
-                max_response_tokens=1000)
+                max_response_tokens=self.max_response_tokens)
         except AIProviderError as error:
             log.error("AI grading failed for %s: %s", student_id, error)
             self._report_individual_grading_failure(student_id, str(error))

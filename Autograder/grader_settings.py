@@ -583,6 +583,7 @@ class TextSubmissionGraderSettings:
   phase1_tier: str = "small"
   phase2_tier: str = "small"
   phase25_tier: str = "small"
+  max_response_tokens: int = 16384
   rate_limit_retries: int = 0
   records_dir: Optional[str] = None
   learning_logs_dir: Optional[str] = None
@@ -595,6 +596,10 @@ class TextSubmissionGraderSettings:
   rubric: Optional[TextRubricSettings] = None
 
   def __post_init__(self) -> None:
+    if (isinstance(self.max_response_tokens, bool)
+        or not isinstance(self.max_response_tokens, int)
+        or self.max_response_tokens <= 0):
+      raise _config_error("TextSubmissionGrader.max_response_tokens must be a positive integer")
     self.phase1_tier = _require_tier(self.phase1_tier,
                                      "TextSubmissionGrader.phase1_tier")
     self.phase2_tier = _require_tier(self.phase2_tier,
@@ -612,6 +617,7 @@ class TextSubmissionGraderSettings:
       "phase1_tier",
       "phase2_tier",
       "phase25_tier",
+      "max_response_tokens",
       "rate_limit_retries",
       "records_dir",
       "learning_logs_dir",
@@ -663,6 +669,7 @@ class TextSubmissionGraderSettings:
                                 f"{context_label}.phase2_tier"),
       phase25_tier=_require_tier(raw.get("phase25_tier", "small"),
                                  f"{context_label}.phase25_tier"),
+      max_response_tokens=raw.get("max_response_tokens", 16384),
       rate_limit_retries=_require_non_negative_int(
         raw.get("rate_limit_retries"),
         f"{context_label}.rate_limit_retries",
@@ -694,6 +701,7 @@ class TextSubmissionGraderSettings:
       "phase1_tier": self.phase1_tier,
       "phase2_tier": self.phase2_tier,
       "phase25_tier": self.phase25_tier,
+      "max_response_tokens": self.max_response_tokens,
       "rate_limit_retries": self.rate_limit_retries,
       "records_dir": self.records_dir,
       "learning_logs_dir": self.learning_logs_dir,

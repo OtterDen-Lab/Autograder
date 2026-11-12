@@ -321,8 +321,13 @@ to the project's virtual key and set `BIFROST_MODEL_SMALL`,
 configured in Bifrost for the tiers used by the grader. These variables can be
 placed in `~/.tokens/autograder.env`. `BIFROST_BASE_URL` optionally overrides
 the default `https://bifrost.p.zxqw.dev/v1`. Configure model fallback in
-Bifrost; the grader does not retry another provider. Bifrost records request
-costs under the virtual key, while the grader records token counts. A failed
+Bifrost; the grader does not retry another provider. Text grader settings accept
+`max_response_tokens` (default `16384`) for all three AI phases. This is the
+completion budget, including reasoning tokens for models that count them toward
+the limit. Increase it if Bifrost reports `finish_reason=length`, or adjust the
+model's reasoning settings in Bifrost. The larger limit permits higher per-request
+cost and latency; it does not require the model to consume the whole budget.
+Bifrost records request costs under the virtual key, while the grader records token counts. A failed
 individual request leaves that submission ungraded. A failed aggregate or
 question-consolidation request stops the grading run.
 
