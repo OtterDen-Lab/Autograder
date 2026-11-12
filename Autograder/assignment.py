@@ -69,6 +69,42 @@ class Assignment(abc.ABC):
     """
     pass
 
+  def _filter_excused_submissions(self) -> None:
+    """Respect current Canvas excusals, including in explicit regrade mode.
+
+    The LMS adapter can construct submissions from historical attempts. Query
+    current records so a later excusal (or removal of one) takes precedence.
+    Let lookup errors stop grading/publishing instead of overwriting an excusal.
+    """
+    def field(record, name, default=None):
+      return record.get(name, default) if isinstance(record, dict) else getattr(record, name, default)
+
+    current_excused = {}
+    raw_assignment = getattr(self.lms_assignment, "assignment", None)
+    if raw_assignment is not None and callable(getattr(raw_assignment, "get_submissions", None)):
+      for record in raw_assignment.get_submissions():
+        user_id = field(record, "user_id")
+        if user_id is not None:
+          current_excused[str(user_id)] = field(record, "excused", False) is True
+
+    def excused(submission):
+      user_id = str(submission.student.user_id)
+      if user_id in current_excused:
+        return current_excused[user_id]
+      return (field(submission, "excused", False) is True
+              or field(getattr(submission, "canvas_submission_data", None),
+                       "excused", False) is True)
+
+    before = len(self.submissions)
+    self.submissions = [s for s in self.submissions if not excused(s)]
+    if before != len(self.submissions):
+      log.info("Excluded %d excused submission(s) from assignment '%s'",
+               before - len(self.submissions), self.lms_assignment.name)
+    if hasattr(self, "submission_data"):
+      eligible = {id(s) for s in self.submissions}
+      self.submission_data = [r for r in self.submission_data
+                              if id(r["submission_obj"]) in eligible]
+
   def _filter_submissions_for_student_id(self, student_id) -> None:
     """
     Restrict submissions to a single Canvas student ID when requested.
@@ -726,6 +762,7 @@ class TextAssignment(Assignment):
     self.submissions = self.lms_assignment.get_submissions(
       limit=fetch_limit, test=test, **kwargs)
     log.info(f"Retrieved {len(self.submissions)} total submissions from LMS")
+    self._filter_excused_submissions()
 
     # Filter for ungraded submissions if not regrading
     if not do_regrade:
@@ -874,6 +911,8 @@ class TextAssignment(Assignment):
     """
     Finalize grading by pushing scores and feedback to Canvas.
     """
+    if kwargs.get("push", False) and self.submissions:
+      self._filter_excused_submissions()
     return super().finalize(*args, **kwargs)
 
 

@@ -492,3 +492,64 @@ def test_external_tool_assignment_prepare_skips_students_without_watch_records(
   )
 
   assert assignment.submissions == []
+
+
+def test_text_assignment_excludes_current_canvas_excusals_even_when_regrading():
+  submissions = [_make_text_submission(i, Submission.Status.UNGRADED, 'notes')
+                 for i in (101, 202)]
+  lms = DummyLmsAssignment(submissions)
+  lms.assignment = SimpleNamespace(get_submissions=lambda: [
+    SimpleNamespace(user_id=101, excused=True),
+    SimpleNamespace(user_id=202, excused=False)])
+  assignment = TextAssignment(lms_assignment=lms)
+  assignment.prepare(do_regrade=True)
+  assert [s.student.user_id for s in assignment.submissions] == [202]
+  assert [r['student_id'] for r in assignment.submission_data] == [202]
+
+
+def test_text_assignment_filters_excused_before_limit():
+  submissions = [_make_text_submission(i, Submission.Status.UNGRADED, 'notes')
+                 for i in (101, 202)]
+  submissions[0].canvas_submission_data = SimpleNamespace(excused=True)
+  assignment = TextAssignment(lms_assignment=DummyLmsAssignment(submissions))
+  assignment.prepare(limit=1)
+  assert [s.student.user_id for s in assignment.submissions] == [202]
+
+
+def test_text_assignment_current_unexcused_overrides_historical_excusal():
+  submission = _make_text_submission(101, Submission.Status.UNGRADED, 'notes')
+  submission.canvas_submission_data = SimpleNamespace(excused=True)
+  lms = DummyLmsAssignment([submission])
+  lms.assignment = SimpleNamespace(get_submissions=lambda: [
+    SimpleNamespace(user_id=101, excused=False)])
+  assignment = TextAssignment(lms_assignment=lms)
+  assignment.prepare()
+  assert assignment.submissions == [submission]
+
+
+def test_text_assignment_does_not_publish_if_excused_during_grading():
+  from unittest.mock import Mock
+  from lms_interface.classes import Feedback
+  submission = _make_text_submission(101, Submission.Status.UNGRADED, 'notes')
+  lms = DummyLmsAssignment([submission])
+  record = SimpleNamespace(user_id=101, excused=False)
+  lms.assignment = SimpleNamespace(get_submissions=lambda: [record])
+  lms.push_feedback = Mock()
+  assignment = TextAssignment(lms_assignment=lms)
+  assignment.prepare()
+  submission.feedback = Feedback(percentage_score=100, comments='feedback')
+  record.excused = True
+  result = assignment.finalize(push=True)
+  assert result['push_attempted'] == 0
+  assert assignment.submission_data == []
+  lms.push_feedback.assert_not_called()
+
+
+def test_text_assignment_excusal_lookup_error_stops_preparation():
+  import pytest
+  from unittest.mock import Mock
+  lms = DummyLmsAssignment([_make_text_submission(101, Submission.Status.UNGRADED, 'notes')])
+  lms.assignment = SimpleNamespace(get_submissions=Mock(side_effect=RuntimeError('Canvas unavailable')))
+  assignment = TextAssignment(lms_assignment=lms)
+  with pytest.raises(RuntimeError, match='Canvas unavailable'):
+    assignment.prepare()
