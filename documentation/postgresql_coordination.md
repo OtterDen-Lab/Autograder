@@ -34,20 +34,22 @@ Workers never create tables automatically.
 
 Panopto viewer pages are requested in descending `LastViewedDateTime` order.
 For ordinary, unrestricted publishing runs with PostgreSQL coordination,
-successful Panopto pushes update the shared per-student success records even
+successful Panopto pushes and verified equal/better existing Canvas scores
+update the shared per-student success records even
 when a student cooldown is not configured. The scan looks back twice the
-elapsed time since the course's most recent recorded push, capped at seven
+elapsed time since the course's most recent recorded successful grading operation, capped at seven
 days. It also keeps at least a 15-minute overlap with the assignment's last
 successful scan. The earlier of those two times is used.
 
 Each assignment first receives a full scan, and a full scan is repeated at
 least every seven days. A scan checkpoint advances only after at least one
-confirmed successful Canvas push, with no publishing failures, ungraded-feedback
-skips, or students deferred by cooldown. Empty scans and runs where every Canvas
-update is skipped leave the checkpoint unchanged. A mixed run can record each
+successful Canvas push or verified no-op (Canvas already has an equal or better
+score), with no publishing failures, ungraded-feedback skips, or students deferred
+by cooldown. A verified no-op counts as successfully handled grading; it does not
+cause a redundant Canvas write. Other skips, including idempotency skips and empty
+scans, do not initialize or advance a checkpoint. A mixed run can record each
 successful student's timestamp while retaining the scan checkpoint so deferred
-students remain discoverable. Successful pushes qualify regardless of score
-improvement; an update skipped before calling Canvas does not qualify. A failed, incomplete, 404, limited, test, or explicit
+students remain discoverable. A failed, incomplete, 404, limited, test, or explicit
 regrade run does not advance its checkpoint. If a checkpoint or success time
 is unavailable, the scan is full. Panopto records without timestamps or a
 detected ordering violation disable early termination for that scan. Sorting
@@ -95,13 +97,14 @@ assignment_types:
 ```
 
 After pulling the latest submissions, the worker excludes students whose last
-successful Canvas update falls within the cooldown. Text batch inputs are filtered
+successful grading operation falls within the cooldown. Text batch inputs are filtered
 along with the submission list. A changed submission still waits for the cooldown;
 no submission-version tracking is added. Each successful Canvas update advances
 only that student's timestamp, so partial publishing failures leave other students
-eligible for retry. Failed grading, failed publishing, preview runs, and skipped
-Canvas updates do not advance the timestamp. A zero cooldown tracks success without
-waiting. Omit the setting (or override with null) to disable timestamp reads and
+eligible for retry. Failed grading, failed publishing, preview runs, and unprocessed skips do not
+advance the timestamp. A valid grading result checked against an equal or better
+existing Canvas score does advance it, even though no Canvas write is needed.
+A zero cooldown tracks success without waiting. Omit the setting (or override with null) to disable timestamp reads and
 writes, while retaining assignment locking. This is suitable for Panopto.
 Existing regrade/status/score filters continue to apply; a cooldown does not itself
 make an already-graded submission eligible for regrading.

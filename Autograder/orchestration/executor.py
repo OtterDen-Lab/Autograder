@@ -286,7 +286,10 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
                 stage_contract["publish"] = asdict(publish_result)
                 summary = publish_result.finalize_summary or {}
                 if (publish_result.finalized and summary.get('push_enabled')
-                        and int(summary.get('push_succeeded', 0) or 0) > 0
+                        and (int(summary.get('push_succeeded', 0) or 0)
+                             + int(summary.get('push_noop', 0) or 0)) > 0
+                        and int(summary.get('push_skipped', 0) or 0)
+                            <= int(summary.get('push_noop', 0) or 0)
                         and not summary.get('push_failed') and not summary.get('push_skipped_ungraded')):
                     complete_panopto_scan()
 

@@ -195,8 +195,8 @@ class AssignmentLease:
     """, (str(student_id), *self.key))
     if not rows:
       self._lost.set()
-      raise CoordinationError("Lease lost while recording successful Canvas update")
-    log.debug("Recorded successful Canvas update for cooldown tracking "
+      raise CoordinationError("Lease lost while recording successful grading operation")
+    log.debug("Recorded successful grading operation for cooldown tracking "
               "(course %s, assignment %s)", *self.key[:2])
 
   def close(self):

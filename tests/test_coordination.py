@@ -304,18 +304,22 @@ def test_claimed_assignments_are_reported_as_skipped(caplog):
   assert '0 successful, 0 failed, 1 skipped' in caplog.text
 
 
-@pytest.mark.parametrize('remaining,deferred,pushed,failed,ungraded,complete,advance', [
-  (0, 0, 0, 0, 0, True, False),  # No work is not a successful publish.
-  (0, 2, 0, 0, 0, True, False),  # All students are cooling down.
-  (1, 1, 1, 0, 0, True, False),  # A push cannot consume another student's deferred work.
-  (1, 0, 0, 0, 0, True, False),  # Canvas no-op / idempotency skip.
-  (1, 0, 1, 0, 0, True, True),   # Confirmed push after a complete scan.
-  (2, 0, 1, 1, 0, True, False),  # Partial publish failure.
-  (2, 0, 1, 0, 1, True, False),  # Missing grading feedback.
-  (1, 0, 1, 0, 0, False, False), # Incomplete Panopto scan.
+@pytest.mark.parametrize('remaining,deferred,pushed,noop,failed,ungraded,complete,advance', [
+  (0, 0, 0, 0, 0, 0, True, False),  # No work is not successful grading.
+  (0, 2, 0, 0, 0, 0, True, False),  # All students are cooling down.
+  (1, 1, 1, 0, 0, 0, True, False),  # Do not consume another student's deferred work.
+  (1, 0, 0, 0, 0, 0, True, False),  # Unprocessed / idempotency skip.
+  (1, 0, 1, 0, 0, 0, True, True),   # Confirmed Canvas write.
+  (1, 0, 0, 1, 0, 0, True, True),   # Verified equal/better existing Canvas score.
+  (2, 0, 0, 1, 0, 0, True, False),  # No-op plus another student's idempotency skip.
+  (1, 1, 0, 1, 0, 0, True, False),  # No-ops must still preserve deferred work.
+  (2, 0, 1, 0, 1, 0, True, False),  # Partial publish failure.
+  (2, 0, 0, 1, 1, 0, True, False),  # No-op plus another student's failure.
+  (2, 0, 1, 0, 0, 1, True, False),  # Missing grading feedback.
+  (1, 0, 1, 0, 0, 0, False, False), # Incomplete Panopto scan.
 ])
 def test_panopto_checkpoint_requires_push_without_deferred_work(
-    monkeypatch, remaining, deferred, pushed, failed, ungraded, complete, advance):
+    monkeypatch, remaining, deferred, pushed, noop, failed, ungraded, complete, advance):
   from contextlib import nullcontext
   from Autograder.orchestration import executor
   from Autograder.config_models import AssignmentRunRequest
@@ -347,7 +351,8 @@ def test_panopto_checkpoint_requires_push_without_deferred_work(
     submission_count=remaining, graded_count=pushed))
   monkeypatch.setattr(executor, 'run_publish_stage', lambda *a, **k: PublishStageResult(
     finalized=True, finalize_summary={'push_enabled': True, 'push_succeeded': pushed,
-      'push_failed': failed, 'push_skipped_ungraded': ungraded}))
+      'push_noop': noop, 'push_failed': failed, 'push_skipped_ungraded': ungraded,
+      'push_skipped': remaining - pushed - failed}))
   course = Mock()
   course.get_assignment.return_value.name = 'Video'
   request = AssignmentRunRequest(
@@ -384,3 +389,49 @@ def test_database_errors_explain_failure_without_exposing_secrets(monkeypatch, s
   assert 'sensitive' not in str(exc.value)
   if state:
     assert state in str(exc.value)
+
+
+@pytest.mark.parametrize('score', [100, 80])
+@pytest.mark.parametrize('panopto', [False, True])
+def test_verified_canvas_noop_records_student_success_without_write(score, panopto):
+  from Autograder.assignment import ExternalToolAssignment
+  lms = DummyLmsAssignment(points_possible=100)
+  assignment_type = ExternalToolAssignment if panopto else DummyAssignment
+  assignment = assignment_type(lms_assignment=lms)
+  submission = _make_submission(1, score=score)
+  submission.set_extra({'current_canvas_score': 100.0})
+  assignment.submissions = [submission]
+  assignment.coordination_lease = Mock()
+  assignment.grading_cooldown = None if panopto else 21600
+  result = assignment.finalize(push=True)
+  assert result['push_attempted'] == result['push_succeeded'] == 0
+  assert result['push_noop'] == result['push_skipped'] == 1
+  assert result['push_failed'] == 0
+  assignment.coordination_lease.succeeded.assert_called_once_with(1)
+  assert lms.push_calls == []
+
+
+def test_noop_success_record_failure_stops_run():
+  lms = DummyLmsAssignment(points_possible=100)
+  assignment = DummyAssignment(lms_assignment=lms)
+  first = _make_submission(1)
+  first.set_extra({'current_canvas_score': 100.0})
+  assignment.submissions = [first, _make_submission(2)]
+  assignment.coordination_lease = Mock()
+  assignment.grading_cooldown = 300
+  assignment.coordination_lease.succeeded.side_effect = CoordinationError('offline')
+  with pytest.raises(CoordinationError):
+    assignment.finalize(push=True)
+  assert lms.push_calls == []
+
+
+def test_noop_preview_does_not_record_student_success():
+  assignment = DummyAssignment(lms_assignment=DummyLmsAssignment(points_possible=100))
+  submission = _make_submission(1)
+  submission.set_extra({'current_canvas_score': 100.0})
+  assignment.submissions = [submission]
+  assignment.coordination_lease = Mock()
+  assignment.grading_cooldown = 300
+  result = assignment.finalize(push=False)
+  assert result['push_noop'] == 0
+  assignment.coordination_lease.succeeded.assert_not_called()

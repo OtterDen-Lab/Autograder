@@ -19,6 +19,7 @@ from Autograder.external_tools import (
   parse_panopto_datetime,
   resolve_panopto_access_token,
 )
+from Autograder.coordination import CoordinationError
 from Autograder.registry import AssignmentRegistry
 from lms_interface.canvas_interface import CanvasAssignment
 from lms_interface.classes import Student, Submission
@@ -182,9 +183,15 @@ class Assignment(abc.ABC):
     push_succeeded = 0
     push_failed = 0
     push_skipped = 0
+    push_noop = 0
     push_skipped_ungraded = 0
     push_failed_students = []
     push_skipped_ungraded_students = []
+
+    def _record_success(user_id):
+      if lease is not None and (getattr(self, "grading_cooldown", None) is not None
+                                or isinstance(self, ExternalToolAssignment)):
+        lease.succeeded(user_id)
 
     def _has_attached_rubric() -> bool:
       """
@@ -256,6 +263,10 @@ class Assignment(abc.ABC):
               and current_canvas_score is not None
               and self._score_is_noop_update(scaled_score,
                                              current_canvas_score)):
+            # A verified equal/better Canvas score is successfully handled
+            # grading work, even though it requires no Canvas write.
+            _record_success(user_id)
+            push_noop += 1
             push_skipped += 1
             log.info(
               f"Skipping Canvas push for assignment '{self.lms_assignment.name}', "
@@ -299,6 +310,8 @@ class Assignment(abc.ABC):
           push_attempted += 1
           pushed = self.lms_assignment.push_feedback(
             **push_kwargs)
+        except CoordinationError:
+          raise
         except Exception as e:
           push_failed += 1
           push_failed_students.append(str(submission.student.name))
@@ -310,9 +323,7 @@ class Assignment(abc.ABC):
           continue
 
         if pushed:
-          if lease is not None and (self.grading_cooldown is not None or
-                                    isinstance(self, ExternalToolAssignment)):
-            lease.succeeded(user_id)
+          _record_success(user_id)
           push_succeeded += 1
         else:
           push_failed += 1
@@ -331,7 +342,7 @@ class Assignment(abc.ABC):
       log.info(
         f"Push summary for {self.lms_assignment.name}: attempted={push_attempted}, "
         f"succeeded={push_succeeded}, failed={push_failed}, skipped={push_skipped}, "
-        f"skipped_ungraded={push_skipped_ungraded}"
+        f"skipped_ungraded={push_skipped_ungraded}, verified_noop={push_noop}"
       )
 
     if processed_user_ids is not None and processed_dirty:
@@ -347,6 +358,7 @@ class Assignment(abc.ABC):
       "push_enabled": push_enabled,
       "push_attempted": push_attempted,
       "push_succeeded": push_succeeded,
+      "push_noop": push_noop,
       "push_failed": push_failed,
       "push_skipped": push_skipped,
       "push_skipped_ungraded": push_skipped_ungraded,
