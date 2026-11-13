@@ -363,3 +363,24 @@ def test_panopto_checkpoint_requires_push_without_deferred_work(
   if advance:
     store.complete_panopto_scan.assert_called_once_with(1, 2, started, True)
   lease.close.assert_called_once()
+
+
+@pytest.mark.parametrize('state,hint', [
+  ('42P01', 'table is missing'),
+  ('42703', 'column is missing'),
+  ('42501', 'permission denied'),
+  (None, 'check connectivity'),
+])
+def test_database_errors_explain_failure_without_exposing_secrets(monkeypatch, state, hint):
+  import sys
+  class DatabaseError(Exception):
+    sqlstate = state
+  monkeypatch.setitem(sys.modules, 'psycopg', SimpleNamespace(
+    connect=Mock(side_effect=DatabaseError('private-password and sensitive parameters'))))
+  with pytest.raises(CoordinationError) as exc:
+    PostgresCoordinator('private-dsn')._query('SELECT 1')
+  assert hint in str(exc.value)
+  assert 'private' not in str(exc.value)
+  assert 'sensitive' not in str(exc.value)
+  if state:
+    assert state in str(exc.value)

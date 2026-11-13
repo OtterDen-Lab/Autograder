@@ -25,7 +25,8 @@ python -m Autograder.coordination migrate
 This reads the exported connection string and applies the packaged migration. It
 is safe to run repeatedly. Apply it to the test database first, then production.
 The runtime role needs SELECT, INSERT, UPDATE, and DELETE on
-`autograder_assignment_leases` and `autograder_student_successes`. If a separate
+`autograder_assignment_leases`, `autograder_student_successes`, and
+`autograder_panopto_checkpoints`. If a separate
 migration role owns those tables, grant those privileges to the runtime role.
 Workers never create tables automatically.
 
@@ -61,6 +62,13 @@ assignment, submission statuses are fetched for matched viewers using
 permissions remain necessary. Inspect dates and pagination against your Panopto
 instance before enabling this on production data. The migration above must
 be rerun to create the checkpoint table before deploying this version.
+If lease acquisition succeeds but the checkpoint query fails, check that this
+new table exists and that the runtime role has privileges on it. Missing-table
+errors use SQLSTATE `42P01`; missing columns use `42703`; insufficient privileges
+use `42501`. From the source checkout, the idempotent migration can also be
+applied with `psql -v ON_ERROR_STOP=1 --single-transaction -f
+Autograder/migrations/001_coordination.sql` using your normal connection options.
+
 
 When the connection string is set, each worker atomically claims an assignment
 before preparing it. Claims last five minutes and renew every 100 seconds,

@@ -53,8 +53,18 @@ class PostgresCoordinator:
         with conn.cursor() as cursor:
           cursor.execute(sql, params)
           return cursor.fetchall() if cursor.description else []
-    except Exception:
-      raise CoordinationError("PostgreSQL coordination failed; check connectivity, credentials, and schema migration") from None
+    except Exception as error:
+      # SQLSTATE identifies the failure without revealing server messages, SQL
+      # parameter values, or credentials from connection exceptions.
+      state = getattr(error, "sqlstate", None)
+      hints = {
+        "42P01": "a coordination table is missing; rerun the coordination schema migration",
+        "42703": "a coordination column is missing; rerun the coordination schema migration",
+        "42501": "permission denied; check the runtime role's schema and table privileges",
+      }
+      hint = hints.get(state, "check connectivity, credentials, and schema migration")
+      code = f" (SQLSTATE {state})" if isinstance(state, str) and len(state) == 5 and state.isalnum() else ""
+      raise CoordinationError(f"PostgreSQL coordination failed{code}; {hint}") from None
 
   def migrate(self):
     self._query(files('Autograder').joinpath('migrations/001_coordination.sql').read_text())
