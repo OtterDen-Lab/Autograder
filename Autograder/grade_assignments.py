@@ -142,7 +142,6 @@ def collect_assignments_to_grade(config: RunConfig,
         )
 
     schedule_manager = getattr(args, "schedule_state_manager", None)
-    force_schedule = bool(getattr(args, "skip_scheduling_check", False))
     if schedule_manager is not None:
         configured_keys = {
             assignment_state_key(course.id, assignment.id): {
@@ -159,36 +158,33 @@ def collect_assignments_to_grade(config: RunConfig,
         reconcile = getattr(schedule_manager, "reconcile_configured_assignments", None)
         if callable(reconcile):
             reconcile(configured_keys)
-        if force_schedule:
-            log.info("Schedule-check override enabled; ignoring due-window checks.")
-        else:
-            has_due_assignment = False
-            for course in config.courses:
-                for group in course.assignment_groups:
-                    type_config = config.assignment_types[group.type_name]
-                    for assignment in group.assignments:
-                        if assignment.disabled:
-                            continue
-                        if type_config.schedule is None:
-                            has_due_assignment = True
-                            break
-                        is_due = getattr(schedule_manager, "is_assignment_due", None)
-                        if callable(is_due):
-                            due = is_due(course.id, assignment.id,
-                                         type_config.schedule)
-                        else:
-                            due = schedule_manager.is_assignment_type_due(
-                                group.type_name, type_config.schedule)
-                        if due:
-                            has_due_assignment = True
-                            break
-                    if has_due_assignment:
+        has_due_assignment = False
+        for course in config.courses:
+            for group in course.assignment_groups:
+                type_config = config.assignment_types[group.type_name]
+                for assignment in group.assignments:
+                    if assignment.disabled:
+                        continue
+                    if type_config.schedule is None:
+                        has_due_assignment = True
+                        break
+                    is_due = getattr(schedule_manager, "is_assignment_due", None)
+                    if callable(is_due):
+                        due = is_due(course.id, assignment.id,
+                                     type_config.schedule)
+                    else:
+                        due = schedule_manager.is_assignment_type_due(
+                            group.type_name, type_config.schedule)
+                    if due:
+                        has_due_assignment = True
                         break
                 if has_due_assignment:
                     break
-            if not has_due_assignment:
-                log.info("No assignments are due based on schedule state; skipping Canvas access.")
-                return []
+            if has_due_assignment:
+                break
+        if not has_due_assignment:
+            log.info("No assignments are due based on schedule state; skipping Canvas access.")
+            return []
 
     # Create the LMS interface
     try:
@@ -223,7 +219,7 @@ def collect_assignments_to_grade(config: RunConfig,
                 if assignment.disabled:
                     continue
 
-                if (schedule_manager is not None and not force_schedule
+                if (schedule_manager is not None
                     and type_config.schedule is not None):
                     is_due = getattr(schedule_manager, "is_assignment_due", None)
                     if callable(is_due):

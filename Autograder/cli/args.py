@@ -140,9 +140,9 @@ def parse_args() -> argparse.Namespace:
         help="Validate config and Canvas access, then list assignments without downloading or grading submissions"
     )
     parser.add_argument(
-        "--skip-scheduling-check",
+        "--skip-cooldown",
         action="store_true",
-        help="Ignore schedule due checks and run all configured scheduled assignment types"
+        help="Bypass student grading cooldown checks for this run"
     )
     parser.add_argument(
         "--list-graders",

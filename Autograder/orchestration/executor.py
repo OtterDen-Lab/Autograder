@@ -118,7 +118,9 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
             lease.start()
             log.info("PostgreSQL assignment lease acquired for course %s, assignment %s",
                      assignment_data.course_id, assignment_id)
-            if cooldown is None:
+            if getattr(args, "skip_cooldown", False):
+                log.info("Student cooldown filtering bypassed by --skip-cooldown; successful operations still update cooldown tracking")
+            elif cooldown is None:
                 log.info("Student cooldown tracking disabled: grading_cooldown is not configured")
             else:
                 log.info("Student grading cooldown: %s seconds", cooldown)

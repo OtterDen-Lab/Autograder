@@ -65,7 +65,7 @@ def run_prepare_stage(grader, grading_assignment, args, settings,
             raise
 
     lease = getattr(grading_assignment, "coordination_lease", None)
-    if lease is not None:
+    if lease is not None and not getattr(args, "skip_cooldown", False):
         lease.filter_submissions(grading_assignment, grading_assignment.grading_cooldown)
 
     submission_count = len(grading_assignment.submissions)

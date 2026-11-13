@@ -21,8 +21,11 @@ This runbook covers how to diagnose and recover from failed or partial grading r
    running frequently and inspect `~/.autograder/schedule_state.yaml` when
    debugging (or the path configured by `AUTOGRADER_SCHEDULE_STATE_PATH`)
    skip behavior.
-5. For debugging, `--skip-scheduling-check` ignores due-window checks and runs all
-   scheduled assignment types in the current invocation.
+5. For debugging, `--skip-cooldown` bypasses student cooldown filtering for the
+   current invocation. Successful Canvas operations still update cooldown records,
+   and assignment leases remain enforced. Combine it with `--regrade --limit 1`
+   to retry one previously graded submission. This replaces `--skip-scheduling-check`;
+   it does not override legacy schedule due checks.
 
 ## During/After Run: Fast Triage
 

@@ -254,16 +254,16 @@ def test_parse_args_accepts_dry_run(monkeypatch, tmp_path):
   assert args.dry_run is True
 
 
-def test_parse_args_accepts_skip_scheduling_check(monkeypatch, tmp_path):
+def test_parse_args_accepts_skip_cooldown(monkeypatch, tmp_path):
   yaml_file = tmp_path / "config.yaml"
   yaml_file.write_text("assignment_types: {}\ncourses: []\n", encoding="utf-8")
 
   monkeypatch.setattr(
     sys, "argv",
     ["grade-assignments", "--yaml",
-     str(yaml_file), "--skip-scheduling-check"])
+     str(yaml_file), "--skip-cooldown"])
   args = grade_assignments.parse_args()
-  assert args.skip_scheduling_check is True
+  assert args.skip_cooldown is True
 
 
 def test_parse_args_accepts_student_id(monkeypatch, tmp_path):
@@ -871,7 +871,7 @@ def test_collect_assignments_skips_not_due_assignment_types(monkeypatch):
   assert assignments == []
 
 
-def test_collect_assignments_force_schedule_ignores_due_checks(monkeypatch):
+def test_collect_assignments_skip_cooldown_does_not_override_schedule(monkeypatch):
   class DummyCourse:
     name = "CST334"
 
@@ -915,12 +915,11 @@ def test_collect_assignments_force_schedule_ignores_due_checks(monkeypatch):
                          idempotency_key=None,
                          idempotency_state_dir=None,
                          schedule_state_manager=DummyScheduleManager(),
-                         skip_scheduling_check=True)
+                         skip_cooldown=True)
 
   assignments = grade_assignments.collect_assignments_to_grade(config, args)
 
-  assert len(assignments) == 1
-  assert assignments[0].assignment_id == 555
+  assert assignments == []
 
 
 def test_resolve_records_dir_requires_absolute_path():

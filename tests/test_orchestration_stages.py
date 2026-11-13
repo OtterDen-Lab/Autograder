@@ -1,4 +1,7 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
 
 from Autograder.orchestration.stages import (
   run_grade_stage,
@@ -37,6 +40,32 @@ def test_run_prepare_stage_forces_regrade_from_settings():
                     assignment, args, settings, do_regrade=False)
 
   assert assignment.calls[0]["do_regrade"] is True
+
+
+@pytest.mark.parametrize('skip_cooldown', [False, True])
+def test_prepare_cooldown_override_preserves_tracking(skip_cooldown):
+  assignment = DummyPrepareAssignment()
+  assignment.coordination_lease = Mock()
+  assignment.grading_cooldown = 10800
+  args = SimpleNamespace(limit=1, student_id=None, test=False,
+                         skip_cooldown=skip_cooldown)
+  lease = assignment.coordination_lease
+  def filter_submissions(current, cooldown):
+    current.submissions = []
+  lease.filter_submissions.side_effect = filter_submissions
+
+  result = run_prepare_stage(
+    SimpleNamespace(assignment_needs_preparation=lambda: True),
+    assignment, args, {}, do_regrade=True)
+
+  assert assignment.calls[0]['do_regrade'] is True
+  assert result.submission_count == (1 if skip_cooldown else 0)
+  if skip_cooldown:
+    lease.filter_submissions.assert_not_called()
+  else:
+    lease.filter_submissions.assert_called_once_with(assignment, 10800)
+  assert assignment.coordination_lease is lease
+  assert assignment.grading_cooldown == 10800
 
 
 def test_run_grade_stage_forces_regrade_from_settings():
