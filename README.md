@@ -334,3 +334,8 @@ question-consolidation request stops the grading run.
 Optional [PostgreSQL coordination](documentation/postgresql_coordination.md)
 provides shared assignment leases and per-student grading cooldowns for multiple
 grading machines.
+
+The [template execution runner interface](documentation/execution_runners.md)
+separates grading workflow from Docker execution and image preparation. Existing
+configurations continue to use Docker; additional backends can implement the
+request/result interface.

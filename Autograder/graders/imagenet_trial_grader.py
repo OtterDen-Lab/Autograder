@@ -5,7 +5,7 @@ import shlex
 from pathlib import Path
 from typing import Any, Dict
 
-from Autograder.graders.docker_graders import TemplateGrader
+from Autograder.graders.template_grader import TemplateGrader
 from Autograder.registry import GraderRegistry
 from lms_interface.classes import Feedback
 
@@ -82,15 +82,17 @@ class ImageNetTrialGrader(TemplateGrader):
     self.runner_managed_loop = runner_managed_loop
     super().__init__(nano_cpus=nano_cpus, memory_limit=memory_limit, **kwargs)
     # Explicit None disables DockerContainer's global default CPU/memory caps.
-    self.container_options["nano_cpus"] = nano_cpus
-    self.container_options["memory_limit"] = memory_limit
+    self.execution_options["nano_cpus"] = nano_cpus
+    self.execution_options["memory_limit"] = memory_limit
 
-  def add_files_to_docker(self, files_to_copy=None) -> None:
+  output_paths = ("/tmp/trial-output/run.json", "/tmp/trial-output/metrics.csv")
+
+  def _execution_files(self, files_to_copy):
     runner = io.BytesIO(Path(__file__).with_name("imagenet_trial_runner.py").read_bytes())
     runner.name = "imagenet_trial_runner.py"
-    super().add_files_to_docker((files_to_copy or []) + [(runner, "/opt/autograder/imagenet_trial_runner.py")])
+    return super()._execution_files(files_to_copy + [(runner, "/opt/autograder/imagenet_trial_runner.py")])
 
-  def execute_grading(self, *args, **kwargs):
+  def _execution_command(self):
     command = (
       f"export AUTOGRADER_TRIAL_EPOCHS={self.epochs} "
       f"AUTOGRADER_TRIAL_BATCH_SIZE={self.trial_batch_size} "
@@ -105,9 +107,7 @@ class ImageNetTrialGrader(TemplateGrader):
       "if [ -x /repo/.venv/bin/python ]; then "
       "/repo/.venv/bin/python /opt/autograder/imagenet_trial_runner.py; "
       "else python /opt/autograder/imagenet_trial_runner.py; fi")
-    rc, stdout, stderr = self.execute_command_in_container(
-      command=command, workdir=self._container_assignment_root())
-    return rc, stdout.decode(errors="replace"), stderr.decode(errors="replace")
+    return command, self._container_assignment_root()
 
   @staticmethod
   def _attachment(name: str, content: str) -> io.BytesIO:
@@ -117,7 +117,7 @@ class ImageNetTrialGrader(TemplateGrader):
 
   def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
     rc, stdout, stderr = execution_results
-    run_json = self.read_file_from_container("/tmp/trial-output/run.json")
+    run_json = execution_results.files.get("/tmp/trial-output/run.json")
     try:
       result = json.loads(run_json or "{}")
     except json.JSONDecodeError:
@@ -125,7 +125,7 @@ class ImageNetTrialGrader(TemplateGrader):
     metrics_csv = None
     completed_epochs = int(result.get("completed_epochs", 0) or 0)
     if result.get("status") == "completed" or completed_epochs:
-      metrics_csv = self.read_file_from_container("/tmp/trial-output/metrics.csv")
+      metrics_csv = execution_results.files.get("/tmp/trial-output/metrics.csv")
     attachments = []
     if run_json:
       attachments.append(self._attachment("run.json", run_json))

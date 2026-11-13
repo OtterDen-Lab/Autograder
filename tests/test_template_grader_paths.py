@@ -23,7 +23,7 @@ def test_template_grader_student_code_path_keeps_original_filenames(
     captured["files_to_copy"] = files_to_copy
     return Feedback(percentage_score=100.0, comments="ok")
 
-  monkeypatch.setattr(Grader__docker, "grade_submission",
+  monkeypatch.setattr(Grader__template_grader, "_run_submission",
                       fake_parent_grade_submission)
 
   grader = object.__new__(Grader__template_grader)
@@ -58,7 +58,7 @@ def test_template_grader_student_code_path_honors_container_repo_path_override(
     captured["files_to_copy"] = files_to_copy
     return Feedback(percentage_score=100.0, comments="ok")
 
-  monkeypatch.setattr(Grader__docker, "grade_submission",
+  monkeypatch.setattr(Grader__template_grader, "_run_submission",
                       fake_parent_grade_submission)
 
   grader = object.__new__(Grader__template_grader)
@@ -85,7 +85,7 @@ def test_template_grader_student_code_path_supports_single_file_target(
     captured["files_to_copy"] = files_to_copy
     return Feedback(percentage_score=100.0, comments="ok")
 
-  monkeypatch.setattr(Grader__docker, "grade_submission",
+  monkeypatch.setattr(Grader__template_grader, "_run_submission",
                       fake_parent_grade_submission)
 
   grader = object.__new__(Grader__template_grader)
@@ -110,7 +110,7 @@ def test_template_grader_student_code_path_file_target_rejects_multi_file_submis
                                    **kwargs):
     raise AssertionError("Parent grade_submission should not be called")
 
-  monkeypatch.setattr(Grader__docker, "grade_submission",
+  monkeypatch.setattr(Grader__template_grader, "_run_submission",
                       fake_parent_grade_submission)
 
   grader = object.__new__(Grader__template_grader)
@@ -217,7 +217,7 @@ def test_template_grader_file_paths_with_empty_path_and_no_name_errors():
 
 
 def test_template_grader_context_image_tag_sanitizes_names(monkeypatch):
-  monkeypatch.setattr("Autograder.graders.docker_graders.uuid.uuid4",
+  monkeypatch.setattr("Autograder.graders.template_grader.uuid.uuid4",
                       lambda: SimpleNamespace(hex="abc123"))
 
   grader = object.__new__(Grader__template_grader)
@@ -249,8 +249,7 @@ def test_template_grader_uv_bootstrap_command_handles_missing_pyproject():
 
 def test_template_grader_score_grading_attaches_optional_rubric(monkeypatch):
   grader = object.__new__(Grader__template_grader)
-  grader.container = object()
-  grader.read_file_from_container = lambda path: (
+  feedback_yaml = (
     "grade: 88\n"
     "comments: Great work.\n"
     "rubric:\n"
@@ -261,7 +260,8 @@ def test_template_grader_score_grading_attaches_optional_rubric(monkeypatch):
   grader._report_grading_error = lambda *args, **kwargs: pytest.fail(
     "Unexpected grading error")
 
-  feedback = grader.score_grading((0, "", ""))
+  from Autograder.runners import ExecutionResult
+  feedback = grader.score_grading(ExecutionResult(0, "", "", {"/tmp/feedback.yaml": feedback_yaml}))
 
   assert feedback.percentage_score == 88.0
   assert feedback.comments == "Great work."
