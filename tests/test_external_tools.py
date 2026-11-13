@@ -383,7 +383,7 @@ def test_viewers_stop_after_ordered_page_crosses_cutoff(monkeypatch):
     record_identifier_paths=['User.Username'], record_percent_paths=[],
     record_viewed_seconds_paths=[], record_duration_seconds_paths=[],
     cutoff=datetime(2026, 11, 12, tzinfo=timezone.utc))
-  assert [r.user_key for r in records] == ['new', 'old']
+  assert [r.user_key for r in records] == ['new']
   assert client.scan_complete
   assert len(session.calls) == 2
   assert session.calls[0]['params']['sortOrder'] == 'Desc'
@@ -407,3 +407,70 @@ def test_viewers_missing_or_unordered_dates_disable_early_stop(monkeypatch):
     cutoff=datetime(2026, 11, 12, tzinfo=timezone.utc))
   assert [r.user_key for r in records] == ['unknown', 'old', 'new']
   assert len(session.calls) == 4
+
+
+@pytest.mark.parametrize('cutoff_enabled,expected', [
+  (True, ['new', 'boundary']),
+  (False, ['new', 'boundary', 'old']),
+])
+def test_viewer_cutoff_filters_boundary_page_but_preserves_equal_timestamp(monkeypatch, cutoff_enabled, expected):
+  from datetime import datetime, timezone
+  from Autograder.external_tools import PanoptoWatchClient
+  monkeypatch.setattr('Autograder.external_tools.time.sleep', lambda _: None)
+  session = _RecordingGetSession([
+    {'payload': [
+      {'User': {'Username': 'new'}, 'LastViewedDateTime': '2026-11-12T12:00:00Z'},
+      {'User': {'Username': 'boundary'}, 'LastViewedDateTime': '2026-11-12T00:00:00Z'},
+      {'User': {'Username': 'old'}, 'LastViewedDateTime': '2026-11-11T12:00:00Z'},
+    ]},
+    {'payload': []},
+  ])
+  client = PanoptoWatchClient(base_url='https://example.org', access_token='token', session=session)
+  records = client.fetch_watch_records(
+    session_id='1', path_template='/sessions/{session_id}/viewers',
+    record_identifier_paths=['User.Username'], record_percent_paths=[],
+    record_viewed_seconds_paths=[], record_duration_seconds_paths=[],
+    cutoff=datetime(2026, 11, 12, tzinfo=timezone.utc) if cutoff_enabled else None)
+  assert [r.user_key for r in records] == expected
+  assert client.scan_complete
+  assert len(session.calls) == (1 if cutoff_enabled else 2)
+
+
+def test_viewer_incremental_scan_with_no_changes_returns_no_records(monkeypatch, caplog):
+  from datetime import datetime, timezone
+  from Autograder.external_tools import PanoptoWatchClient
+  import logging
+  session = _RecordingGetSession([{'payload': [
+    {'User': {'Username': 'old'}, 'LastViewedDateTime': '2026-11-11T12:00:00Z'}]}])
+  client = PanoptoWatchClient(base_url='https://example.org', access_token='token', session=session)
+  with caplog.at_level(logging.INFO):
+    records = client.fetch_watch_records(
+      session_id='1', path_template='/sessions/{session_id}/viewers',
+      record_identifier_paths=['User.Username'], record_percent_paths=[],
+      record_viewed_seconds_paths=[], record_duration_seconds_paths=[],
+      cutoff=datetime(2026, 11, 12, tzinfo=timezone.utc))
+  assert records == []
+  assert client.scan_complete and not client.scan_was_full
+  assert len(session.calls) == 1
+  assert 'pages=1, fetched=1, eligible=0' in caplog.text
+
+
+def test_viewer_out_of_order_page_preserves_full_scan_fallback(monkeypatch):
+  from datetime import datetime, timezone
+  from Autograder.external_tools import PanoptoWatchClient
+  monkeypatch.setattr('Autograder.external_tools.time.sleep', lambda _: None)
+  session = _RecordingGetSession([
+    {'payload': [
+      {'User': {'Username': 'old'}, 'LastViewedDateTime': '2026-11-11T12:00:00Z'},
+      {'User': {'Username': 'new'}, 'LastViewedDateTime': '2026-11-12T12:00:00Z'}]},
+    {'payload': []},
+  ])
+  client = PanoptoWatchClient(base_url='https://example.org', access_token='token', session=session)
+  records = client.fetch_watch_records(
+    session_id='1', path_template='/sessions/{session_id}/viewers',
+    record_identifier_paths=['User.Username'], record_percent_paths=[],
+    record_viewed_seconds_paths=[], record_duration_seconds_paths=[],
+    cutoff=datetime(2026, 11, 12, tzinfo=timezone.utc))
+  assert [r.user_key for r in records] == ['old', 'new']
+  assert len(session.calls) == 2
+  assert client.scan_was_full

@@ -58,6 +58,14 @@ honors it across pages. Delayed viewing updates can be picked up by the overlap
 or the periodic full scan. The tool raises an error instead of silently
 accepting a truncated result if it reaches its 100-page safety limit.
 
+The viewer endpoint still returns whole pages. Records older than the cutoff
+are excluded before Canvas matching and grading, while records exactly at the
+cutoff are retained. If timestamps or ordering are unreliable, the full-scan
+fallback keeps all fetched records. An incremental scan with no eligible records
+skips Canvas roster and submission-status lookups. Logs report pages requested,
+raw records fetched, and eligible records separately, so a single page of 100
+old records can correctly produce zero grading candidates.
+
 The course roster is fetched once per course per run. For a Canvas-backed
 assignment, submission statuses are fetched for matched viewers using
 `student_ids[]` and `assignment_ids[]` in batches. Existing Canvas access

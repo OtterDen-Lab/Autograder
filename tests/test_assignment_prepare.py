@@ -579,3 +579,23 @@ def test_text_assignment_excusal_lookup_error_stops_preparation():
   assignment = TextAssignment(lms_assignment=lms)
   with pytest.raises(RuntimeError, match='Canvas unavailable'):
     assignment.prepare()
+
+
+def test_panopto_unchanged_incremental_scan_skips_canvas_lookups(monkeypatch):
+  from datetime import datetime, timezone
+  from unittest.mock import Mock
+  client = SimpleNamespace(scan_complete=True, scan_was_full=False,
+                           fetch_watch_records=Mock(return_value=[]))
+  monkeypatch.setattr('Autograder.assignment.PanoptoWatchClient', lambda **kwargs: client)
+  lms = DummyExternalLmsAssignment([], [])
+  lms.get_students = Mock(side_effect=AssertionError('unnecessary roster lookup'))
+  assignment = ExternalToolAssignment(lms_assignment=lms)
+  assignment.panopto_scan_cutoff = datetime(2026, 11, 13, tzinfo=timezone.utc)
+  assignment._load_submission_statuses = Mock(side_effect=AssertionError('unnecessary status lookup'))
+  assignment.prepare(panopto_base='https://example.org', panopto_id='1',
+                     panopto_access_token='fake-test-token')
+  assert assignment.submissions == []
+  assert assignment.panopto_scan_complete
+  assert not assignment.panopto_scan_was_full
+  lms.get_students.assert_not_called()
+  assignment._load_submission_statuses.assert_not_called()

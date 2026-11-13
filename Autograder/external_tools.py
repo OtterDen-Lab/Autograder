@@ -233,6 +233,8 @@ class PanoptoWatchClient:
     self.scan_was_full = False
     ordering_valid = True
     previous_time = None
+    pages_fetched = 0
+    raw_count = 0
     for page_num in range(100):
       if page_num != 0: time.sleep(0.25)
 
@@ -249,6 +251,7 @@ class PanoptoWatchClient:
           "pageNumber" : page_num,
         }
       )
+      pages_fetched += 1
       if response.status_code == 404:
         log.warning(
           "Panopto viewer endpoint returned 404 for session %s; treating it as no watch records.",
@@ -258,6 +261,7 @@ class PanoptoWatchClient:
       response.raise_for_status()
       payload = response.json()
       raw_records = self._extract_record_list(payload)
+      raw_count += len(raw_records)
 
       # If the page is empty then we are done.
       if len(raw_records) == 0:
@@ -334,6 +338,15 @@ class PanoptoWatchClient:
     else:
       raise RuntimeError('Panopto viewer pagination exceeded 100 pages; refusing a partial result')
 
+    # Keep full-scan fallback behavior if timestamps or ordering are unreliable.
+    # Filter only after paging so an ordering violation on a later page can
+    # restore every record already fetched. Include the cutoff boundary.
+    if cutoff is not None and ordering_valid:
+      records = [r for r in records
+                 if r.last_viewed_at is None or r.last_viewed_at >= cutoff]
+    log.info("Panopto viewer scan: pages=%d, fetched=%d, eligible=%d, cutoff=%s, full_scan=%s",
+             pages_fetched, raw_count, len(records),
+             cutoff.isoformat() if cutoff is not None else "none", self.scan_was_full)
     return records
 
   def fetch_session_duration_seconds(self,

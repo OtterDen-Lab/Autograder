@@ -1051,6 +1051,11 @@ class ExternalToolAssignment(Assignment):
     )
     self.panopto_scan_complete = bool(getattr(client, 'scan_complete', False))
     self.panopto_scan_was_full = bool(getattr(client, 'scan_was_full', False))
+    if (not watch_records and self.panopto_scan_complete
+        and getattr(self, 'panopto_scan_cutoff', None) is not None):
+      self.submissions = []
+      log.info("No eligible Panopto viewer records in incremental window; skipping Canvas lookups")
+      return
     watch_by_key = {}
     for record in watch_records:
       normalized_key = normalize_panopto_identifier(record.user_key)
@@ -1064,7 +1069,7 @@ class ExternalToolAssignment(Assignment):
       watch_by_key[normalized_key] = record
 
     log.debug(
-      f"Panopto returned {len(watch_records)} raw watch record(s) for session {session_id}")
+      f"Panopto supplied {len(watch_records)} eligible watch record(s) for session {session_id}")
     for i, record in enumerate(watch_records, 1):
       log.debug(
         "Panopto record %d: user_key=%s percent_watched=%s viewed_seconds=%s duration_seconds=%s time=%s raw=%s",
