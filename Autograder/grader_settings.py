@@ -255,6 +255,7 @@ class TemplateGraderSettings:
   grading_workdir: Optional[str] = None
   num_repeats: Optional[int] = None
   rubric: Optional[Dict[str, Any]] = None
+  memory_limit: Optional[str] = None
 
   def __post_init__(self) -> None:
     if not isinstance(self.base_image_name, str):
@@ -315,6 +316,7 @@ class TemplateGraderSettings:
       "grading_workdir",
       "num_repeats",
       "rubric",
+      "memory_limit",
     }
     unknown = sorted(k for k in raw.keys() if k not in allowed)
     if unknown:
@@ -388,6 +390,8 @@ class TemplateGraderSettings:
       num_repeats=_require_optional_int(raw.get("num_repeats"),
                                         f"{context_label}.num_repeats"),
       rubric=rubric,
+      memory_limit=_require_optional_str(raw.get("memory_limit"),
+                                          f"{context_label}.memory_limit"),
     )
     return settings
 
@@ -431,6 +435,7 @@ class TemplateGraderSettings:
       "grading_workdir": self.grading_workdir,
       "num_repeats": self.num_repeats,
       "rubric": dict(self.rubric) if self.rubric is not None else None,
+      "memory_limit": self.memory_limit,
     }
 
 

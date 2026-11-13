@@ -851,6 +851,7 @@ def test_collect_assignments_accepts_template_entrypoint_and_error_artifact_sett
       "programming": {
         "kind": "ProgrammingAssignment",
         "grader": "template-grader",
+        "settings": {"memory_limit": "2g"},
       }
     },
     "courses": [{
@@ -881,6 +882,18 @@ def test_collect_assignments_accepts_template_entrypoint_and_error_artifact_sett
   assert settings["grading_workdir"] == "/repo/custom"
   assert settings["upload_error_artifacts"] is True
   assert settings["extra_installs"] == ["apt-get update && apt-get install -y jq"]
+  from Autograder.graders.template_grader import TemplateGrader
+  from unittest.mock import Mock
+  grader = TemplateGrader(assignment_name='PA1', **settings,
+                          runner=Mock(), image_builder=Mock())
+  assert grader.execution_options["memory_limit"] == "2g"
+
+
+@pytest.mark.parametrize('memory_limit', [True, 2, ["2g"]])
+def test_template_settings_reject_non_string_memory_limit(memory_limit):
+  with pytest.raises(ValueError, match='memory_limit must be a string'):
+    config_models.normalize_grader_settings(
+      'template-grader', {'memory_limit': memory_limit}, 'programming.settings')
 
 
 def test_collect_assignments_rejects_invalid_grading_args(monkeypatch):
