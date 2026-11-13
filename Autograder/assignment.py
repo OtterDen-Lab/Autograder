@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import re
 import tempfile
+import threading
 from datetime import datetime
 from typing import List, Dict, Any
 import abc
@@ -25,6 +26,19 @@ from lms_interface.classes import Student, Submission
 import logging
 
 log = logging.getLogger(__name__)
+
+
+class CourseRosterCache:
+  """Share a single course roster across assignments within one grading run."""
+  def __init__(self):
+    self._lock = threading.Lock()
+    self._rosters = {}
+
+  def get(self, course_id, load):
+    with self._lock:
+      if course_id not in self._rosters:
+        self._rosters[course_id] = list(load())
+      return self._rosters[course_id]
 
 class Assignment(abc.ABC):
   """
@@ -296,7 +310,8 @@ class Assignment(abc.ABC):
           continue
 
         if pushed:
-          if lease is not None and self.grading_cooldown is not None:
+          if lease is not None and (self.grading_cooldown is not None or
+                                    isinstance(self, ExternalToolAssignment)):
             lease.succeeded(user_id)
           push_succeeded += 1
         else:
@@ -1020,17 +1035,25 @@ class ExternalToolAssignment(Assignment):
       record_percent_paths=list(record_percent_paths or []),
       record_viewed_seconds_paths=list(record_viewed_seconds_paths or []),
       record_duration_seconds_paths=list(record_duration_seconds_paths or []),
+      cutoff=getattr(self, 'panopto_scan_cutoff', None),
     )
+    self.panopto_scan_complete = bool(getattr(client, 'scan_complete', False))
+    self.panopto_scan_was_full = bool(getattr(client, 'scan_was_full', False))
     watch_by_key = {}
     for record in watch_records:
       normalized_key = normalize_panopto_identifier(record.user_key)
       if normalized_key is None:
         continue
+      existing = watch_by_key.get(normalized_key)
+      existing_time = parse_panopto_datetime(getattr(existing, 'last_viewed_at', None))
+      record_time = parse_panopto_datetime(getattr(record, 'last_viewed_at', None))
+      if existing is not None and existing_time is not None and (record_time is None or record_time <= existing_time):
+        continue
       watch_by_key[normalized_key] = record
 
     log.debug(
       f"Panopto returned {len(watch_records)} raw watch record(s) for session {session_id}")
-    for i, record in enumerate(sorted(watch_records, key=lambda r: r.user_key), 1):
+    for i, record in enumerate(watch_records, 1):
       log.debug(
         "Panopto record %d: user_key=%s percent_watched=%s viewed_seconds=%s duration_seconds=%s time=%s raw=%s",
         i,
@@ -1042,16 +1065,33 @@ class ExternalToolAssignment(Assignment):
         {} #json.dumps(record.raw, indent=2, sort_keys=True, default=str),
       )
 
-    try:
-      students = list(self.lms_assignment.get_students(include_names=True))
-    except TypeError:
-      students = list(self.lms_assignment.get_students())
+    def load_students():
+      try:
+        return list(self.lms_assignment.get_students(include_names=True))
+      except TypeError:
+        return list(self.lms_assignment.get_students())
+
+    roster_cache = getattr(self, 'course_roster_cache', None)
+    course_id = kwargs.get('course_id')
+    students = (roster_cache.get(str(course_id), load_students)
+                if roster_cache is not None and course_id is not None
+                else load_students())
 
     student_identifier_overrides = {
       str(k): str(v).strip().lower()
       for k, v in (student_identifier_overrides or {}).items()
     }
-    student_statuses = self._load_submission_statuses()
+    candidate_ids = []
+    for student in students:
+      user_id = getattr(student, 'user_id', None)
+      if user_id is None or (student_id is not None and str(user_id) != str(student_id)):
+        continue
+      key = student_identifier_overrides.get(str(user_id))
+      if key is None:
+        key = extract_student_identifier(student, canvas_user_attribute)
+      if key in watch_by_key:
+        candidate_ids.append(int(user_id))
+    student_statuses = self._load_submission_statuses(candidate_ids)
     last_completed_at = parse_panopto_datetime(schedule_last_completed_at)
     stale_watch_cutoff_at = parse_panopto_datetime(
       schedule_stale_watch_cutoff_at)
@@ -1216,15 +1256,31 @@ class ExternalToolAssignment(Assignment):
           f"Skipped {skipped_no_watch_record} Canvas student(s) with no matching Panopto watch record; "
           "they were left ungraded.")
 
-  def _load_submission_statuses(self) -> dict[int, dict[str, Any]]:
+  def _load_submission_statuses(self, candidate_ids=None) -> dict[int, dict[str, Any]]:
     try:
       raw_assignment = getattr(self.lms_assignment, "assignment", None)
-      if raw_assignment is not None and hasattr(raw_assignment, "get_submissions"):
+      raw_course = getattr(getattr(self.lms_assignment, 'canvas_course', None), 'course', None)
+      if candidate_ids is not None and not candidate_ids:
+        return {}
+      if (candidate_ids is not None and raw_course is not None
+          and hasattr(raw_course, 'get_multiple_submissions') and raw_assignment is not None):
+        try:
+          lms_submissions = []
+          for offset in range(0, len(candidate_ids), 100):
+            lms_submissions.extend(raw_course.get_multiple_submissions(
+              student_ids=candidate_ids[offset:offset + 100],
+              assignment_ids=[raw_assignment.id], include=['submission_history']))
+        except Exception:
+          log.warning('Targeted Canvas submission lookup failed; fetching assignment submissions instead')
+          lms_submissions = list(raw_assignment.get_submissions(include='submission_history'))
+      elif raw_assignment is not None and hasattr(raw_assignment, "get_submissions"):
         lms_submissions = list(
           raw_assignment.get_submissions(include="submission_history"))
       else:
         lms_submissions = list(self.lms_assignment.get_submissions(limit=None))
     except Exception:
+      if getattr(self, 'panopto_scan_started_at', None) is not None:
+        raise
       return {}
 
     statuses: dict[int, dict[str, Any]] = {}

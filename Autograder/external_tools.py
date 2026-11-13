@@ -222,12 +222,17 @@ class PanoptoWatchClient:
                           record_identifier_paths: list[str],
                           record_percent_paths: list[str],
                           record_viewed_seconds_paths: list[str],
-                          record_duration_seconds_paths: list[str]
+                          record_duration_seconds_paths: list[str],
+                          cutoff: datetime | None = None,
                           ) -> list[ExternalWatchRecord]:
     url = f"{self.base_url}{path_template.format(session_id=session_id)}"
     log.debug(f"Url being used: {url}")
 
     records: list[ExternalWatchRecord] = []
+    self.scan_complete = False
+    self.scan_was_full = False
+    ordering_valid = True
+    previous_time = None
     for page_num in range(100):
       if page_num != 0: time.sleep(0.25)
 
@@ -240,7 +245,7 @@ class PanoptoWatchClient:
         timeout=self.timeout_seconds,
         params={
           "sortField" : "LastViewedDateTime",
-          "sortorder" : "Desc",
+          "sortOrder" : "Desc",
           "pageNumber" : page_num,
         }
       )
@@ -255,7 +260,22 @@ class PanoptoWatchClient:
       raw_records = self._extract_record_list(payload)
 
       # If the page is empty then we are done.
-      if len(raw_records) == 0: break
+      if len(raw_records) == 0:
+        self.scan_complete = True
+        self.scan_was_full = True
+        break
+
+      page_times = []
+      if cutoff is not None:
+        for raw in raw_records:
+          timestamp = parse_panopto_datetime(_first_path_value(raw, [
+            "LastViewedDateTime", "lastViewedDateTime", "ViewedDateTime", "viewedDateTime"
+          ])) if isinstance(raw, dict) else None
+          if timestamp is None or (previous_time is not None and timestamp > previous_time):
+            ordering_valid = False
+          if timestamp is not None:
+            previous_time = timestamp
+            page_times.append(timestamp)
 
       for raw in raw_records:
         if not isinstance(raw, dict):
@@ -306,6 +326,13 @@ class PanoptoWatchClient:
             raw=raw,
           ))
 
+      # Only stop after examining a complete ordered page. Missing timestamps
+      # or unexpected ordering disable the shortcut for the entire scan.
+      if cutoff is not None and ordering_valid and page_times and page_times[-1] < cutoff:
+        self.scan_complete = True
+        break
+    else:
+      raise RuntimeError('Panopto viewer pagination exceeded 100 pages; refusing a partial result')
 
     return records
 

@@ -11,6 +11,7 @@ import os
 import threading
 import uuid
 from importlib.resources import files
+from datetime import timedelta
 
 
 log = logging.getLogger(__name__)
@@ -57,6 +58,39 @@ class PostgresCoordinator:
 
   def migrate(self):
     self._query(files('Autograder').joinpath('migrations/001_coordination.sql').read_text())
+
+  def panopto_scan_window(self, course_id, assignment_id):
+    """Return (DB scan-start, safe cutoff), or no cutoff on first/stale scan."""
+    rows = self._query("""
+      SELECT clock_timestamp(),
+        (SELECT max(last_succeeded_at) FROM autograder_student_successes WHERE course_id = %s),
+        (SELECT completed_through FROM autograder_panopto_checkpoints
+         WHERE course_id = %s AND assignment_id = %s),
+        (SELECT last_full_scan_at FROM autograder_panopto_checkpoints
+         WHERE course_id = %s AND assignment_id = %s)
+    """, (str(course_id), str(course_id), str(assignment_id),
+          str(course_id), str(assignment_id)))
+    now, last_push, checkpoint, last_full = rows[0]
+    if (last_push is None or checkpoint is None or last_full is None or last_push > now
+        or checkpoint > now or last_full > now or now - last_full >= timedelta(days=7)):
+      return now, None
+    window = min(2 * (now - last_push), timedelta(days=7))
+    # Never advance past the last completed assignment scan; retain overlap
+    # for delayed Panopto updates and equal timestamp boundaries.
+    return now, min(now - window, checkpoint - timedelta(minutes=15))
+
+  def complete_panopto_scan(self, course_id, assignment_id, started_at, full_scan):
+    self._query("""
+      INSERT INTO autograder_panopto_checkpoints (course_id, assignment_id, completed_through, last_full_scan_at)
+      VALUES (%s, %s, %s, %s)
+      ON CONFLICT (course_id, assignment_id) DO UPDATE
+      SET completed_through = greatest(autograder_panopto_checkpoints.completed_through,
+                                       excluded.completed_through),
+          last_full_scan_at = CASE WHEN excluded.last_full_scan_at IS NOT NULL
+            THEN greatest(autograder_panopto_checkpoints.last_full_scan_at, excluded.last_full_scan_at)
+            ELSE autograder_panopto_checkpoints.last_full_scan_at END
+    """, (str(course_id), str(assignment_id), started_at,
+          started_at if full_scan else None))
 
   def claim(self, course_id, assignment_id):
     token = str(uuid.uuid4())
@@ -113,6 +147,7 @@ class AssignmentLease:
 
   def filter_submissions(self, assignment, cooldown):
     self.check()
+    assignment.cooldown_deferred_count = 0
     if cooldown is None:
       return
     rows = self.store._query("""
@@ -124,6 +159,7 @@ class AssignmentLease:
     before = len(assignment.submissions)
     assignment.submissions = [s for s in assignment.submissions
                               if _student_key(s.student.user_id) not in cooling]
+    assignment.cooldown_deferred_count = before - len(assignment.submissions)
     log.info("Cooldown filtering (course %s, assignment %s, %s seconds): "
              "%d recent success records; kept %d submissions; skipped %d students",
              *self.key[:2], cooldown, len(rows), len(assignment.submissions),

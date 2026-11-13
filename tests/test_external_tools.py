@@ -367,3 +367,43 @@ def test_fetch_watch_records_uses_session_duration_for_percent_calculation():
   assert records[0].percent_watched == pytest.approx(0.032135916666666664)
   assert records[0].last_viewed_at is not None
   assert records[0].last_viewed_at.isoformat() == "2026-07-10T14:31:33.193000+00:00"
+
+
+def test_viewers_stop_after_ordered_page_crosses_cutoff(monkeypatch):
+  from datetime import datetime, timezone
+  from Autograder.external_tools import PanoptoWatchClient
+  monkeypatch.setattr('Autograder.external_tools.time.sleep', lambda _: None)
+  session = _RecordingGetSession([
+    {'payload': [{'User': {'Username': 'new'}, 'LastViewedDateTime': '2026-11-12T12:00:00Z'}]},
+    {'payload': [{'User': {'Username': 'old'}, 'LastViewedDateTime': '2026-11-11T12:00:00Z'}]},
+  ])
+  client = PanoptoWatchClient(base_url='https://example.org', access_token='token', session=session)
+  records = client.fetch_watch_records(
+    session_id='1', path_template='/sessions/{session_id}/viewers',
+    record_identifier_paths=['User.Username'], record_percent_paths=[],
+    record_viewed_seconds_paths=[], record_duration_seconds_paths=[],
+    cutoff=datetime(2026, 11, 12, tzinfo=timezone.utc))
+  assert [r.user_key for r in records] == ['new', 'old']
+  assert client.scan_complete
+  assert len(session.calls) == 2
+  assert session.calls[0]['params']['sortOrder'] == 'Desc'
+
+
+def test_viewers_missing_or_unordered_dates_disable_early_stop(monkeypatch):
+  from datetime import datetime, timezone
+  from Autograder.external_tools import PanoptoWatchClient
+  monkeypatch.setattr('Autograder.external_tools.time.sleep', lambda _: None)
+  session = _RecordingGetSession([
+    {'payload': [{'User': {'Username': 'unknown'}}]},
+    {'payload': [{'User': {'Username': 'old'}, 'LastViewedDateTime': '2026-11-11T12:00:00Z'}]},
+    {'payload': [{'User': {'Username': 'new'}, 'LastViewedDateTime': '2026-11-12T12:00:00Z'}]},
+    {'payload': []},
+  ])
+  client = PanoptoWatchClient(base_url='https://example.org', access_token='token', session=session)
+  records = client.fetch_watch_records(
+    session_id='1', path_template='/sessions/{session_id}/viewers',
+    record_identifier_paths=['User.Username'], record_percent_paths=[],
+    record_viewed_seconds_paths=[], record_duration_seconds_paths=[],
+    cutoff=datetime(2026, 11, 12, tzinfo=timezone.utc))
+  assert [r.user_key for r in records] == ['unknown', 'old', 'new']
+  assert len(session.calls) == 4

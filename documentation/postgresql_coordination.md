@@ -29,6 +29,39 @@ The runtime role needs SELECT, INSERT, UPDATE, and DELETE on
 migration role owns those tables, grant those privileges to the runtime role.
 Workers never create tables automatically.
 
+## Panopto incremental scans
+
+Panopto viewer pages are requested in descending `LastViewedDateTime` order.
+For ordinary, unrestricted publishing runs with PostgreSQL coordination,
+successful Panopto pushes update the shared per-student success records even
+when a student cooldown is not configured. The scan looks back twice the
+elapsed time since the course's most recent recorded push, capped at seven
+days. It also keeps at least a 15-minute overlap with the assignment's last
+successful scan. The earlier of those two times is used.
+
+Each assignment first receives a full scan, and a full scan is repeated at
+least every seven days. A scan checkpoint advances only after at least one
+confirmed successful Canvas push, with no publishing failures, ungraded-feedback
+skips, or students deferred by cooldown. Empty scans and runs where every Canvas
+update is skipped leave the checkpoint unchanged. A mixed run can record each
+successful student's timestamp while retaining the scan checkpoint so deferred
+students remain discoverable. Successful pushes qualify regardless of score
+improvement; an update skipped before calling Canvas does not qualify. A failed, incomplete, 404, limited, test, or explicit
+regrade run does not advance its checkpoint. If a checkpoint or success time
+is unavailable, the scan is full. Panopto records without timestamps or a
+detected ordering violation disable early termination for that scan. Sorting
+is requested from Panopto; the early-stop optimization assumes the endpoint
+honors it across pages. Delayed viewing updates can be picked up by the overlap
+or the periodic full scan. The tool raises an error instead of silently
+accepting a truncated result if it reaches its 100-page safety limit.
+
+The course roster is fetched once per course per run. For a Canvas-backed
+assignment, submission statuses are fetched for matched viewers using
+`student_ids[]` and `assignment_ids[]` in batches. Existing Canvas access
+permissions remain necessary. Inspect dates and pagination against your Panopto
+instance before enabling this on production data. The migration above must
+be rerun to create the checkpoint table before deploying this version.
+
 When the connection string is set, each worker atomically claims an assignment
 before preparing it. Claims last five minutes and renew every 100 seconds,
 through preparation, grading, and publishing. Another worker skips a claimed

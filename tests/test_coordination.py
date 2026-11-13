@@ -18,6 +18,27 @@ def test_reject_invalid_cooldown(value):
     cooldown_seconds(value)
 
 
+def test_panopto_cutoff_uses_course_push_but_respects_assignment_checkpoint():
+  from datetime import datetime, timedelta, timezone
+  now = datetime(2026, 11, 13, tzinfo=timezone.utc)
+  store = PostgresCoordinator('unused')
+  store._query = Mock(return_value=[(now, now - timedelta(minutes=1),
+                                    now - timedelta(hours=2), now - timedelta(days=1))])
+  started, cutoff = store.panopto_scan_window(1, 2)
+  assert started == now
+  assert cutoff == now - timedelta(hours=2, minutes=15)
+  assert store._query.call_args.args[1] == ('1', '1', '2', '1', '2')
+
+
+def test_panopto_cutoff_falls_back_to_full_scan_for_stale_checkpoint():
+  from datetime import datetime, timedelta, timezone
+  now = datetime(2026, 11, 13, tzinfo=timezone.utc)
+  store = PostgresCoordinator('unused')
+  store._query = Mock(return_value=[(now, now - timedelta(minutes=1),
+                                    now - timedelta(days=1), now - timedelta(days=8))])
+  assert store.panopto_scan_window(1, 2) == (now, None)
+
+
 @pytest.mark.parametrize("database_student_id", ["1", b"1", 1])
 def test_filter_keeps_text_batch_consistent(database_student_id):
   store = Mock(lease_seconds=300)
@@ -28,6 +49,7 @@ def test_filter_keeps_text_batch_consistent(database_student_id):
     {'submission_obj': s, 'student_id': s.student.user_id} for s in submissions])
   lease.filter_submissions(assignment, 300)
   assert assignment.submissions == [submissions[1]]
+  assert assignment.cooldown_deferred_count == 1
   assert [r['student_id'] for r in assignment.submission_data] == [2]
 
 
@@ -280,3 +302,64 @@ def test_claimed_assignments_are_reported_as_skipped(caplog):
     print_results_summary([{'success': True, 'assignment_id': 20,
                             'skipped_reason': 'assignment_claimed'}])
   assert '0 successful, 0 failed, 1 skipped' in caplog.text
+
+
+@pytest.mark.parametrize('remaining,deferred,pushed,failed,ungraded,complete,advance', [
+  (0, 0, 0, 0, 0, True, False),  # No work is not a successful publish.
+  (0, 2, 0, 0, 0, True, False),  # All students are cooling down.
+  (1, 1, 1, 0, 0, True, False),  # A push cannot consume another student's deferred work.
+  (1, 0, 0, 0, 0, True, False),  # Canvas no-op / idempotency skip.
+  (1, 0, 1, 0, 0, True, True),   # Confirmed push after a complete scan.
+  (2, 0, 1, 1, 0, True, False),  # Partial publish failure.
+  (2, 0, 1, 0, 1, True, False),  # Missing grading feedback.
+  (1, 0, 1, 0, 0, False, False), # Incomplete Panopto scan.
+])
+def test_panopto_checkpoint_requires_push_without_deferred_work(
+    monkeypatch, remaining, deferred, pushed, failed, ungraded, complete, advance):
+  from contextlib import nullcontext
+  from Autograder.orchestration import executor
+  from Autograder.config_models import AssignmentRunRequest
+  from Autograder.reporting.contracts import GradeStageResult, PublishStageResult
+  from datetime import datetime, timezone
+  store = Mock()
+  lease = store.claim.return_value
+  started = datetime(2026, 11, 13, tzinfo=timezone.utc)
+  store.panopto_scan_window.return_value = (started, None)
+  assignment = SimpleNamespace(submissions=[], panopto_scan_complete=complete,
+                               panopto_scan_was_full=True)
+  def prepare(**kwargs):
+    assignment.submissions = [_make_submission(i) for i in range(remaining + deferred)]
+  assignment.prepare = prepare
+  def filter_submissions(current, cooldown):
+    current.cooldown_deferred_count = deferred
+    current.submissions = current.submissions[:remaining]
+  lease.filter_submissions.side_effect = filter_submissions
+  grader = Mock()
+  grader.assignment_needs_preparation.return_value = True
+  grader.__enter__ = Mock(return_value=grader)
+  grader.__exit__ = Mock(return_value=False)
+  monkeypatch.setattr(executor, 'coordinator_from_environment', lambda: store)
+  monkeypatch.setattr(executor, 'get_active_grader_compatibility',
+    lambda **kwargs: ({'ExternalToolAssignment'}, {'ExternalToolAssignment': {'panopto-watch-grader'}}))
+  monkeypatch.setattr(executor.AssignmentRegistry, 'create', lambda *a, **k: nullcontext(assignment))
+  monkeypatch.setattr(executor.GraderRegistry, 'create', lambda *a, **k: grader)
+  monkeypatch.setattr(executor, 'run_grade_stage', lambda *a, **k: GradeStageResult(
+    submission_count=remaining, graded_count=pushed))
+  monkeypatch.setattr(executor, 'run_publish_stage', lambda *a, **k: PublishStageResult(
+    finalized=True, finalize_summary={'push_enabled': True, 'push_succeeded': pushed,
+      'push_failed': failed, 'push_skipped_ungraded': ungraded}))
+  course = Mock()
+  course.get_assignment.return_value.name = 'Video'
+  request = AssignmentRunRequest(
+    course=course, course_name='test', course_id=1, assignment_id=2,
+    assignment_type='video', assignment_kind='ExternalToolAssignment',
+    grader_name='panopto-watch-grader', settings={'grading_cooldown': 21600},
+    repo_path=None, assignment_name=None,
+    args=SimpleNamespace(do_regrade=False, limit=None, student_id=None, test=False),
+    push_grades=True, slack_channel=None)
+  result = executor.grade_single_assignment(request)
+  assert result['success']
+  assert store.complete_panopto_scan.called is advance
+  if advance:
+    store.complete_panopto_scan.assert_called_once_with(1, 2, started, True)
+  lease.close.assert_called_once()

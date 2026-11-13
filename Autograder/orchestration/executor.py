@@ -16,7 +16,7 @@ from typing import Dict, List
 
 from Autograder import exceptions as autograder_exceptions
 from Autograder.coordination import coordinator_from_environment, cooldown_seconds
-from Autograder.assignment import AssignmentRegistry
+from Autograder.assignment import AssignmentRegistry, CourseRosterCache
 from Autograder.config_models import AssignmentRunRequest, get_active_grader_compatibility
 from Autograder.grader_context import GraderContext
 from Autograder.grader import GraderRegistry
@@ -217,6 +217,29 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
 
             grading_assignment.coordination_lease = lease
             grading_assignment.grading_cooldown = cooldown
+            grading_assignment.course_roster_cache = getattr(assignment_data, '_course_roster_cache', None)
+            panopto_scan_started = None
+            if (assignment_kind == 'ExternalToolAssignment' and coordinator is not None
+                    and push_grades and not getattr(args, 'test', False)
+                    and not getattr(args, 'do_regrade', False)
+                    and getattr(args, 'student_id', None) is None
+                    and getattr(args, 'limit', None) is None):
+                panopto_scan_started, grading_assignment.panopto_scan_cutoff = (
+                    coordinator.panopto_scan_window(assignment_data.course_id, assignment_id))
+                grading_assignment.panopto_scan_started_at = panopto_scan_started
+
+            def complete_panopto_scan():
+                if panopto_scan_started is not None and getattr(grading_assignment, 'panopto_scan_complete', False):
+                    # Fetching a record is not the same as handling it. Keep the
+                    # existing frontier until every cooldown-deferred student
+                    # can be retried, including mixed runs with successful pushes.
+                    if getattr(grading_assignment, 'cooldown_deferred_count', 0):
+                        log.info("Keeping Panopto checkpoint: student work was deferred by cooldown")
+                        return
+                    lease.check()
+                    coordinator.complete_panopto_scan(assignment_data.course_id, assignment_id,
+                                                       panopto_scan_started,
+                                                       getattr(grading_assignment, 'panopto_scan_was_full', False))
 
             # Run prepare stage
             prepare_started = time.perf_counter()
@@ -261,6 +284,11 @@ def grade_single_assignment(assignment_data: AssignmentRunRequest) -> Dict:
                 publish_result.duration_ms = int(
                     (time.perf_counter() - publish_started) * 1000)
                 stage_contract["publish"] = asdict(publish_result)
+                summary = publish_result.finalize_summary or {}
+                if (publish_result.finalized and summary.get('push_enabled')
+                        and int(summary.get('push_succeeded', 0) or 0) > 0
+                        and not summary.get('push_failed') and not summary.get('push_skipped_ungraded')):
+                    complete_panopto_scan()
 
         return {
             'success': True,
@@ -335,6 +363,9 @@ def execute_grading(assignments_to_grade: List[AssignmentRunRequest],
     # Grade assignments in parallel
     results = []
     log.info("Running in multi-threaded mode")
+    roster_cache = CourseRosterCache()
+    for assignment_data in assignments_to_grade:
+        assignment_data._course_roster_cache = roster_cache
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_assignment = {
             executor.submit(grade_single_assignment, assignment_data): assignment_data

@@ -368,6 +368,32 @@ def test_external_tool_statuses_preserve_score_when_latest_history_lacks_one():
   assert statuses[101]["score"] == 10.0
 
 
+def test_panopto_status_lookup_only_requests_matching_students():
+  from unittest.mock import Mock
+  course = Mock()
+  course.get_multiple_submissions.return_value = [
+    SimpleNamespace(user_id=202, score=8, workflow_state='graded')]
+  lms = DummyExternalLmsAssignment([], [])
+  lms.assignment = SimpleNamespace(id=7)
+  lms.canvas_course = SimpleNamespace(course=course)
+  statuses = ExternalToolAssignment(lms_assignment=lms)._load_submission_statuses([202])
+  assert statuses[202]['score'] == 8
+  course.get_multiple_submissions.assert_called_once_with(
+    student_ids=[202], assignment_ids=[7], include=['submission_history'])
+
+
+def test_course_roster_cache_is_shared_and_loads_once():
+  from concurrent.futures import ThreadPoolExecutor
+  from unittest.mock import Mock
+  from Autograder.assignment import CourseRosterCache
+  loader = Mock(return_value=[1, 2])
+  cache = CourseRosterCache()
+  with ThreadPoolExecutor(max_workers=4) as pool:
+    results = list(pool.map(lambda _: cache.get('course-1', loader), range(8)))
+  assert results == [[1, 2]] * 8
+  loader.assert_called_once()
+
+
 def test_external_tool_assignment_prepare_skips_stale_watch_records(
     monkeypatch):
   students = [
