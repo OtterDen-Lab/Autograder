@@ -60,6 +60,36 @@ This guide covers common runtime failures and the fastest way to recover.
   - `AUTOGRADER_DOCKER_NANO_CPUS`
   - `AUTOGRADER_DOCKER_PIDS_LIMIT`
 
+### Criterion reports “Could not spawn test instance: Protocol error”
+
+If the grading command returns output and `feedback.yaml` is retrieved, Docker
+communication is working. This error comes from Criterion starting its test
+worker. A missing JSON report and worker exit status `-6` indicate a runner
+failure; they do not establish that the student's tests failed.
+
+Check container memory limits first. A synthetic passing Criterion test in the
+CST334 course image reproduced this error at the default `1g` memory limit and
+incremented the cgroup `memory.events` counters `oom` and `oom_kill`. The same
+test passed at `2g` with the normal seccomp profile and process limit intact.
+An OOM-killed child can leave the outer grading script running, so its exit
+status may still be zero.
+
+Set memory on the relevant template grader's existing `settings` mapping:
+
+```yaml
+settings:
+  memory_limit: "2g"
+```
+
+Alternatively, `AUTOGRADER_DOCKER_MEMORY_LIMIT=2g` changes the default for the
+whole grading process. Choose a limit appropriate to the course tests and the
+host's available memory, accounting for concurrent assignments. Recreating the
+container applies the limit; rebuilding the grading image is unnecessary.
+
+Template feedback marked `err: true` or `error: true` is rejected and left
+unpublished, without recording student success/cooldown. A valid student failure
+with `grade: 0` and `err: false` remains a publishable grade.
+
 ## Text Grading / AI Provider Failures
 
 ### Symptoms

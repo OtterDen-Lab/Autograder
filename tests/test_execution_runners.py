@@ -217,8 +217,66 @@ def test_template_error_reporting_uses_collected_result_without_live_container(a
   grader = TemplateGrader(assignment_name='PA1', runner=Mock(), image_builder=Mock())
   grader._report_grading_error = Mock()
   result = ExecutionResult(1, 'build output', 'build errors', {'/tmp/feedback.yaml': artifact})
-  feedback = grader.score_grading(result)
-  assert feedback.percentage_score == 0
+  from Autograder.exceptions import GradingError
+  with pytest.raises(GradingError):
+    grader.score_grading(result)
   grader._report_grading_error.assert_called_once()
   assert grader._report_grading_error.call_args.args[1] is result
   assert not hasattr(grader, 'container')
+
+
+@pytest.mark.parametrize('payload', [
+  'grade: 0\ncomments: Criterion could not spawn test instance\nerr: true',
+  'grade: 0\ncomments: Infrastructure failure\nerror: true',
+  'comments: Missing grade',
+  'grade: .nan',
+  'grade: .inf',
+  'grade: true',
+  '[]',
+])
+def test_template_rejects_runner_errors_even_with_successful_exit_code(payload):
+  from Autograder.exceptions import GradingError
+  grader = TemplateGrader(assignment_name='PA1', runner=Mock(), image_builder=Mock())
+  grader._report_grading_error = Mock()
+  with pytest.raises(GradingError):
+    grader.score_grading(ExecutionResult(0, '', '', {'/tmp/feedback.yaml': payload}))
+  grader._report_grading_error.assert_called_once()
+
+
+def test_template_preserves_legitimate_student_build_failure_zero():
+  grader = TemplateGrader(assignment_name='PA1', runner=Mock(), image_builder=Mock())
+  result = ExecutionResult(0, '', '', {'/tmp/feedback.yaml':
+    'grade: 0\ncomments: Build failed\nlogs: Compiler error\nerr: false'})
+  feedback = grader.score_grading(result)
+  assert feedback.percentage_score == 0
+  assert 'Compiler error' in feedback.comments
+
+
+def test_template_runner_error_never_publishes_or_records_success():
+  from lms_interface.classes import FileSubmission, Student, Submission
+  from test_assignment_finalize import DummyAssignment, DummyLmsAssignment
+
+  runner = Mock()
+  runner.run.return_value = ExecutionResult(0, 'Criterion aborted', '', {
+    '/tmp/feedback.yaml': 'grade: 0\ncomments: No JSON results report\nerr: true'})
+  grader = TemplateGrader(assignment_name='PA1', runner=runner, image_builder=Mock())
+  grader.image = 'course:test'
+  grader._report_grading_error = Mock()
+  upload = FileSubmission(student=Student(name='Student 1', user_id=1, _inner=None),
+                          status=Submission.Status.UNGRADED)
+  upload.files = submission().files
+  lms_assignment = DummyLmsAssignment(points_possible=100)
+  lms_assignment.canvas_course.name = 'Test course'
+  assignment = DummyAssignment(lms_assignment=lms_assignment)
+  assignment.submissions = [upload]
+  assignment.coordination_lease = Mock()
+  assignment.grading_cooldown = 10800
+
+  grader.grade_assignment(assignment)
+  summary = assignment.finalize(push=True)
+
+  runner.run.assert_called_once()
+  assert upload.feedback is None
+  assert summary['push_skipped_ungraded'] == 1
+  assert lms_assignment.push_calls == []
+  assignment.coordination_lease.succeeded.assert_not_called()

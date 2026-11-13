@@ -1,5 +1,6 @@
 """Template grading workflow with pluggable execution and image preparation."""
 import os
+import math
 import pathlib
 import re
 import shlex
@@ -623,59 +624,40 @@ class TemplateGrader(GradingErrorReporter, FileBasedGrader):
                                 *args, **kwargs)
 
   def score_grading(self, execution_results, *args, **kwargs) -> Feedback:
+    """Interpret valid grading results; execution failures are never zero grades."""
     rc, stdout, stderr = execution_results
-
-    # Interpret the feedback collected by the runner after execution.
-    # Expected format:
-    #   grade: <percentage 0-100+>  # Percentage score where 100 = full credit
-    #   comments: <feedback text>
-    #   logs: <optional execution logs>
-    #   rubric: <optional Canvas rubric assessment payload>
     feedback_content = execution_results.files.get("/tmp/feedback.yaml")
     log.debug(f"feedback_content: {feedback_content}")
-
-    if feedback_content:
-      try:
-        feedback_data = yaml.safe_load(feedback_content)
-        if isinstance(feedback_data, dict):
-          # Grade should be a percentage (0-100+)
-          grade = float(feedback_data.get('grade', 0.0))
-          comments = feedback_data.get('comments', 'No comments provided')
-          logs = feedback_data.get('logs', '')
-          rubric_assessment = feedback_data.get("rubric")
-
-          full_feedback = comments
-          if logs and logs.strip():
-            full_feedback += f"\n\n--- Execution Logs ---\n{logs}"
-
-          feedback = Feedback(percentage_score=grade, comments=full_feedback)
-          if isinstance(rubric_assessment, dict):
-            setattr(feedback, "rubric_assessment", rubric_assessment)
-          elif rubric_assessment is not None:
-            log.warning(
-              "Ignoring feedback.yaml rubric because it is not a mapping")
-          return feedback
-      except Exception as e:
-        error_msg = f"Failed to parse feedback YAML: {e}"
-        log.error(error_msg)
-        self._report_grading_error(error_msg, execution_results,
-                                   kwargs.get('submission'))
-        return Feedback(
-          percentage_score=0.0,
-          comments=
-          "Error during grading. If this persists, please let your professor know."
-        )
-
-    # Fallback: feedback.yaml not found or empty
-    error_msg = f"Feedback file not found or empty. RC: {rc}, stdout length: {len(stdout)}, stderr length: {len(stderr)}"
-    log.error(error_msg)
-    self._report_grading_error(error_msg, execution_results,
-                               kwargs.get('submission'))
-    return Feedback(
-      percentage_score=0.0,
-      comments=
-      "Error during grading. If this persists, please let your professor know."
-    )
+    try:
+      if not feedback_content:
+        raise ValueError(f"Feedback file not found or empty (exit status {rc})")
+      feedback_data = yaml.safe_load(feedback_content)
+      if not isinstance(feedback_data, dict):
+        raise ValueError("Feedback YAML must contain a mapping")
+      if feedback_data.get("err") is True or feedback_data.get("error") is True:
+        raise ValueError("Grading runner reported an execution error: "
+                         + str(feedback_data.get("comments", "No details provided")))
+      raw_grade = feedback_data["grade"]
+      if isinstance(raw_grade, bool):
+        raise ValueError("Feedback grade must be a finite number")
+      grade = float(raw_grade)
+      if not math.isfinite(grade):
+        raise ValueError("Feedback grade must be a finite number")
+      comments = feedback_data.get('comments', 'No comments provided')
+      logs = feedback_data.get('logs', '')
+      rubric_assessment = feedback_data.get("rubric")
+      if logs and logs.strip():
+        comments += f"\n\n--- Execution Logs ---\n{logs}"
+      feedback = Feedback(percentage_score=grade, comments=comments)
+      if isinstance(rubric_assessment, dict):
+        setattr(feedback, "rubric_assessment", rubric_assessment)
+      elif rubric_assessment is not None:
+        log.warning("Ignoring feedback.yaml rubric because it is not a mapping")
+      return feedback
+    except Exception as error:
+      error_msg = f"No usable grading result: {error}"
+      self._report_grading_error(error_msg, execution_results, kwargs.get('submission'))
+      raise Autograder.exceptions.GradingError(error_msg) from error
 
   output_paths = ("/tmp/feedback.yaml",)
 

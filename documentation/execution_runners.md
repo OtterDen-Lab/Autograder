@@ -27,6 +27,12 @@ runner returns the exit status, decoded stdout/stderr, and collected text output
 It must collect outputs before releasing its worker resources. Scoring and error
 reporting consume these collected artifacts and do not need a live container.
 
+Template feedback must contain a finite numeric `grade`. Missing or malformed
+feedback, or feedback marked `err: true` / `error: true`, fails the submission's
+grading operation even if the command exits successfully. Such failures leave
+feedback unset, so they do not publish to Canvas or record a success checkpoint.
+A legitimate student failure may still produce `grade: 0` with `err: false`.
+
 The Docker runner owns each invocation's container in a local variable, and stops
 it on startup, upload, execution, or output-retrieval failures as well as success.
 The runner does not publish grades or hold Canvas credentials. The existing
