@@ -114,7 +114,6 @@ The namespace-scoped kubeconfig needs these RBAC permissions:
 | API group | Resource | Verbs |
 | --- | --- | --- |
 | `batch` | `jobs` | `create`, `get`, `delete` |
-| `batch` | `jobs/status` | `get` |
 | core | `pods` | `list` |
 | core | `pods/log` | `get` |
 | core | `secrets` | `create`, `delete` |
@@ -142,6 +141,34 @@ PID limits, custom seccomp profiles, GPUs, network disabling, shared-memory
 overrides, and read-only root filesystems are rejected rather than ignored. The
 ImageNet trial grader therefore continues to require Docker for its local dataset
 mount and GPU settings.
+
+Pods meet the Kubernetes restricted Pod Security policy: UID/GID 65532,
+`runAsNonRoot`, no privilege escalation, all capabilities dropped, and runtime
+default seccomp. An init container running with the same restrictions copies
+the image's `/repo` into a per-Job `emptyDir` workspace and makes those copies
+writable by the grading user. Kubernetes `fsGroup` grants access to the volume;
+no root init container or namespace policy exception is needed. The main worker
+mounts that workspace at `/repo`, with a writable HOME/cache under `/tmp`. Course
+images must make `/repo` readable and its directories traversable by this user.
+The workspace consumes the Job's ephemeral storage budget. Startup time includes
+this copy. Commands that require root or write to other root-owned image paths
+need to be adapted for non-root execution.
+
+If an Ansible `job-submitter` Role already grants Job and Pod/log access, add
+`create` and `delete` on core `secrets` to that Role and rerun its access playbook.
+The runner reads status through `get jobs`, without a separate `jobs/status`
+permission. A 403 error identifies the denied operation; cleanup warnings name
+the resource that could not be deleted. Diagnose the actual account from the
+grader box with, for example:
+
+```sh
+kubectl auth can-i create jobs.batch -n autograder-test
+kubectl auth can-i create secrets -n autograder-test
+kubectl auth can-i delete secrets -n autograder-test
+kubectl auth can-i get jobs.batch -n autograder-test
+kubectl auth can-i list pods -n autograder-test
+kubectl auth can-i get pods --subresource=log -n autograder-test
+```
 
 This first transfer mechanism limits the entire encoded input request plus worker
 to 900 KiB, below Kubernetes' 1 MiB Secret limit. Combined stdout, stderr, and text

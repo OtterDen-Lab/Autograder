@@ -78,22 +78,43 @@ class KubernetesRunner:
       limits['cpu'] = str(Decimal(cpus) / Decimal(1_000_000_000))
     limits['ephemeral-storage'] = '2Gi'
     shell = (
+      'mkdir -p "$HOME"; '
       'if [ -x /repo/.venv/bin/python ]; then p=/repo/.venv/bin/python; '
       'elif command -v python3 >/dev/null 2>&1; then p=python3; else p=python; fi; '
       f'exec "$p" {BOOTSTRAP_PATH}/worker.py {BOOTSTRAP_PATH}/request.json')
     return {
       'restartPolicy': 'Never', 'automountServiceAccountToken': False,
       'enableServiceLinks': False,
+      'securityContext': {'runAsNonRoot': True, 'runAsUser': 65532,
+                          'runAsGroup': 65532, 'fsGroup': 65532,
+                          'seccompProfile': {'type': 'RuntimeDefault'}},
       'imagePullSecrets': [{'name': value} for value in self.image_pull_secrets],
+      # Existing course images install /repo as root. Copy it into a volume
+      # owned by the Pod user so grading can compile without root privileges.
+      'initContainers': [{
+        'name': 'prepare-workspace', 'image': request.image, 'imagePullPolicy': 'IfNotPresent',
+        'command': ['/bin/sh', '-ec',
+                    'mkdir -p /workspace/repo && cp -R /repo/. /workspace/repo/ '
+                    '&& chmod -R u+rwX /workspace/repo'],
+        'securityContext': {'allowPrivilegeEscalation': False,
+                            'capabilities': {'drop': ['ALL']}},
+        'resources': {'limits': dict(limits), 'requests': dict(limits)},
+        'volumeMounts': [{'name': 'workspace', 'mountPath': '/workspace'}],
+      }],
       'containers': [{
         'name': 'grader', 'image': request.image, 'imagePullPolicy': 'IfNotPresent',
         'command': ['/bin/sh', '-c', shell],
         'securityContext': {'allowPrivilegeEscalation': False,
+                            'capabilities': {'drop': ['ALL']},
                             'seccompProfile': {'type': 'RuntimeDefault'}},
+        'env': [{'name': 'HOME', 'value': '/tmp/autograder-home'},
+                {'name': 'XDG_CACHE_HOME', 'value': '/tmp/autograder-home/.cache'}],
         'resources': {'limits': limits, 'requests': dict(limits)},
-        'volumeMounts': [{'name': 'request', 'mountPath': BOOTSTRAP_PATH, 'readOnly': True}],
+        'volumeMounts': [{'name': 'request', 'mountPath': BOOTSTRAP_PATH, 'readOnly': True},
+                         {'name': 'workspace', 'mountPath': '/repo', 'subPath': 'repo'}],
       }],
-      'volumes': [{'name': 'request', 'secret': {'secretName': name}}],
+      'volumes': [{'name': 'request', 'secret': {'secretName': name}},
+                  {'name': 'workspace', 'emptyDir': {'sizeLimit': '2Gi'}}],
     }
 
   def _payload(self, request):
@@ -138,6 +159,7 @@ class KubernetesRunner:
                      'spec': pod_spec},
       },
     }
+    operation = 'create Job'
     try:
       created = self.batch_api.create_namespaced_job(
         self.namespace, job, _request_timeout=API_TIMEOUT)
@@ -151,26 +173,28 @@ class KubernetesRunner:
         }]},
         'stringData': data,
       }
+      operation = 'create submission Secret'
       self.core_api.create_namespaced_secret(self.namespace, secret, _request_timeout=API_TIMEOUT)
+      operation = 'monitor Job or read Pod logs'
       return self._wait(name, request)
     except Exception as error:
       if getattr(error, 'status', None) is not None:
-        raise GradingError(f'Kubernetes API request failed (HTTP {error.status}); '
+        raise GradingError(f'Kubernetes could not {operation} (HTTP {error.status}); '
                            f'check access, resource policy, and permissions in namespace {self.namespace}') from None
       raise
     finally:
-      self._delete(self.batch_api.delete_namespaced_job, name,
+      self._delete(self.batch_api.delete_namespaced_job, name, 'Job',
                    propagation_policy='Background')
-      self._delete(self.core_api.delete_namespaced_secret, name)
+      self._delete(self.core_api.delete_namespaced_secret, name, 'submission Secret')
 
-  def _delete(self, method, name, **kwargs):
+  def _delete(self, method, name, resource, **kwargs):
     try:
       method(name, self.namespace, _request_timeout=API_TIMEOUT, **kwargs)
     except Exception as error:
       if getattr(error, 'status', None) != 404:
         # Never log API response bodies, which can include submission data.
-        log.warning('Kubernetes cleanup failed for %s/%s (%s); check namespace resources',
-                    self.namespace, name, type(error).__name__)
+        log.warning('Kubernetes cleanup failed deleting %s %s/%s (%s, HTTP %s); check namespace resources',
+                    resource, self.namespace, name, type(error).__name__, getattr(error, 'status', 'unknown'))
 
   def _wait(self, name, request):
     deadline = time.monotonic() + self.startup_timeout_seconds
@@ -178,12 +202,15 @@ class KubernetesRunner:
     detail = 'waiting for a Pod'
     previous_detail = None
     while True:
-      job = self.batch_api.read_namespaced_job_status(name, self.namespace, _request_timeout=API_TIMEOUT)
+      # Reading the Job includes its status and uses the existing jobs/get RBAC
+      # permission, without requiring access to the jobs/status subresource.
+      job = self.batch_api.read_namespaced_job(name, self.namespace, _request_timeout=API_TIMEOUT)
       pods = self.core_api.list_namespaced_pod(
         self.namespace, label_selector='job-name=' + name, _request_timeout=API_TIMEOUT).items
       for pod in pods:
         status = pod.status
-        for container in status.container_statuses or []:
+        containers = (getattr(status, 'init_container_statuses', None) or []) + (status.container_statuses or [])
+        for container in containers:
           state = container.state
           if state.waiting:
             detail = state.waiting.reason or 'container waiting'

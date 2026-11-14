@@ -1,8 +1,11 @@
 """Kubernetes lifecycle tests without cluster credentials or student submissions."""
 import json
+import io
+import os
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
@@ -34,7 +37,7 @@ def pod(phase='Succeeded', reason=None, exit_code=0):
 def runner():
   core, batch = Mock(), Mock()
   batch.create_namespaced_job.return_value = NS(metadata=NS(uid='job-uid'))
-  batch.read_namespaced_job_status.return_value = NS(status=NS(failed=0))
+  batch.read_namespaced_job.return_value = NS(status=NS(failed=0))
   core.list_namespaced_pod.return_value = NS(items=[pod()])
   core.read_namespaced_pod_log.return_value = HTTPResponse(body=json.dumps({
     'return_code': 0, 'stdout': 'complete', 'stderr': '',
@@ -56,9 +59,19 @@ def test_job_round_trip_collects_results_and_cleans_up():
   assert container['resources']['requests'] == container['resources']['limits']
   assert container['resources']['limits']['cpu'] == '2'
   assert container['securityContext']['allowPrivilegeEscalation'] is False
+  assert container['securityContext']['capabilities']['drop'] == ['ALL']
+  assert spec['securityContext']['runAsNonRoot'] is True
+  assert spec['securityContext']['runAsUser'] == 65532
+  assert spec['securityContext']['fsGroup'] == 65532
+  init = spec['initContainers'][0]
+  assert init['image'] == container['image']
+  assert init['securityContext']['allowPrivilegeEscalation'] is False
+  assert init['securityContext']['capabilities']['drop'] == ['ALL']
+  assert 'cp -R /repo/.' in init['command'][2]
+  assert {'name': 'workspace', 'mountPath': '/repo', 'subPath': 'repo'} in container['volumeMounts']
   assert spec['automountServiceAccountToken'] is False
   assert spec['enableServiceLinks'] is False
-  assert 'env' not in container
+  assert {item['name'] for item in container['env']} == {'HOME', 'XDG_CACHE_HOME'}
   assert job['spec']['backoffLimit'] == 0
   assert job['spec']['ttlSecondsAfterFinished'] == 3600
   secret = backend.core_api.create_namespaced_secret.call_args.args[1]
@@ -76,7 +89,7 @@ def test_api_failures_always_attempt_both_cleanups(phase):
   method = {
     'job': backend.batch_api.create_namespaced_job,
     'secret': backend.core_api.create_namespaced_secret,
-    'poll': backend.batch_api.read_namespaced_job_status,
+    'poll': backend.batch_api.read_namespaced_job,
     'logs': backend.core_api.read_namespaced_pod_log,
   }[phase]
   method.side_effect = RuntimeError('API unavailable')
@@ -100,6 +113,17 @@ def test_oom_is_a_grading_error_not_a_zero():
     backend.run(request())
   backend.core_api.read_namespaced_pod_log.assert_not_called()
   backend.batch_api.delete_namespaced_job.assert_called_once()
+
+
+def test_init_container_failure_is_reported_immediately():
+  backend = runner()
+  pending = pod('Pending')
+  pending.status.init_container_statuses = [NS(state=NS(
+    waiting=None, terminated=NS(reason='Error', exit_code=1)))]
+  backend.core_api.list_namespaced_pod.return_value = NS(items=[pending])
+  with pytest.raises(GradingError, match='worker failed: Error.*exit 1'):
+    backend.run(request())
+  backend.batch_api.read_namespaced_job_status.assert_not_called()
 
 
 def test_image_pull_timeout_reports_reason_and_cleans_up(monkeypatch):
@@ -298,7 +322,62 @@ def test_api_error_does_not_expose_response_body():
   class ApiError(Exception):
     status = 403
   backend.core_api.create_namespaced_secret.side_effect = ApiError('sensitive request body')
-  with pytest.raises(GradingError, match='HTTP 403') as error:
+  with pytest.raises(GradingError, match='create submission Secret.*HTTP 403') as error:
     backend.run(request())
   assert 'sensitive' not in str(error.value)
   assert error.value.__suppress_context__
+
+
+def test_live_nonroot_course_workspace_and_worker():
+  image = os.getenv('AUTOGRADER_KUBERNETES_TEST_IMAGE')
+  if not image:
+    pytest.skip('Set AUTOGRADER_KUBERNETES_TEST_IMAGE for the Docker-hosted non-root smoke test')
+  import docker
+  client = docker.from_env()
+  volumes = []
+  helper = None
+  try:
+    workspace, bootstrap = [client.volumes.create() for _ in range(2)]
+    volumes.extend([workspace, bootstrap])
+    helper = client.containers.run(image, ['sh', '-c', 'sleep 300'], detach=True,
+      network_disabled=True, volumes={
+        workspace.name: {'bind': '/workspace', 'mode': 'rw'},
+        bootstrap.name: {'bind': '/bootstrap', 'mode': 'rw'}})
+    # Emulate the kubelet granting fsGroup access to the emptyDir.
+    status, _ = helper.exec_run(['sh', '-ec', 'chgrp 65532 /workspace && chmod 2770 /workspace'])
+    assert status == 0
+    backend = KubernetesRunner()
+    req = request(inputs=(ExecutionInput('/repo/smoke.c',
+      b'#include <criterion/criterion.h>\nTest(smoke, ok) { cr_assert(1); }\n'),),
+      command='gcc /repo/smoke.c -lcriterion -o /repo/smoke && /repo/smoke -j1 '
+              '&& printf "grade: 100\\nerr: false\\n" > /tmp/feedback.yaml')
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode='w') as tar:
+      for name, content in backend._payload(req).items():
+        data = content.encode()
+        info = tarfile.TarInfo(name)
+        info.size, info.mode = len(data), 0o444
+        tar.addfile(info, io.BytesIO(data))
+    archive.seek(0)
+    assert helper.put_archive('/bootstrap', archive.read())
+    spec = backend._pod_spec(req, 'smoke')
+    common = dict(user='65532:65532', cap_drop=['ALL'],
+                  security_opt=['no-new-privileges:true'],
+                  mem_limit='2g', nano_cpus=1_000_000_000,
+                  network_disabled=True, remove=True)
+    client.containers.run(image, spec['initContainers'][0]['command'], volumes={
+      workspace.name: {'bind': '/workspace', 'mode': 'rw'}}, **common)
+    container = spec['containers'][0]
+    logs = client.containers.run(image, container['command'],
+      environment={entry['name']: entry['value'] for entry in container['env']},
+      volumes={workspace.attrs['Mountpoint'] + '/repo': {'bind': '/repo', 'mode': 'rw'},
+               bootstrap.name: {'bind': '/opt/autograder-job', 'mode': 'ro'}}, **common)
+    result = backend._result(logs, req.output_paths)
+    assert result.return_code == 0, result.stderr
+    assert result.files['/tmp/feedback.yaml'] == 'grade: 100\nerr: false\n'
+  finally:
+    if helper is not None:
+      helper.remove(force=True)
+    for volume in volumes:
+      volume.remove(force=True)
+    client.close()
