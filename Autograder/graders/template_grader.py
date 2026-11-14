@@ -62,6 +62,8 @@ class TemplateGrader(GradingErrorReporter, FileBasedGrader):
       grading_args=None,
       grading_workdir: str | None = None,
       upload_error_artifacts: bool = False,
+      execution_backend: str = 'docker',
+      kubernetes=None,
       runner=None,
       image_builder=None,
       *args,
@@ -96,7 +98,15 @@ class TemplateGrader(GradingErrorReporter, FileBasedGrader):
 
     super().__init__(*args, **kwargs)
     from Autograder.runners.docker import DockerRunner, DockerImageBuilder
-    self.runner = runner if runner is not None else DockerRunner()
+    if execution_backend not in ('docker', 'kubernetes'):
+      raise ValueError('execution_backend must be docker or kubernetes')
+    if runner is not None:
+      self.runner = runner
+    elif execution_backend == 'kubernetes':
+      from Autograder.runners.kubernetes import KubernetesRunner
+      self.runner = KubernetesRunner(**(kubernetes or {}))
+    else:
+      self.runner = DockerRunner()
     self.image_builder = image_builder if image_builder is not None else DockerImageBuilder()
     self.image = None
     # Keep YAML resource options compatible while execution backends evolve.

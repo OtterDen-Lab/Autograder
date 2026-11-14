@@ -1,0 +1,37 @@
+# Reference only: adapt to the namespace and service account provisioned by Ansible.
+# This file does not create a namespace, account, or credentials.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: autograder-runner
+  namespace: autograder
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, delete]
+  - apiGroups: [batch]
+    resources: [jobs/status]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autograder-runner
+  namespace: autograder
+subjects:
+  - kind: ServiceAccount
+    name: autograder
+    namespace: autograder
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: autograder-runner

@@ -54,9 +54,106 @@ options, and collected metrics. It does not read files from a live container.
 A Python caller can pass `runner=` and `image_builder=` when constructing the
 grader. Injecting both permits another backend to operate without initializing
 Docker. The default image builder still needs a local Docker daemon when resolving
-or building images. Image preparation is separate from submission execution, so
-a later Kubernetes runner can use prebuilt images or a separately supplied builder.
-There is no Kubernetes backend or YAML backend selector in this change.
+or building images. Image preparation is separate from submission execution.
+
+## Kubernetes execution (optional)
+
+Install the `kubernetes` extra alongside any other extras you use. Select the
+backend in the existing template grader settings:
+
+```yaml
+assignment_types:
+  programming:
+    kind: ProgrammingAssignment
+    grader: template-grader
+    settings:
+      execution_backend: kubernetes
+      memory_limit: "2g"
+      nano_cpus: 1000000000  # one CPU; requests and limits are equal
+      command_timeout_seconds: 120
+      # Optional; the kubeconfig's current context and namespace are used by default.
+      # kubernetes:
+      #   kubeconfig: "~/.kube/config"
+      #   context: autograder
+      #   namespace: autograder
+      #   startup_timeout_seconds: 180
+      #   poll_interval_seconds: 2
+      #   image_pull_secrets: [registry-access]
+```
+
+For example, run one submission on the grader box as its normal `grader` user:
+
+```sh
+uv run --extra postgres --extra kubernetes grade-assignments \
+  --yaml ~/.config/otter-autograder/grading-testing.yaml \
+  --env ~/.tokens/autograder.env \
+  --max_workers 1 --regrade --limit 1 --skip-cooldown --debug
+```
+
+The SDK honors `KUBECONFIG` or defaults to `~/.kube/config`; kubeconfig and context
+can be overridden in the optional `kubernetes` mapping. Its context namespace is
+used unless explicitly overridden, falling back to `default`. Keep cluster tokens
+and certificates in kubeconfig, outside grading YAML.
+
+Docker still resolves/builds/pushes the same registry images locally. The cluster
+pulls those images independently. An open registry needs no `image_pull_secrets`;
+node network access, registry TLS trust, and registry protocol configuration must
+still work. An HTTP-only registry requires appropriate containerd/k3s node
+configuration. This backend does not modify cluster or registry configuration.
+
+Each submission gets a unique Job with no automatic retries (`backoffLimit: 0`).
+A temporary Secret holds a small Python worker and the submission payload. The
+worker copies files to their requested paths, removes preexisting output files,
+runs the same grading command, and returns stdout/stderr and requested artifacts
+through a JSON envelope in Pod logs. No shared filesystem, exec permission, or
+additional worker image is required. The course image must provide Python 3,
+`bash`, and a writable filesystem, as the existing template images do.
+
+The namespace-scoped kubeconfig needs these RBAC permissions:
+
+| API group | Resource | Verbs |
+| --- | --- | --- |
+| `batch` | `jobs` | `create`, `get`, `delete` |
+| `batch` | `jobs/status` | `get` |
+| core | `pods` | `list` |
+| core | `pods/log` | `get` |
+| core | `secrets` | `create`, `delete` |
+
+See [the example Role and binding](../docker/kubernetes/runner-rbac.yaml) if the
+Ansible-provisioned account needs additional permissions. Adapt its namespace and
+service-account name to the existing account; the runner never provisions RBAC.
+
+Jobs and Secrets are deleted after results are collected, including on errors.
+Secrets have a Job owner reference; a one-hour Job TTL and an active deadline
+provide cleanup if the client disappears. Cleanup failures are logged with the
+Job name for manual inspection. Submission contents and grading results pass
+through the cluster's Secret storage and Pod logging system; use a namespace and
+logging retention policy appropriate for student data.
+
+Memory and CPU requests match their limits. Docker-style memory sizes such as
+`2g` are converted to byte quantities, and `nano_cpus` becomes CPU units. If not
+set, the existing global Docker memory/CPU defaults are used (normally 1 GiB and
+two CPUs). Each Job also requests/limits 2 GiB of ephemeral storage. The worker
+has no mounted Kubernetes API token or Canvas credentials; privilege escalation
+is disabled and seccomp uses the cluster runtime's default profile. This is not
+the custom Docker seccomp profile. Node-level PID caps and network policy are
+cluster responsibilities. Explicit Docker-only options such as local mounts,
+PID limits, custom seccomp profiles, GPUs, network disabling, shared-memory
+overrides, and read-only root filesystems are rejected rather than ignored. The
+ImageNet trial grader therefore continues to require Docker for its local dataset
+mount and GPU settings.
+
+This first transfer mechanism limits the entire encoded input request plus worker
+to 900 KiB, below Kubernetes' 1 MiB Secret limit. Combined stdout, stderr, and text
+artifacts are limited to 4 MiB. Larger requests/results fail without publishing
+grades. Kubernetes startup has its own timeout (180 seconds by default); the
+command timeout starts inside the worker. OOM kills, startup failures, timeouts,
+and missing/truncated results are grading errors and never become zero grades or
+success checkpoints. A valid feedback result with `grade: 0` remains supported.
+
+References: [Python kubeconfig loading](https://github.com/kubernetes-client/python/blob/master/kubernetes/config/kube_config.py),
+[Job lifecycle](https://kubernetes.io/docs/concepts/workloads/controllers/job/),
+[Secret limits](https://kubernetes.io/docs/concepts/configuration/secret/#size-limit).
 
 ## Concurrency and verification
 
@@ -64,6 +161,10 @@ The runner interface is synchronous: it may perform local work or wait for remot
 work to finish. Programming submissions still dispatch sequentially; assignment
 concurrency still uses `--max_workers`. Increasing submission concurrency is a
 separate step, not a behavior change made by this extraction.
+
+Start Kubernetes tests with `--max_workers 1`. More assignment workers can submit
+more Jobs; Kubernetes queues Pods when their resource requests do not fit. No
+new per-submission concurrency is introduced here.
 
 Run `pytest tests/test_execution_runners.py` for boundary and lifecycle tests.
 An optional live test uses a local shell-capable image, with networking disabled:

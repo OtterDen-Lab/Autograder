@@ -38,6 +38,7 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2,<4"]
+kubernetes = ["kubernetes>=32,<36"]
 dev = [
     "pytest>=7.4.3",
     "hypothesis>=6.112.0",

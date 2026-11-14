@@ -25,6 +25,30 @@ VALID_EXTERNAL_USER_ATTRIBUTES = {
 }
 
 
+def _kubernetes_settings(value: Any, label: str) -> Dict[str, Any]:
+  raw = _require_mapping(value, label)
+  allowed = {'kubeconfig', 'context', 'namespace', 'startup_timeout_seconds',
+             'poll_interval_seconds', 'image_pull_secrets'}
+  unknown = sorted(set(raw) - allowed)
+  if unknown:
+    raise _config_error(f"{label} contains unsupported setting(s): {', '.join(unknown)}")
+  normalized = dict(raw)
+  for key in ('kubeconfig', 'context', 'namespace'):
+    if key in raw:
+      normalized[key] = _require_optional_str(raw[key], f'{label}.{key}')
+      if normalized[key] is not None and not normalized[key].strip():
+        raise _config_error(f'{label}.{key} must not be empty')
+  for key in ('startup_timeout_seconds', 'poll_interval_seconds'):
+    if key in raw and (type(raw[key]) is not int or raw[key] <= 0):
+      raise _config_error(f'{label}.{key} must be a positive integer')
+  if 'image_pull_secrets' in raw:
+    normalized['image_pull_secrets'] = _require_str_list(raw['image_pull_secrets'],
+                                                       f'{label}.image_pull_secrets')
+    if any(not name.strip() for name in normalized['image_pull_secrets']):
+      raise _config_error(f'{label}.image_pull_secrets must contain non-empty names')
+  return normalized
+
+
 def _config_error(message: str) -> ValueError:
   return ValueError(f"Config error: {message}")
 
@@ -256,8 +280,20 @@ class TemplateGraderSettings:
   num_repeats: Optional[int] = None
   rubric: Optional[Dict[str, Any]] = None
   memory_limit: Optional[str] = None
+  nano_cpus: Optional[int] = None
+  command_timeout_seconds: int = 60
+  execution_backend: str = 'docker'
+  kubernetes: Dict[str, Any] = field(default_factory=dict)
 
   def __post_init__(self) -> None:
+    if self.execution_backend not in ('docker', 'kubernetes'):
+      raise _config_error('template-grader.execution_backend must be docker or kubernetes')
+    if self.kubernetes and self.execution_backend != 'kubernetes':
+      raise _config_error('template-grader.kubernetes requires execution_backend: kubernetes')
+    if type(self.command_timeout_seconds) is not int or self.command_timeout_seconds <= 0:
+      raise _config_error('template-grader.command_timeout_seconds must be a positive integer')
+    if self.nano_cpus is not None and (type(self.nano_cpus) is not int or self.nano_cpus <= 0):
+      raise _config_error('template-grader.nano_cpus must be a positive integer')
     if not isinstance(self.base_image_name, str):
       raise _config_error("template-grader.base_image_name must be a string")
     if not isinstance(self.source_repo, str):
@@ -317,6 +353,10 @@ class TemplateGraderSettings:
       "num_repeats",
       "rubric",
       "memory_limit",
+      "nano_cpus",
+      "command_timeout_seconds",
+      "execution_backend",
+      "kubernetes",
     }
     unknown = sorted(k for k in raw.keys() if k not in allowed)
     if unknown:
@@ -392,6 +432,10 @@ class TemplateGraderSettings:
       rubric=rubric,
       memory_limit=_require_optional_str(raw.get("memory_limit"),
                                           f"{context_label}.memory_limit"),
+      nano_cpus=raw.get('nano_cpus'),
+      command_timeout_seconds=raw.get('command_timeout_seconds', 60),
+      execution_backend=raw.get('execution_backend', 'docker'),
+      kubernetes=_kubernetes_settings(raw.get('kubernetes', {}), f'{context_label}.kubernetes'),
     )
     return settings
 
@@ -436,6 +480,10 @@ class TemplateGraderSettings:
       "num_repeats": self.num_repeats,
       "rubric": dict(self.rubric) if self.rubric is not None else None,
       "memory_limit": self.memory_limit,
+      "nano_cpus": self.nano_cpus,
+      "command_timeout_seconds": self.command_timeout_seconds,
+      "execution_backend": self.execution_backend,
+      "kubernetes": dict(self.kubernetes),
     }
 
 
