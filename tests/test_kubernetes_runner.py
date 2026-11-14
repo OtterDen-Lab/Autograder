@@ -328,7 +328,8 @@ def test_api_error_does_not_expose_response_body():
   assert error.value.__suppress_context__
 
 
-def test_live_nonroot_course_workspace_and_worker():
+@pytest.mark.parametrize('run_course_script', [False, True])
+def test_live_nonroot_course_workspace_and_worker(run_course_script):
   image = os.getenv('AUTOGRADER_KUBERNETES_TEST_IMAGE')
   if not image:
     pytest.skip('Set AUTOGRADER_KUBERNETES_TEST_IMAGE for the Docker-hosted non-root smoke test')
@@ -351,6 +352,8 @@ def test_live_nonroot_course_workspace_and_worker():
       b'#include <criterion/criterion.h>\nTest(smoke, ok) { cr_assert(1); }\n'),),
       command='gcc /repo/smoke.c -lcriterion -o /repo/smoke && /repo/smoke -j1 '
               '&& printf "grade: 100\\nerr: false\\n" > /tmp/feedback.yaml')
+    if run_course_script:
+      req = request(inputs=(), command=TemplateGrader._build_default_grading_script('PA1'))
     archive = io.BytesIO()
     with tarfile.open(fileobj=archive, mode='w') as tar:
       for name, content in backend._payload(req).items():
@@ -374,7 +377,13 @@ def test_live_nonroot_course_workspace_and_worker():
                bootstrap.name: {'bind': '/opt/autograder-job', 'mode': 'ro'}}, **common)
     result = backend._result(logs, req.output_paths)
     assert result.return_code == 0, result.stderr
-    assert result.files['/tmp/feedback.yaml'] == 'grade: 100\nerr: false\n'
+    if run_course_script:
+      import yaml
+      feedback = yaml.safe_load(result.files['/tmp/feedback.yaml'])
+      assert feedback['err'] is False, feedback.get('comments')
+      assert isinstance(feedback['grade'], (int, float))
+    else:
+      assert result.files['/tmp/feedback.yaml'] == 'grade: 100\nerr: false\n'
   finally:
     if helper is not None:
       helper.remove(force=True)
