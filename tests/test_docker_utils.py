@@ -687,6 +687,7 @@ def test_registry_push_reports_streamed_errors(mock_docker_client):
 @pytest.mark.parametrize('status,explanation,missing', [
     (404, 'manifest unknown: manifest unknown', True),
     (404, 'name unknown: repository name not known', True),
+    (404, 'failed to resolve reference "registry/course:abc": not found', True),
     (404, 'upstream route not found', False),
     (401, 'unauthorized', False),
     (403, 'denied', False),

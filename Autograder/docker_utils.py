@@ -265,8 +265,15 @@ class DockerClient:
       # Pulling an absent manifest can raise NotFound rather than ImageNotFound.
       # Do not turn proxy 404s, authorization errors, or outages into cache misses.
       explanation = str(getattr(e, "explanation", "")).lower()
+      # Docker registries use several equivalent messages for a missing tag.
+      # Our registry currently reports "failed to resolve reference ... not
+      # found", while a reverse-proxy route 404 is an infrastructure failure
+      # and must still be reported rather than silently triggering a build.
+      is_missing_reference = (
+        "failed to resolve reference" in explanation and "not found" in explanation)
       if (getattr(e, "status_code", None) == 404
-          and ("manifest unknown" in explanation or "name unknown" in explanation)):
+          and ("manifest unknown" in explanation or "name unknown" in explanation
+               or is_missing_reference)):
         log.info("Registry cache miss for %s; building image", tag)
         return None
       raise Autograder.exceptions.DockerError(
