@@ -101,6 +101,106 @@ node network access, registry TLS trust, and registry protocol configuration mus
 still work. An HTTP-only registry requires appropriate containerd/k3s node
 configuration. This backend does not modify cluster or registry configuration.
 
+### Temporary Kubernetes image builds (optional)
+
+To also move image creation off the grader box, select the independent image
+build backend. Local Docker remains the default for existing configurations:
+
+```yaml
+settings:
+  execution_backend: kubernetes
+  image_build_backend: kubernetes
+  image_registry: docker-registry.p.zxqw.dev  # default; host[:port][/repository-prefix]
+  memory_limit: "2g"                       # grading Pod
+  kubernetes_build:
+    namespace: autograder-test-build
+    memory_limit: "4g"                     # build Pod, independent of grading limits
+    nano_cpus: 2000000000
+    storage_limit: "20Gi"
+    startup_timeout_seconds: 180
+    upload_timeout_seconds: 300
+    build_timeout_seconds: 1800
+    # builder_image: moby/buildkit:v0.35.0-rootless
+    # registry_scheme: https              # http must be explicitly selected
+    # registry_verify_tls: true           # or a local CA bundle path
+    # registry_auth_file: "~/.docker/build-auth.json"
+```
+
+Use the same `--extra kubernetes` as for execution. When both backends are
+Kubernetes, no local Docker engine, BuildKit service, `buildctl`, or Docker CLI
+is needed on the coordinator. The Python Docker package remains a dependency for
+existing utility code. Image builds can also run in Kubernetes while grading
+uses local Docker. Repository cloning, golden-file selection, Dockerfile
+generation, and commit-based image tags retain their existing behavior.
+
+Image existence is checked using the registry's manifest API, without downloading
+layers. Only structured `MANIFEST_UNKNOWN`/`NAME_UNKNOWN` responses are cache
+misses; authentication failures, network errors, and generic/proxy 404s stop the
+operation. The existing local-Docker missing-reference handling is unchanged.
+Changing `image_registry` also changes the destination of local Docker builds.
+
+On a cache miss the coordinator creates a uniquely named Job, then streams a
+compressed build-context archive into its waiting init container over `pods/exec`.
+This avoids the grading Secret's small-payload limit and needs no object store,
+shared filesystem, upload server, or persistent builder deployment. The archive
+is spooled to local temporary disk, so the coordinator still needs disk space
+for repository checkouts and the compressed context. The upload uses a known byte
+count to end the archive stream without relying on WebSocket stdin-close support.
+
+The main container runs pinned **rootless BuildKit**, builds the existing
+Dockerfile, and pushes the finished image. A successful build is followed by a
+registry manifest check before grading proceeds. The build Pod, configuration
+Secret, and temporary context/cache volumes are removed after success or failure.
+An active deadline, Job TTL, and Secret owner reference provide cleanup if the
+coordinator disappears. Build failure logs include a bounded tail before cleanup.
+No layer cache is retained between build Jobs; already-published course images
+remain reusable through the normal registry lookup.
+
+**Administrator setup is required once per cluster.** The rootless builder still
+needs user namespaces, setuid mapping helpers, and Unconfined seccomp/AppArmor.
+It cannot run under the grading namespace's restricted Pod Security policy.
+Provision a separate build namespace with an administrator-approved policy;
+do not relax the student grading namespace. The builder itself does not request
+`privileged: true`, host mounts, or a Kubernetes API token. It builds staff-owned
+course contexts, never submitted student Dockerfiles. The upstream
+`--oci-worker-no-process-sandbox` rootless mode is used; it is suitable here only
+for those trusted build contexts.
+
+The [builder namespace and RBAC reference](../docker/kubernetes/builder-rbac.yaml)
+creates no persistent build workload. Adapt its ServiceAccount subject to the
+grader's existing account. Additional permissions are scoped to the build
+namespace: Jobs `create/get/delete`, Pods `get/list`, Pod logs `get`, `pods/exec`
+`get/create`, and Secrets `create/delete`. `kubernetes_build.namespace` defaults to
+`autograder-build`; kubeconfig, context, and image-pull-secret settings inherit
+from `kubernetes` unless overridden in `kubernetes_build`. Choose the build
+namespace explicitly when using per-environment provisioning.
+
+For the infrastructure repository's `k3s-client` role, optional build access is
+enabled with `k3s_client_build_enabled=true`; its default namespace is the grading
+namespace plus `-build`. Rerun the access playbook with that flag before enabling
+the new backend. Namespace creation and policy changes are deliberately not
+performed by the grader.
+
+An open internal registry needs no auth file. For authenticated registries,
+`registry_auth_file` is a local Docker `config.json` with inline `auths`. The same
+file is used for registry lookup and mounted in a temporary Secret for BuildKit's
+pulls/pushes. Local `credsStore`/`credHelpers` and identity-token-only logins are
+not supported. Keep the file private; do not put credentials directly in YAML.
+Basic and Bearer-challenge lookup authentication are supported. Registry TLS and
+HTTP settings apply to the destination registry in the builder; k3s worker nodes
+must separately be able to pull it. Third-party base registries need normal
+network/TLS access from the build Pod. Current build/execution scheduling assumes
+compatible node architectures; it does not introduce multi-platform builds.
+
+For an unprivileged LXC coordinator, enable both Kubernetes backends, retain Git,
+Python, kubeconfig, registry/network access, and writable temporary storage, and
+remove the requirement for a local container engine. A live build should be
+verified in k3s before retiring the existing VM.
+
+References: [upstream rootless build Job](https://github.com/moby/buildkit/blob/master/examples/kubernetes/job.rootless.yaml),
+[rootless requirements](https://github.com/moby/buildkit/blob/master/docs/rootless.md),
+[registry API errors](https://distribution.github.io/distribution/spec/api/).
+
 Each submission gets a unique Job with no automatic retries (`backoffLimit: 0`).
 A temporary Secret holds a small Python worker and the submission payload. The
 worker copies files to their requested paths, removes preexisting output files,

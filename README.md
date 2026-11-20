@@ -340,4 +340,7 @@ separates grading workflow from Docker execution and image preparation. Existing
 configurations continue to use Docker. Optional Kubernetes execution uses
 `--extra kubernetes` and `execution_backend: kubernetes` in template grader
 settings, with the normal kubeconfig on the grader machine. Image preparation
-continues to use local Docker and the existing registry.
+uses local Docker by default. Optional `image_build_backend: kubernetes` runs
+temporary BuildKit Jobs in a separately provisioned build namespace, allowing
+the coordinator to operate without a local Docker engine. `image_registry`
+selects the shared registry destination.

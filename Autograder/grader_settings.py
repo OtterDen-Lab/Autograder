@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import posixpath
+import re
 from typing import Any, Dict, List, Optional
 
 from Autograder.external_tools import (
@@ -47,6 +48,32 @@ def _kubernetes_settings(value: Any, label: str) -> Dict[str, Any]:
     if any(not name.strip() for name in normalized['image_pull_secrets']):
       raise _config_error(f'{label}.image_pull_secrets must contain non-empty names')
   return normalized
+
+
+def _kubernetes_build_settings(value: Any, label: str) -> Dict[str, Any]:
+  raw = _require_mapping(value, label)
+  common = {'kubeconfig', 'context', 'namespace', 'image_pull_secrets',
+            'startup_timeout_seconds', 'poll_interval_seconds'}
+  allowed = common | {'builder_image', 'upload_timeout_seconds', 'build_timeout_seconds',
+                     'memory_limit', 'nano_cpus', 'storage_limit', 'registry_scheme',
+                     'registry_verify_tls', 'registry_auth_file'}
+  unknown = sorted(set(raw) - allowed)
+  if unknown:
+    raise _config_error(f"{label} contains unsupported setting(s): {', '.join(unknown)}")
+  result = _kubernetes_settings({key: val for key, val in raw.items() if key in common}, label)
+  result.update({key: val for key, val in raw.items() if key not in common})
+  for key in ('builder_image', 'memory_limit', 'storage_limit', 'registry_auth_file'):
+    if key in raw and (not isinstance(raw[key], str) or not raw[key].strip()):
+      raise _config_error(f'{label}.{key} must be a non-empty string')
+  for key in ('upload_timeout_seconds', 'build_timeout_seconds', 'nano_cpus'):
+    if key in raw and (type(raw[key]) is not int or raw[key] <= 0):
+      raise _config_error(f'{label}.{key} must be a positive integer')
+  if raw.get('registry_scheme', 'https') not in ('http', 'https'):
+    raise _config_error(f'{label}.registry_scheme must be http or https')
+  verify = raw.get('registry_verify_tls', True)
+  if type(verify) is not bool and (not isinstance(verify, str) or not verify.strip()):
+    raise _config_error(f'{label}.registry_verify_tls must be a boolean or CA bundle path')
+  return result
 
 
 def _config_error(message: str) -> ValueError:
@@ -284,12 +311,23 @@ class TemplateGraderSettings:
   command_timeout_seconds: int = 60
   execution_backend: str = 'docker'
   kubernetes: Dict[str, Any] = field(default_factory=dict)
+  image_build_backend: str = 'docker'
+  image_registry: str = 'docker-registry.p.zxqw.dev'
+  kubernetes_build: Dict[str, Any] = field(default_factory=dict)
 
   def __post_init__(self) -> None:
     if self.execution_backend not in ('docker', 'kubernetes'):
       raise _config_error('template-grader.execution_backend must be docker or kubernetes')
     if self.kubernetes and self.execution_backend != 'kubernetes':
       raise _config_error('template-grader.kubernetes requires execution_backend: kubernetes')
+    if self.image_build_backend not in ('docker', 'kubernetes'):
+      raise _config_error('template-grader.image_build_backend must be docker or kubernetes')
+    if self.kubernetes_build and self.image_build_backend != 'kubernetes':
+      raise _config_error('template-grader.kubernetes_build requires image_build_backend: kubernetes')
+    if (not isinstance(self.image_registry, str)
+        or not re.fullmatch(r'[a-z0-9.-]+(?::[0-9]+)?(?:/[a-z0-9._-]+)*', self.image_registry)
+        or any(part in {'.', '..'} for part in self.image_registry.split('/'))):
+      raise _config_error('template-grader.image_registry must be a registry host with optional port/path, without a URL scheme')
     if type(self.command_timeout_seconds) is not int or self.command_timeout_seconds <= 0:
       raise _config_error('template-grader.command_timeout_seconds must be a positive integer')
     if self.nano_cpus is not None and (type(self.nano_cpus) is not int or self.nano_cpus <= 0):
@@ -357,6 +395,9 @@ class TemplateGraderSettings:
       "command_timeout_seconds",
       "execution_backend",
       "kubernetes",
+      "image_build_backend",
+      "image_registry",
+      "kubernetes_build",
     }
     unknown = sorted(k for k in raw.keys() if k not in allowed)
     if unknown:
@@ -436,6 +477,10 @@ class TemplateGraderSettings:
       command_timeout_seconds=raw.get('command_timeout_seconds', 60),
       execution_backend=raw.get('execution_backend', 'docker'),
       kubernetes=_kubernetes_settings(raw.get('kubernetes', {}), f'{context_label}.kubernetes'),
+      image_build_backend=raw.get('image_build_backend', 'docker'),
+      image_registry=raw.get('image_registry', 'docker-registry.p.zxqw.dev'),
+      kubernetes_build=_kubernetes_build_settings(raw.get('kubernetes_build', {}),
+                                                  f'{context_label}.kubernetes_build'),
     )
     return settings
 
@@ -484,6 +529,9 @@ class TemplateGraderSettings:
       "command_timeout_seconds": self.command_timeout_seconds,
       "execution_backend": self.execution_backend,
       "kubernetes": dict(self.kubernetes),
+      "image_build_backend": self.image_build_backend,
+      "image_registry": self.image_registry,
+      "kubernetes_build": dict(self.kubernetes_build),
     }
 
 

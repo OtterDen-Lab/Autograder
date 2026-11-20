@@ -64,6 +64,9 @@ class TemplateGrader(GradingErrorReporter, FileBasedGrader):
       upload_error_artifacts: bool = False,
       execution_backend: str = 'docker',
       kubernetes=None,
+      image_build_backend: str = 'docker',
+      image_registry: str = 'docker-registry.p.zxqw.dev',
+      kubernetes_build=None,
       runner=None,
       image_builder=None,
       *args,
@@ -107,7 +110,19 @@ class TemplateGrader(GradingErrorReporter, FileBasedGrader):
       self.runner = KubernetesRunner(**(kubernetes or {}))
     else:
       self.runner = DockerRunner()
-    self.image_builder = image_builder if image_builder is not None else DockerImageBuilder()
+    if image_build_backend not in ('docker', 'kubernetes'):
+      raise ValueError('image_build_backend must be docker or kubernetes')
+    if image_builder is not None:
+      self.image_builder = image_builder
+    elif image_build_backend == 'kubernetes':
+      from Autograder.runners.kubernetes_builder import KubernetesImageBuilder
+      build_options = {key: value for key, value in (kubernetes or {}).items()
+                       if key in {'kubeconfig', 'context', 'image_pull_secrets'}}
+      build_options.update(kubernetes_build or {})
+      self.image_builder = KubernetesImageBuilder(**build_options)
+    else:
+      self.image_builder = DockerImageBuilder()
+    self.image_registry = image_registry
     self.image = None
     # Keep YAML resource options compatible while execution backends evolve.
     resource_keys = ("memory_limit", "nano_cpus", "pids_limit", "read_only_root_fs",
@@ -487,7 +502,7 @@ class TemplateGrader(GradingErrorReporter, FileBasedGrader):
           "A course ID is required for registry image caching")
       course = self._sanitize_image_tag_component(self.course_name)
       course_id = self._sanitize_image_tag_component(self.course_id)
-      tag = f"docker-registry.p.zxqw.dev/{course}-{course_id}:{source_commit}"
+      tag = f"{self.image_registry}/{course}-{course_id}:{source_commit}"
       if golden_commit:
         tag += f"-{golden_commit}"
 

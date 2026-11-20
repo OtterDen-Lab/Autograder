@@ -1,0 +1,54 @@
+# Administrator setup only. Adapt names and the client ServiceAccount namespace.
+# No persistent builder is deployed; the grader creates temporary build Jobs.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autograder-build
+  labels:
+    # Rootless BuildKit needs Unconfined seccomp/AppArmor and setuid helpers.
+    # Keep these permissions separate from restricted grading namespaces.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: default
+  namespace: autograder-build
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: autograder-image-builder
+  namespace: autograder-build
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [get, create]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autograder-image-builder
+  namespace: autograder-build
+subjects:
+  - kind: ServiceAccount
+    name: autograder
+    namespace: autograder-test
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: autograder-image-builder
