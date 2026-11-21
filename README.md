@@ -331,6 +331,13 @@ Bifrost records request costs under the virtual key, while the grader records to
 individual request leaves that submission ungraded. A failed aggregate or
 question-consolidation request stops the grading run.
 
+Labels such as `schema=aggregate_analysis` identify the grader's local response
+validator and analysis phase; they are not model names or saved schemas that
+must be registered in Bifrost. Request errors include safe exception types and
+HTTP status/request IDs when available. Invalid JSON and validation failures
+are reported separately: those can occur after a successful gateway response.
+Error summaries do not include prompts, response bodies, or API credentials.
+
 Optional [PostgreSQL coordination](documentation/postgresql_coordination.md)
 provides shared assignment leases and per-student grading cooldowns for multiple
 grading machines.

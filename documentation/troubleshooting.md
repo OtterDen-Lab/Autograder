@@ -92,6 +92,30 @@ with `grade: 0` and `err: false` remains a publishable grade.
 
 ## Text Grading / AI Provider Failures
 
+For Bifrost-backed text grading, `aggregate_analysis` is the local phase-one
+response validator, not a gateway-side model or schema reference. A successful
+Bifrost request can still fail locally if its response is invalid JSON or does
+not match the grader's expected payload shape.
+
+Use the error category to narrow the failure:
+
+- `Bifrost request failed` with `http_status`: inspect the corresponding gateway
+  request, using `request_id` if present, and check routing/authentication.
+- `APIConnectionError`: check connectivity, DNS, TLS, and proxy settings on the
+  grader host. The gateway may never receive the request.
+- `APITimeoutError`: inspect whether the gateway received/completed the request;
+  a client timeout need not be recorded as a gateway failure.
+- `Bifrost returned invalid JSON`: inspect response formatting and completion
+  budget. `finish_reason=length` can indicate truncated output.
+- `Bifrost response validation failed`: JSON decoding succeeded, but the local
+  validator could not use the payload.
+
+These diagnostics expose exception classes and response metadata, not student
+content or provider error bodies. Older generic `Bifrost request failed` summaries
+cannot distinguish these cases; the preceding chained traceback may identify
+the original exception. Do not share credentials or submission/response contents
+when collecting that traceback.
+
 ### Symptoms
 
 - fallback between Anthropic/OpenAI
